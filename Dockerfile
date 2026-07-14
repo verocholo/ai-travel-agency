@@ -49,4 +49,4 @@ COPY . .
 # Stessa start command già in uso su Render/Procfile — invariata, il
 # passaggio a Docker cambia solo COME viene costruita l'immagine, non
 # come il servizio viene avviato.
-CMD gunicorn service:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+CMD gunicorn service:app --bind 0.0.0.0:$PORT --workers 2 --timeout 280
