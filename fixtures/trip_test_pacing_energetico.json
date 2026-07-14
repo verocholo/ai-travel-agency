@@ -1,0 +1,10 @@
+{
+  "email": "cliente@mail.com",
+  "scopo": "Torneo di padel amatoriale",
+  "destinazione": "Forte dei Marmi, Toscana",
+  "arrivo": "2026-09-14",
+  "partenza": "2026-09-17",
+  "budget": 0,
+  "note": "Ho due partite di torneo (turno 1 e turno 2), vorrei recuperare bene tra una partita e l'altra.",
+  "_descrizione_test": "[AGGIUNTO 2026-07-10, non ufficiale Cap. 7.3] Test dedicato per coprire un gap identificato durante la review dal vivo: happy_path non contiene nessun POI energy_tag=HIGH, quindi l'alternanza sforzo/recupero di ENERGY_PACING non era mai stata esercitata. Qui il payload mock include 2 POI HIGH (le due partite del torneo) + un POI MEDIUM (museo, distrattore deliberato) + POI LOW (spa, ristorante). Atteso, per la regola letterale di SYSTEM_PROMPT_MASTER.md [DYNAMIC_OBJECTIVE_FUNCTION]/ENERGY_PACING: 'Dopo ogni attività ad Alto Carico Fisico la successiva DEVE essere a basso carico' — quindi dopo ognuno dei due blocchi HIGH, il blocco immediatamente successivo deve avere energy_tag=LOW (mai MEDIUM, anche se il POI museo/MEDIUM è disponibile e tentante da usare per riempire lo slot)."
+}

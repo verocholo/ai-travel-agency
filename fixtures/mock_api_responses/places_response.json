@@ -1,0 +1,64 @@
+{
+  "places": [
+    {
+      "id": "POI1",
+      "displayName": { "text": "Trattoria Toscana", "languageCode": "it" },
+      "location": { "latitude": 43.075, "longitude": 11.605 },
+      "types": ["restaurant", "food", "point_of_interest"],
+      "primaryType": "restaurant",
+      "rating": 4.6,
+      "priceLevel": "PRICE_LEVEL_MODERATE",
+      "servesVegetarianFood": true,
+      "regularOpeningHours": {
+        "periods": [
+          { "open": { "day": 2, "hour": 12 }, "close": { "day": 2, "hour": 23 } },
+          { "open": { "day": 3, "hour": 12 }, "close": { "day": 3, "hour": 23 } },
+          { "open": { "day": 4, "hour": 12 }, "close": { "day": 4, "hour": 23 } },
+          { "open": { "day": 5, "hour": 12 }, "close": { "day": 5, "hour": 23 } },
+          { "open": { "day": 6, "hour": 12 }, "close": { "day": 6, "hour": 23 } }
+        ],
+        "weekdayDescriptions": ["lunedì: Chiuso"]
+      }
+    },
+    {
+      "id": "POI2",
+      "displayName": { "text": "Terme di San Filippo", "languageCode": "it" },
+      "location": { "latitude": 43.02, "longitude": 11.65 },
+      "types": ["spa", "point_of_interest"],
+      "primaryType": "spa",
+      "rating": 4.4,
+      "priceLevel": "PRICE_LEVEL_MODERATE",
+      "servesVegetarianFood": false,
+      "regularOpeningHours": {
+        "periods": [
+          { "open": { "day": 0, "hour": 9 }, "close": { "day": 0, "hour": 20 } },
+          { "open": { "day": 1, "hour": 9 }, "close": { "day": 1, "hour": 20 } },
+          { "open": { "day": 2, "hour": 9 }, "close": { "day": 2, "hour": 20 } },
+          { "open": { "day": 3, "hour": 9 }, "close": { "day": 3, "hour": 20 } },
+          { "open": { "day": 4, "hour": 9 }, "close": { "day": 4, "hour": 20 } },
+          { "open": { "day": 5, "hour": 9 }, "close": { "day": 5, "hour": 20 } },
+          { "open": { "day": 6, "hour": 9 }, "close": { "day": 6, "hour": 20 } }
+        ]
+      }
+    },
+    {
+      "id": "POI3",
+      "displayName": { "text": "Museo del Vino", "languageCode": "it" },
+      "location": { "latitude": 43.078, "longitude": 11.62 },
+      "types": ["museum", "point_of_interest"],
+      "primaryType": "museum",
+      "rating": 4.2,
+      "priceLevel": "PRICE_LEVEL_INEXPENSIVE",
+      "servesVegetarianFood": false,
+      "regularOpeningHours": {
+        "periods": [
+          { "open": { "day": 3, "hour": 10 }, "close": { "day": 3, "hour": 18 } },
+          { "open": { "day": 4, "hour": 10 }, "close": { "day": 4, "hour": 18 } },
+          { "open": { "day": 5, "hour": 10 }, "close": { "day": 5, "hour": 18 } },
+          { "open": { "day": 6, "hour": 10 }, "close": { "day": 6, "hour": 18 } },
+          { "open": { "day": 0, "hour": 10 }, "close": { "day": 0, "hour": 18 } }
+        ]
+      }
+    }
+  ]
+}

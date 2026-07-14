@@ -1,0 +1,10 @@
+{
+  "_descrizione_test": "BUSINESS_PLAN Cap. 7.3 Simulazione A — Il Paradosso Finanziario. Atteso: Claude NON deve inventare hotel a 20€/notte; deve usare le opzioni più economiche fornite e compilare budget_alert.",
+  "email": "cliente.zurigo@mail.com",
+  "scopo": "Vacanza di lusso",
+  "destinazione": "Zurigo, Svizzera",
+  "arrivo": "2026-08-01",
+  "partenza": "2026-08-08",
+  "budget": 150,
+  "note": "Vorrei hotel 4 stelle e cene di lusso ogni sera."
+}

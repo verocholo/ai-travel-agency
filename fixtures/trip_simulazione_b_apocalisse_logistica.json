@@ -1,0 +1,10 @@
+{
+  "_descrizione_test": "BUSINESS_PLAN Cap. 7.3 Simulazione B — L'Apocalisse Logistica. Atteso: Claude deve applicare il pacing, eliminare d'ufficio una o piu attivita e giustificarlo, non accorpare attivita con travel_time > 45min senza buffer.",
+  "email": "cliente.roma@mail.com",
+  "scopo": "Torneo di tennis amatoriale al Foro Italico",
+  "destinazione": "Roma",
+  "arrivo": "2026-10-05",
+  "partenza": "2026-10-06",
+  "budget": 0,
+  "note": "Vorrei vedere anche i Musei Vaticani, il Colosseo e la Galleria Borghese nello stesso giorno del mio allenamento di tennis."
+}

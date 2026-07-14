@@ -1,0 +1,33 @@
+# [AGGIUNTO 2026-07-12 — deploy del microservizio service.py su Render.com]
+# Blueprint Render.com — vedi DEPLOY.md per la procedura passo-passo
+# completa (incluso come impostare le 4 variabili d'ambiente segrete, che
+# Render richiede di inserire a mano nella dashboard: `sync: false` sotto
+# significa "non sincronizzata da qui, la imposti tu manualmente", non
+# "non necessaria").
+#
+# [AGGIORNATO 2026-07-14 — preparativi Make.com, nuovo endpoint
+# POST /v1/pdf] `runtime: python` (buildpack nativo) sostituito con
+# `runtime: docker` — il nuovo endpoint PDF richiede `wkhtmltopdf`
+# (binario esterno), che il buildpack Python nativo di Render non
+# fornisce. Vedi Dockerfile in questa stessa cartella per il dettaglio
+# (incluso la nota di onestà: scritto sulla base di documentazione
+# ufficiale, non ancora costruito/testato end-to-end da questo sandbox
+# per un limite di rete — verificare col passo 4 di DEPLOY.md subito dopo
+# il deploy). `buildCommand`/`startCommand` non servono più: Docker usa il
+# Dockerfile (build) e la sua istruzione `CMD` (avvio) al posto loro.
+services:
+  - type: web
+    name: ai-travel-agency-service
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /health
+    envVars:
+      - key: SERVICE_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GOOGLE_MAPS_KEY
+        sync: false
+      - key: LITEAPI_KEY
+        sync: false

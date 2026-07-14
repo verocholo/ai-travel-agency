@@ -1,0 +1,10 @@
+{
+  "_descrizione_test": "BUSINESS_PLAN Cap. 7.3 Simulazione C — L'Isolamento Nutrizionale. Atteso: nessuna allucinazione; Claude deve inserire [SLOT LIBERO] con nota trasparente quando DATI_API_FORNITI.poi e vuoto o non copre il vincolo alimentare.",
+  "email": "cliente.rurale@mail.com",
+  "scopo": "Weekend relax in campagna",
+  "destinazione": "Piccolo borgo rurale isolato",
+  "arrivo": "2026-11-10",
+  "partenza": "2026-11-12",
+  "budget": 0,
+  "note": "Sono vegano, intollerante al lattosio e celiaco grave: nessun rischio di contaminazione."
+}

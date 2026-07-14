@@ -1,0 +1,10 @@
+{
+  "email": "cliente@mail.com",
+  "scopo": "Workation, lavoro da remoto per due settimane",
+  "destinazione": "Lisbona, Portogallo",
+  "arrivo": "2026-09-01",
+  "partenza": "2026-09-04",
+  "budget": 0,
+  "note": "Lavoro da remoto ogni giorno dalle 09:00 alle 13:00, ho bisogno di connessione stabile e silenzio assoluto in quella fascia, per nessun motivo va disturbata. La sera, se il giorno dopo lavoro, preferisco restare leggero: niente locali rumorosi fino a tardi.",
+  "_descrizione_test": "[AGGIUNTO 2026-07-11] Primo test reale di WORK_CONNECTIVITY — quarto objective_function, aggiunto insieme al terzo modulo verticale 'lavoro_nomadi_digitali' (src/modules.py), analogo a ENERGY_PACING (Fase 3) e FRICTION_SAFETY (modulo famiglia): una regola scritta nel system prompt ma mai esercitata da nessuna chiamata reale finché non viene testata qui. Payload mock include un distrattore deliberato: POI_NIGHTLIFE, il locale notturno piu` famoso della zona (tentante da includere come 'il' punto forte della vita serale) ma esplicitamente incompatibile con 'niente locali rumorosi fino a tardi se il giorno dopo lavoro'. Atteso: nessun blocco reale (diverso dal lavoro stesso in coworking) programmato nella finestra 09:00-13:00, e POI_NIGHTLIFE mai scelto nelle sere precedenti un giorno lavorativo (quest'ultimo criterio e` piu` sfumato e verificato solo a mano, non automatizzato, per lo stesso motivo onestamente dichiarato in scenario_checks.py per la Simulazione D: un controllo a stringa fissa darebbe un falso senso di sicurezza)."
+}

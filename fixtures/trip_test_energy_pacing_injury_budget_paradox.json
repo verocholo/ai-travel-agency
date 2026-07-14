@@ -1,0 +1,10 @@
+{
+  "email": "cliente@mail.com",
+  "scopo": "Torneo di padel amatoriale, sto recuperando da una distorsione alla caviglia",
+  "destinazione": "Cagliari, Sardegna",
+  "arrivo": "2026-09-20",
+  "partenza": "2026-09-23",
+  "budget": 200,
+  "note": "Ho due partite di torneo, una al giorno (turno 1 e turno 2). Sto recuperando da una distorsione alla caviglia: dopo ogni partita ho bisogno di un blocco di fisioterapia rigido e non spostabile dalle 15:00 alle 17:00, nessun'altra attività in quella fascia. Evitiamo qualsiasi altra attività ad alto impatto oltre alle partite stesse: niente palestra o allenamento funzionale aggiuntivo, il fisioterapista è stato chiaro su questo. Il nostro budget per l'intero soggiorno è limitato.",
+  "_descrizione_test": "[AGGIUNTO 2026-07-11 — Fase 2, terza fixture avversaria] Completa la copertura multi-vincolo sui 3 moduli verticali (dopo FRICTION_SAFETY e WORK_CONNECTIVITY): qui ENERGY_PACING. Combina QUATTRO cose sullo stesso itinerario: (1) alternanza sforzo/recupero standard (2 partite HIGH su 2 giorni, blocco successivo deve essere LOW); (2) un'esclusione categorica aggiuntiva legata all'infortunio (POI_GYM_HIIT, allenamento funzionale ad alto impatto, mai ammissibile anche se energeticamente 'plausibile' come riempitivo); (3) un blocco di fisioterapia rigido 15:00-17:00 dopo ogni partita (stessa meccanica di pisolino/blocco lavorativo, qui per un terzo motivo — verifica che il controllo sia davvero generico); (4) paradosso finanziario (budget 200€/3 notti vs H1 140€/notte=420€ minimo, H2 decoy senza travel_times). Automatizzato al 100% riusando i 4 controlli già esistenti: check_energy_alternation, check_no_excluded_poi_used (POI_GYM_HIIT), check_rigid_window_free_of_real_activity (15:00-17:00), check_budget_alert_when_needed."
+}

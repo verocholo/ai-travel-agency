@@ -1,0 +1,22 @@
+{
+  "data": [
+    {
+      "id": "H1",
+      "name": "Relais Borgo Val d'Orcia",
+      "latitude": 43.072,
+      "longitude": 11.612,
+      "stars": 5,
+      "city": "Val d'Orcia",
+      "country": "IT"
+    },
+    {
+      "id": "H2",
+      "name": "Agriturismo Le Terrazze",
+      "latitude": 43.081,
+      "longitude": 11.598,
+      "stars": 3,
+      "city": "Val d'Orcia",
+      "country": "IT"
+    }
+  ]
+}

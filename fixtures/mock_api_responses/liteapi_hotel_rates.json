@@ -1,0 +1,40 @@
+{
+  "data": [
+    {
+      "hotelId": "H1",
+      "roomTypes": [
+        {
+          "offerId": "OFFER-H1-001",
+          "rates": [
+            {
+              "name": "Camera Deluxe - Cancellazione flessibile",
+              "retailRate": {
+                "total": [{ "amount": 2450.00, "currency": "EUR" }],
+                "taxesAndFees": [{ "amount": 0, "currency": "EUR" }]
+              },
+              "cancellationPolicies": "Rimborsabile fino a 48h prima"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "hotelId": "H2",
+      "roomTypes": [
+        {
+          "offerId": "OFFER-H2-001",
+          "rates": [
+            {
+              "name": "Camera Standard - Non rimborsabile",
+              "retailRate": {
+                "total": [{ "amount": 890.00, "currency": "EUR" }],
+                "taxesAndFees": [{ "amount": 0, "currency": "EUR" }]
+              },
+              "cancellationPolicies": "Non rimborsabile"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

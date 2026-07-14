@@ -1,0 +1,4 @@
+Genera l'itinerario ottimizzato secondo le istruzioni di sistema.
+Di seguito i dati del cliente e i DATI_API_FORNITI come oggetto JSON. Usa esclusivamente questi dati.
+
+{{7.json}}

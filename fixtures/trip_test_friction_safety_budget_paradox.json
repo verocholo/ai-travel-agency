@@ -1,0 +1,10 @@
+{
+  "email": "cliente@mail.com",
+  "scopo": "Vacanza in famiglia con bambini piccoli, budget molto ridotto",
+  "destinazione": "Rimini, Emilia-Romagna",
+  "arrivo": "2026-08-10",
+  "partenza": "2026-08-14",
+  "budget": 250,
+  "note": "Bambini piccoli (2 e 4 anni), pisolino obbligatorio ogni giorno tra le 14:00 e le 16:00. Evitiamo salite ripide o percorsi con dislivello, sono troppo piccoli per quello. Il nostro budget per l'intero soggiorno è molto limitato: capiamo di dover rinunciare a qualcosa di lusso, ma non vogliamo sorprese sul prezzo finale.",
+  "_descrizione_test": "[AGGIUNTO 2026-07-11 — Fase 2, fixture avversaria] Prima combinazione di DUE HARD_CONSTRAINT sullo stesso itinerario invece di uno alla volta: il 'Paradosso Finanziario' della Simulazione A (budget 250€/4 notti = 62.5€/notte, ma l'hotel più economico disponibile costa 160€/notte -> Claude NON deve inventare un'opzione più economica, deve usare quella fornita e compilare budget_alert) nel contesto FRICTION_SAFETY (pisolino rigido 14:00-16:00, sentiero ripido da escludere). Verifica che le due regole non competano/si annullino a vicenda. Automatizzato al 100% riusando i controlli già esistenti: check_budget_alert_when_needed, check_no_excluded_poi_used (POI_TREKKING), check_rigid_window_free_of_real_activity (14:00-16:00)."
+}

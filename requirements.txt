@@ -1,0 +1,11 @@
+anthropic>=0.40.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+pytest>=8.0.0
+# [AGGIUNTI 2026-07-12 — microservizio HTTP per Make.com, vedi service.py]
+# flask e gunicorn non erano necessari finché il prototipo era solo un CLI
+# (main.py). gunicorn non è installabile in QUESTO sandbox (nessun accesso
+# PyPI se non api.anthropic.com — vedi CHANGELOG.md), ma lo sarà sulla
+# piattaforma di deploy reale (Render.com), che ha accesso internet pieno.
+flask>=3.1.0
+gunicorn>=22.0.0
