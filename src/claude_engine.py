@@ -50,7 +50,16 @@ def select_model(objective_function: str, duration_days: int) -> str:
 # oltre quella soglia, il budget cresce linearmente per giorno aggiuntivo,
 # con un tetto ben sotto il limite reale del modello (128.000 token,
 # verificato su platform.claude.com/docs — vedi call_claude() sotto).
-BASE_MAX_TOKENS = 16000
+# [FIX 2026-07-31, #4] BASE_MAX_TOKENS=16000 si e' rivelato insufficiente anche
+# per un viaggio entro BASELINE_DAYS: un test dal vivo di Lorenzo (6 giorni, 5
+# citta', vincoli molto densi/contrastanti) ha troncato la risposta a
+# output_tokens=16000 (stop_reason='max_tokens'), con 'itinerary' vuoto nella
+# risposta di /v1/itinerary e conseguente 400 a valle su /v1/pdf (body JSON
+# invalido). La densita' dei vincoli, non solo la durata in giorni, incide sulla
+# lunghezza dello <scratchpad>. Raddoppiato a 32000, stesso margine di headroom
+# gia' usato nel fix precedente (8192->16000), ancora ben sotto il tetto di
+# sicurezza MAX_TOKENS_CEILING=64000 e il limite reale del modello (128.000).
+BASE_MAX_TOKENS = 32000
 BASELINE_DAYS = 7
 TOKENS_PER_EXTRA_DAY = 1500
 MAX_TOKENS_CEILING = 64000
