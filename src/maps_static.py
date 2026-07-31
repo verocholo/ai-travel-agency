@@ -399,4 +399,15 @@ def _pick_day_anchor(
         return hotel_points[0]
     mean_lat = sum(p[0] for p in real_points_today) / len(real_points_today)
     mean_lng = sum(p[1] for p in real_points_today) / len(real_points_today)
-    return min(hotel_points, key=lambda hp: (hp[0] - mean_lat) ** 2 + (hp[1] - mean_lng) ** 2)
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # confronto di distanza in gradi al quadrato SENZA la correzione cos(lat)
+    # sul delta di longitudine: alle latitudini europee (~44°) un grado di
+    # longitudine vale ~0,72 di un grado di latitudine, quindi con più hotel si
+    # poteva scegliere come ancora del percorso del giorno l'hotel più LONTANO
+    # sul terreno. Stesso identico bug già chiuso in liteapi_client._distance_sq
+    # ([CORRETTO 2026-07-12]); qui era rimasto. Applico la stessa correzione.
+    lng_correction = math.cos(math.radians(mean_lat))
+    return min(
+        hotel_points,
+        key=lambda hp: (hp[0] - mean_lat) ** 2 + ((hp[1] - mean_lng) * lng_correction) ** 2,
+    )

@@ -367,7 +367,7 @@ def _render_at_a_glance(itinerary: dict, trip: dict, hotels: list[dict] | None, 
         )
     parts.append("</div>")
 
-    days = itinerary.get("days", [])
+    days = [d for d in (itinerary.get("days") or []) if isinstance(d, dict)]
     if days:
         parts.append("<div class='section-title'>In breve, giorno per giorno</div>")
         for day in days:
@@ -498,9 +498,14 @@ def _itinerary_has_any_energy_info(itinerary: dict, poi_energy: dict[str, str]) 
     riconosciuti (valore inatteso, non HIGH/MEDIUM/LOW) farebbe comparire
     la legenda senza che nessun chip venga poi mostrato davvero da
     nessuna parte nel documento — una legenda "orfana"."""
-    for day in itinerary.get("days", []) or []:
-        for block in day.get("blocks", []) or []:
-            tag = poi_energy.get(block.get("poi_id"))
+    for day in itinerary.get("days") or []:
+        if not isinstance(day, dict):
+            continue
+        for block in day.get("blocks") or []:
+            if not isinstance(block, dict):
+                continue
+            pid = block.get("poi_id")
+            tag = poi_energy.get(pid) if isinstance(pid, str) else None
             if _ENERGY_CHIP_CLASS.get(tag) is not None:
                 return True
     return False
@@ -562,7 +567,11 @@ def _render_maps_link(poi_id: str | None, location_lookup: dict[str, tuple[float
     reali sono note. Nessun link per blocchi senza `poi_id` (check-in
     generico, `[SLOT LIBERO]`) o il cui id non è tra gli hotel/POI
     realmente forniti al renderer."""
-    if not poi_id:
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento] un `poi_id` non
+    # hashable (lista, forma inattesa di Claude) faceva `location_lookup.get`
+    # → TypeError unhashable, crashando il rendering del PDF. Un id non-str non
+    # è comunque una chiave valida: nessun link, mai crash.
+    if not isinstance(poi_id, str) or not poi_id:
         return ""
     coords = location_lookup.get(poi_id)
     if coords is None:
@@ -675,8 +684,20 @@ def render_html(
 
     location_lookup = _build_location_lookup(hotels, poi)
 
-    for day in itinerary.get("days", []):
-        blocks = day.get("blocks", [])
+    for day in itinerary.get("days") or []:
+        # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+        # il rendering PDF NON è gated sull'esito PASS del Nodo 9 (main.py e
+        # /v1/pdf possono renderizzare un itinerario non ancora validato), quindi
+        # deve tollerare le stesse forme inattese del validator: `days`/`day`/
+        # `blocks`/`block` = None o non-dict. Prima `day.get("blocks", [])` con
+        # `"blocks": null` restituiva None → `len(None)` → crash → HTTP 500 su un
+        # input malformato del cliente. Guardie coerenti col resto del Nodo 9.
+        if not isinstance(day, dict):
+            continue
+        blocks = day.get("blocks") or []
+        if not isinstance(blocks, list):
+            blocks = []
+        blocks = [b for b in blocks if isinstance(b, dict)]
         # [FIX 2026-07-11 — secondo audit adversariale, richiesta di
         # Lorenzo "rendiamolo perfetto"] Un `.day-card` con `page-break-
         # inside: avoid` funziona bene finché il contenuto sta in una

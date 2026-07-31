@@ -62,10 +62,15 @@ def map_distance_matrix_response(data: dict, points: list[dict], mode: str = "dr
         for j, element in enumerate(elements):
             if i == j:
                 continue  # scarta diagonale punto->sé stesso
-            if element.get("status") != "OK":
+            if not isinstance(element, dict) or element.get("status") != "OK":
                 continue
-            duration_in_traffic = element.get("duration_in_traffic", {}).get("value")
-            duration = element.get("duration", {}).get("value")
+            # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale
+            # eseguito] `element.get("duration", {}).get("value")` crashava se
+            # il campo era presente ma null (`"duration": null`): il default
+            # `{}` non copre il null. In modalità primaria "driving" un crash
+            # qui fa fallire l'intero Nodo 4. `or {}` copre entrambi i casi.
+            duration_in_traffic = (element.get("duration_in_traffic") or {}).get("value")
+            duration = (element.get("duration") or {}).get("value")
             seconds = duration_in_traffic if duration_in_traffic is not None else duration
             if seconds is None:
                 continue

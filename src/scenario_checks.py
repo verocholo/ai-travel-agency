@@ -82,7 +82,13 @@ def check_budget_alert_when_needed(
         return True, "budget_mode UNLIMITED: nessun alert atteso (controllo non applicabile)"
     alert = itinerary.get("budget_alert")
     if min_cost_estimate is not None and budget_eur < min_cost_estimate:
-        return True, f"budget_alert correttamente compilato ({len(alert)} caratteri)"
+        # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+        # `len(alert)` assumeva che budget_alert fosse una stringa; se Claude lo
+        # emette come `true`/numero, `check_budget_compliance` sopra lo tratta
+        # comunque come "presente" (truthy) e non fallisce, ma qui `len(bool)`
+        # sollevava `TypeError: object of type 'bool' has no len()`. `str(alert)`
+        # rende il conteggio robusto a qualsiasi tipo troncato.
+        return True, f"budget_alert correttamente compilato ({len(str(alert))} caratteri)"
     return True, "budget compatibile o non verificabile senza min_cost_estimate (nessuna violazione rilevabile)"
 
 

@@ -32,7 +32,14 @@ def select_model(objective_function: str, duration_days: int) -> str:
     EXCLUSIVITY o viaggi >10gg -> Opus 4.8 (ragionamento logistico superiore)
     resto -> Sonnet 5 (rapporto qualità/COGS, Cap. 2.7)
     """
-    if "EXCLUSIVITY" in objective_function or duration_days > 10:
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # `select_model(None, ...)` sollevava `TypeError: argument of type
+    # 'NoneType' is not iterable`; e il match per SOTTOSTRINGA ("EXCLUSIVITY"
+    # in ...) instradava su Opus (più costoso) qualsiasi enum non-standard che
+    # contenesse "EXCLUSIVITY". Normalizzo None a "" e confronto sul valore enum
+    # esatto — l'unico objective_function che usa Opus è EXCLUSIVITY_ZERO_FRICTION.
+    objective_function = objective_function or ""
+    if objective_function == "EXCLUSIVITY_ZERO_FRICTION" or duration_days > 10:
         return "claude-opus-4-8"
     return "claude-sonnet-5"
 

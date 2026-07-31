@@ -153,7 +153,7 @@ class LiteApiClient:
             timeout=15,
         )
         resp.raise_for_status()
-        return resp.json().get("data", [])
+        return resp.json().get("data") or []
 
     def search_hotel_offers(
         self, hotel_ids: list[str], date_start: str, date_end: str,
@@ -181,7 +181,7 @@ class LiteApiClient:
             timeout=20,
         )
         resp.raise_for_status()
-        return resp.json().get("data", [])
+        return resp.json().get("data") or []
 
 
 def _distance_sq(lat1, lng1, lat2, lng2) -> float:
@@ -217,23 +217,41 @@ def _extract_total_price(rate_entry: dict) -> float:
     testa al file). Prova le forme plausibili in ordine e solleva
     LiteApiError se nessuna corrisponde — non inventa un prezzo.
     """
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # Guardie isinstance su room_types[0]/rates[0] (un `roomTypes:[null]` faceva
+    # `None.get(...)` → AttributeError) e — soprattutto — le conversioni
+    # `float(...)` finali erano scoperte: un `amount` null → `float(None)` →
+    # TypeError; un `amount:"N/A"` → `float()` → ValueError. Nessuna delle due è
+    # LiteApiError, quindi sfuggiva al `except LiteApiError` di
+    # select_anchor_hotel e faceva crashare l'INTERA selezione dell'hotel-ancora
+    # (proprio ciò che il docstring dichiara di non fare). Ora tutto ciò che non
+    # è un prezzo numerico pulito diventa LiteApiError: quell'entry viene
+    # scartata, il resto del batch resta usabile.
     room_types = rate_entry.get("roomTypes") or []
-    if not room_types:
-        raise LiteApiError(f"hotelId={rate_entry.get('hotelId')}: 'roomTypes' assente o vuoto")
+    if not room_types or not isinstance(room_types[0], dict):
+        raise LiteApiError(f"hotelId={rate_entry.get('hotelId')}: 'roomTypes' assente/vuoto/malformato")
     rates = room_types[0].get("rates") or []
-    if not rates:
-        raise LiteApiError(f"hotelId={rate_entry.get('hotelId')}: 'rates' assente o vuoto")
+    if not rates or not isinstance(rates[0], dict):
+        raise LiteApiError(f"hotelId={rate_entry.get('hotelId')}: 'rates' assente/vuoto/malformato")
     retail_rate = rates[0].get("retailRate")
-    if retail_rate is None:
-        raise LiteApiError(f"hotelId={rate_entry.get('hotelId')}: 'retailRate' assente")
+    if not isinstance(retail_rate, dict):
+        raise LiteApiError(f"hotelId={rate_entry.get('hotelId')}: 'retailRate' assente/malformato")
 
-    total = retail_rate.get("total") if isinstance(retail_rate, dict) else None
-    if isinstance(total, (int, float)):
-        return float(total)
-    if isinstance(total, dict) and "amount" in total:
-        return float(total["amount"])
-    if isinstance(total, list) and total and isinstance(total[0], dict) and "amount" in total[0]:
-        return float(total[0]["amount"])
+    total = retail_rate.get("total")
+    try:
+        if isinstance(total, bool):
+            pass  # bool è sottoclasse di int/float ma non è un prezzo
+        elif isinstance(total, (int, float)):
+            return float(total)
+        elif isinstance(total, dict) and "amount" in total:
+            return float(total["amount"])
+        elif isinstance(total, list) and total and isinstance(total[0], dict) and "amount" in total[0]:
+            return float(total[0]["amount"])
+    except (TypeError, ValueError):
+        raise LiteApiError(
+            f"hotelId={rate_entry.get('hotelId')}: 'retailRate.total' presente ma non "
+            f"convertibile a numero ({total!r})"
+        )
 
     raise LiteApiError(
         f"hotelId={rate_entry.get('hotelId')}: forma di 'retailRate.total' non riconosciuta "

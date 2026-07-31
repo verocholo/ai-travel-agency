@@ -46,7 +46,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Stessa start command già in uso su Render/Procfile — invariata, il
-# passaggio a Docker cambia solo COME viene costruita l'immagine, non
-# come il servizio viene avviato.
-CMD gunicorn service:app --bind 0.0.0.0:$PORT --workers 2 --timeout 280
+# [AGGIORNATO 2026-07-31 — audit di perfezionamento] `--timeout 120` era un
+# rischio latente: una generazione lenta (Opus per un viaggio >10gg/EXCLUSIVITY,
+# o /v1/pdf che fa una chiamata Claude per ogni POI + il subprocess wkhtmltopdf)
+# può superare 120s e vedersi killare il worker (il client riceve una
+# connessione chiusa, NON il JSON che il contratto promette). Alzato a 300s,
+# coerente col `timeout: 300` dei moduli HTTP di Make.com e col timeout=280 del
+# client Anthropic. `--threads 4` (worker gthread): i worker non si bloccano più
+# su I/O di rete, così l'health check di Render e le altre richieste rispondono
+# anche mentre una generazione lunga è in corso (prima 2 chiamate lente
+# saturavano entrambi i worker sync, /health incluso → riavvii a catena).
+# Procfile allineato a questa stessa riga.
+CMD gunicorn service:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 300

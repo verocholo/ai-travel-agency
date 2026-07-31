@@ -59,6 +59,14 @@ def build_feedback_user_message(itinerary: dict, objective_function: str | None 
 
 
 def _validate_feedback_shape(feedback: dict) -> None:
+    # [AGGIUNTO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # stesso caso di _validate_guide_shape: uno scalare JSON top-level faceva
+    # `f not in feedback` → TypeError invece del FeedbackGeneratorError pulito.
+    if not isinstance(feedback, dict):
+        raise FeedbackGeneratorError(
+            f"Il messaggio di feedback generato non è un oggetto JSON "
+            f"(trovato {type(feedback).__name__})."
+        )
     missing = [f for f in _REQUIRED_FIELDS if f not in feedback or feedback[f] in (None, "")]
     if missing:
         raise FeedbackGeneratorError(

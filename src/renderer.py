@@ -142,10 +142,18 @@ def render_markdown(
                 lines.append(f"- {p.get('name')}{price_suffix} `[{p.get('id')}]`")
             lines.append("")
 
-    for day in itinerary.get("days", []):
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento] guardie isinstance
+    # coerenti col resto del Nodo 9: il Markdown di revisione interna può essere
+    # renderizzato anche su un itinerario non ancora validato PASS, quindi deve
+    # tollerare `days`/`day`/`blocks`/`block` = None o non-dict senza crashare.
+    for day in itinerary.get("days") or []:
+        if not isinstance(day, dict):
+            continue
         lines.append(f"## Giorno {day.get('day')} — {day.get('title', '')}")
         lines.append("")
-        for block in day.get("blocks", []):
+        for block in day.get("blocks") or []:
+            if not isinstance(block, dict):
+                continue
             poi_id = block.get("poi_id")
             # [CORRETTO 2026-07-11 — audit qualità pre-lancio] `if poi_id`
             # (truthy) trattava un poi_id="" (stringa vuota) come

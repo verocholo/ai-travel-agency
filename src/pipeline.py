@@ -11,9 +11,27 @@ Orchestratore end-to-end — equivalente allo scenario Make.com completo
 """
 from __future__ import annotations
 import json
+import re
 from dataclasses import dataclass
 
 import requests
+
+
+# [AGGIUNTO 2026-07-31 — audit di perfezionamento, leak reale] Geocoding e
+# Distance Matrix passano la GOOGLE_MAPS_KEY come query param `key=...`. Una
+# `requests.exceptions.RequestException` porta nel proprio messaggio la URL
+# completa, quindi `...&key=<CHIAVE_GOOGLE_REALE>...`. Quel messaggio finiva
+# tale e quale nel `data_layer_error` restituito al client (service.py) →
+# esfiltrazione della chiave. Redigo qualsiasi `key=<valore>` (e, per
+# prudenza, header stile X-API-Key/x-goog-api-key) prima di esporre il testo.
+_SECRET_QS_RE = re.compile(r"(key=)[^&\s'\"]+", re.IGNORECASE)
+_SECRET_HDR_RE = re.compile(r"((?:x-api-key|x-goog-api-key)['\"]?\s*[:=]\s*['\"]?)[^\s,'\"}]+", re.IGNORECASE)
+
+
+def _redact_secrets(msg: str) -> str:
+    msg = _SECRET_QS_RE.sub(r"\1REDACTED", msg)
+    msg = _SECRET_HDR_RE.sub(r"\1REDACTED", msg)
+    return msg
 
 from .schemas import Trip
 from .triage import normalize_raw_input
@@ -180,7 +198,7 @@ def run_live_from_raw(raw: dict, settings) -> PipelineResult:
         return PipelineResult(
             trip=trip, payload={}, raw_claude_output="", itinerary=None,
             parse_error=None, validation_report=None, rendered_markdown=None,
-            data_layer_error=f"{type(e).__name__}: {e}",
+            data_layer_error=_redact_secrets(f"{type(e).__name__}: {e}"),
         )
 
     api_payload = ApiPayload(hotels=hotels, travel_times=travel_times, poi=pois)
@@ -215,6 +233,14 @@ def _call_claude_and_validate(trip: Trip, payload: dict, api_payload, api_key: s
             itinerary = parse_claude_output(raw_output)
         except ParseError as e:
             parse_error = str(e)
+    elif not raw_output and parse_error is None:
+        # [AGGIUNTO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+        # `call_claude` può restituire "" (risposta senza blocchi di testo);
+        # senza questo ramo il risultato usciva con itinerary=None, parse_error=
+        # None, validation=None — che service.py presentava come un 200 con tutti
+        # i campi null, un fallimento totale mascherato da successo verso Make.com.
+        # Ora è un errore esplicito, sullo stesso percorso di un ParseError.
+        parse_error = "Output di Claude vuoto: nessun contenuto testuale nella risposta."
 
     if itinerary is not None:
         valid_ids = {h.id for h in api_payload.hotels} | {p.id for p in api_payload.poi}

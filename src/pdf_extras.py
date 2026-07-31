@@ -93,11 +93,18 @@ def build_pdf_extras(
                     objective_function=trip.objective_function, module_id=module.id,
                 )
                 guides.append(guide)
-            except guide_generator.GuideGeneratorError:
-                # Il chiamante (CLI o servizio HTTP) decide come loggare
-                # l'avviso — questa funzione resta silenziosa sull'I/O, non
-                # presuppone una console disponibile (il servizio HTTP usa
-                # app.logger, non print()).
+            except Exception:
+                # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale
+                # eseguito] Prima si catturava SOLO GuideGeneratorError, ma
+                # `generate_poi_guide` NON avvolge la chiamata API in try/except:
+                # un errore di RETE/API (APIConnectionError, RateLimitError,
+                # Timeout) si propagava come eccezione diversa e faceva fallire
+                # l'INTERO PDF — contraddicendo il docstring, che promette di
+                # saltare il singolo POI proprio su "rete, parsing, campo
+                # mancante". `except Exception` rende la sezione davvero
+                # best-effort: una guida che fallisce viene saltata, il PDF esce.
+                # Il chiamante decide come loggare (questa funzione resta muta
+                # sull'I/O: il servizio HTTP usa app.logger, non print()).
                 pass
 
     feedback = None
@@ -106,7 +113,9 @@ def build_pdf_extras(
             feedback = feedback_generator.generate_post_trip_feedback(
                 itinerary, api_key=api_key, objective_function=trip.objective_function,
             )
-        except feedback_generator.FeedbackGeneratorError:
+        except Exception:
+            # Stesso motivo della guida sopra: un errore di rete/API non deve
+            # far fallire l'intero PDF, la sezione feedback è best-effort.
             pass
 
     used_pois = [poi_by_id[pid].to_dict() for pid in sorted(used_poi_ids) if pid in poi_by_id]

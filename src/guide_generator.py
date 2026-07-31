@@ -94,6 +94,15 @@ def build_guide_user_message(
 
 
 def _validate_guide_shape(guide: dict, poi_name: str) -> None:
+    # [AGGIUNTO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # se `parse_claude_output` restituisce uno scalare JSON (es. un numero),
+    # `f not in guide` faceva `argument of type 'int' is not iterable` →
+    # TypeError criptico invece del GuideGeneratorError pulito promesso.
+    if not isinstance(guide, dict):
+        raise GuideGeneratorError(
+            f"La guida generata per '{poi_name}' non è un oggetto JSON "
+            f"(trovato {type(guide).__name__})."
+        )
     missing = [f for f in _REQUIRED_FIELDS if f not in guide or guide[f] in (None, "")]
     if missing:
         raise GuideGeneratorError(

@@ -104,8 +104,14 @@ class TestCallClaude(unittest.TestCase):
     """
 
     def _make_fake_anthropic(self, response):
+        # [AGGIORNATO 2026-07-31 — FIX #5] call_claude() ora usa
+        # client.messages.stream() (context manager + get_final_message()),
+        # non più messages.create(): il mock riflette la nuova interfaccia.
+        # Volutamente NON viene wired anche .create — una regressione a
+        # create() farebbe fallire questi test invece di passare in silenzio.
         fake_client = MagicMock()
-        fake_client.messages.create.return_value = response
+        stream_cm = fake_client.messages.stream.return_value
+        stream_cm.__enter__.return_value.get_final_message.return_value = response
         fake_anthropic_module = MagicMock()
         fake_anthropic_module.Anthropic.return_value = fake_client
         return fake_anthropic_module, fake_client
@@ -134,7 +140,7 @@ class TestCallClaude(unittest.TestCase):
         fake_module, fake_client = self._make_fake_anthropic(response)
         with patch.dict("sys.modules", {"anthropic": fake_module}):
             call_claude({"a": 1}, "BALANCED", 3, api_key="fake-key")
-        kwargs = fake_client.messages.create.call_args.kwargs
+        kwargs = fake_client.messages.stream.call_args.kwargs
         self.assertNotIn("temperature", kwargs)
 
     def test_temperature_included_when_explicitly_passed(self):
@@ -142,7 +148,7 @@ class TestCallClaude(unittest.TestCase):
         fake_module, fake_client = self._make_fake_anthropic(response)
         with patch.dict("sys.modules", {"anthropic": fake_module}):
             call_claude({"a": 1}, "BALANCED", 3, api_key="fake-key", temperature=0.5)
-        kwargs = fake_client.messages.create.call_args.kwargs
+        kwargs = fake_client.messages.stream.call_args.kwargs
         self.assertEqual(kwargs["temperature"], 0.5)
 
     def test_prefill_disabled_by_default_conversation_ends_on_user_message(self):
@@ -152,7 +158,7 @@ class TestCallClaude(unittest.TestCase):
         fake_module, fake_client = self._make_fake_anthropic(response)
         with patch.dict("sys.modules", {"anthropic": fake_module}):
             call_claude({"a": 1}, "BALANCED", 3, api_key="fake-key")
-        kwargs = fake_client.messages.create.call_args.kwargs
+        kwargs = fake_client.messages.stream.call_args.kwargs
         self.assertEqual(kwargs["messages"][-1]["role"], "user")
 
     def test_prefill_when_explicitly_enabled_prepends_brace_to_result(self):
@@ -160,7 +166,7 @@ class TestCallClaude(unittest.TestCase):
         fake_module, fake_client = self._make_fake_anthropic(response)
         with patch.dict("sys.modules", {"anthropic": fake_module}):
             text = call_claude({"a": 1}, "BALANCED", 3, api_key="fake-key", use_prefill=True)
-        kwargs = fake_client.messages.create.call_args.kwargs
+        kwargs = fake_client.messages.stream.call_args.kwargs
         self.assertEqual(kwargs["messages"][-1]["role"], "assistant")
         self.assertEqual(kwargs["messages"][-1]["content"], "{")
         self.assertTrue(text.startswith("{"))
@@ -170,7 +176,7 @@ class TestCallClaude(unittest.TestCase):
         fake_module, fake_client = self._make_fake_anthropic(response)
         with patch.dict("sys.modules", {"anthropic": fake_module}):
             call_claude({"a": 1}, "EXCLUSIVITY_ZERO_FRICTION", 3, api_key="fake-key")
-        kwargs = fake_client.messages.create.call_args.kwargs
+        kwargs = fake_client.messages.stream.call_args.kwargs
         self.assertEqual(kwargs["model"], "claude-opus-4-8")
 
     def test_max_tokens_defaults_to_select_max_tokens_when_not_passed(self):
@@ -180,7 +186,7 @@ class TestCallClaude(unittest.TestCase):
         fake_module, fake_client = self._make_fake_anthropic(response)
         with patch.dict("sys.modules", {"anthropic": fake_module}):
             call_claude({"a": 1}, "BALANCED", 14, api_key="fake-key")
-        kwargs = fake_client.messages.create.call_args.kwargs
+        kwargs = fake_client.messages.stream.call_args.kwargs
         self.assertGreater(kwargs["max_tokens"], BASE_MAX_TOKENS)
 
     def test_max_tokens_explicit_override_still_respected(self):
@@ -188,7 +194,7 @@ class TestCallClaude(unittest.TestCase):
         fake_module, fake_client = self._make_fake_anthropic(response)
         with patch.dict("sys.modules", {"anthropic": fake_module}):
             call_claude({"a": 1}, "BALANCED", 14, api_key="fake-key", max_tokens=9999)
-        kwargs = fake_client.messages.create.call_args.kwargs
+        kwargs = fake_client.messages.stream.call_args.kwargs
         self.assertEqual(kwargs["max_tokens"], 9999)
 
 

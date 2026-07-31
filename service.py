@@ -72,6 +72,15 @@ from src.pdf_extras import build_pdf_extras
 
 app = Flask(__name__)
 
+# [AGGIUNTO 2026-07-31 — audit di perfezionamento] Limite dimensione body: senza
+# `MAX_CONTENT_LENGTH`, `request.get_json` bufferizza in memoria l'intero body
+# PRIMA che l'auth venga controllata — pochi POST giganti concorrenti su un
+# piano Render starter (RAM limitata, 2 worker) possono causare OOM/kill dei
+# worker (DoS). I payload legittimi (form Tally + api_payload) stanno ampiamente
+# sotto: 2 MB è un tetto generoso. Werkzeug risponde 413 (JSON, via l'error
+# handler globale) prima di leggere tutto.
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
+
 
 def _compute_test_suite_label() -> str:
     """
@@ -124,7 +133,14 @@ def _check_auth() -> str | None:
     provided = request.headers.get("X-Service-Key")
     if not expected:
         return "servizio non configurato: SERVICE_API_KEY assente sul server (fail-closed)"
-    if not provided or not hmac.compare_digest(provided, expected):
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # `hmac.compare_digest()` su stringhe con caratteri NON-ASCII solleva
+    # `TypeError: comparing strings with non-ASCII characters is not supported`
+    # → un header X-Service-Key con accenti/emoji dava 500 invece del 401
+    # uniforme (un aggressore poteva distinguere i due casi). Confronto in
+    # BYTE: elimina il TypeError mantenendo il tempo costante. `provided`
+    # None è già escluso dal `not provided`.
+    if not provided or not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
         return "non autorizzato: header X-Service-Key mancante o non valido"
     return None
 
@@ -182,8 +198,13 @@ def _preview_trip_error(raw_trip: dict) -> str | None:
         trip = normalize_raw_input(raw_trip)
     except KeyError as e:
         return f"campo obbligatorio mancante in 'trip': {e}"
-    except ValueError as e:
-        return str(e)
+    except (ValueError, TypeError, AttributeError) as e:
+        # [AGGIORNATO 2026-07-31 — audit di perfezionamento] TypeError/
+        # AttributeError aggiunti: un campo del form col TIPO sbagliato (numero
+        # al posto di testo, ecc. — output tipico di un modulo HTTP Make.com che
+        # interpola campi Tally grezzi) può ancora produrre queste eccezioni. Un
+        # errore del CLIENTE deve sempre essere un 400 leggibile, mai un 500.
+        return f"campo 'trip' malformato: {e}"
     trip_errors = trip.validate()
     if trip_errors:
         return f"Trip non valido: {trip_errors}"
@@ -306,13 +327,23 @@ def _parse_trip_and_api_payload(body: dict) -> tuple:
     da restituire subito, PRIMA di controllare le variabili d'ambiente
     del server (stesso principio già applicato a _preview_trip_error()).
     """
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # `body["api_payload"] or {}` protegge solo None/falsy: un api_payload
+    # TRUTHY ma non-dict (lista/stringa, da un wiring Make.com sbagliato o da un
+    # client ostile) passava, e poi `.get("hotels")` → AttributeError NON
+    # catturato (l'except era solo TypeError) → HTTP 500. Guardia esplicita di
+    # tipo + AttributeError/ValueError aggiunti all'except come rete.
+    if not isinstance(body.get("trip"), dict):
+        return None, None, ({"error": "'trip' deve essere un oggetto"}, 400)
+    if body.get("api_payload") is not None and not isinstance(body.get("api_payload"), dict):
+        return None, None, ({"error": "'api_payload' deve essere un oggetto (o assente)"}, 400)
     try:
         trip = Trip(**body["trip"])
         api_payload_dict = body["api_payload"] or {}
         hotels = [Hotel(**h) for h in api_payload_dict.get("hotels", [])]
         pois = [POI(**p) for p in api_payload_dict.get("poi", [])]
         travel_times = [TravelTime(**t) for t in api_payload_dict.get("travel_times", [])]
-    except TypeError as e:
+    except (TypeError, AttributeError, ValueError) as e:
         return None, None, ({"error": f"'trip' o 'api_payload' non hanno la forma attesa "
                                        f"(devono essere esattamente quelli restituiti da "
                                        f"/v1/itinerary): {e}"}, 400)

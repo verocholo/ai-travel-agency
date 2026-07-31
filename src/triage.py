@@ -31,7 +31,16 @@ from .schemas import Trip
 # "sport" per sport/sportivo/sportiva/sportivi) — per queste il confine
 # di parola è richiesto solo all'inizio, non alla fine, così il matching
 # resta intenzionale e non si rompe la copertura esistente.
-_STEM_KEYWORDS = {"bambin", "anzian", "infant", "sport"}
+# [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito] Lo
+# stem "sport" con confine solo iniziale ricreava esattamente la classe di
+# falso positivo "gara/garage" che questo meccanismo esiste per evitare:
+# "allo sportello del comune" (sportello = counter/desk) faceva dedurre
+# ENERGY_PACING per un viaggio di puro relax. Sostituito con due matcher
+# precisi: "sport" a confine PIENO (\bsport\b — prende la parola "sport" ma
+# non "sportello", che ha 'e' dopo) e lo stem "sportiv" (prende sportivo/a/i/e
+# ma non "sportello", che non contiene "sportiv"). Copertura invariata sui casi
+# reali, falso positivo eliminato.
+_STEM_KEYWORDS = {"bambin", "anzian", "infant", "sportiv"}
 
 
 def _keyword_matches(text: str, keyword: str) -> bool:
@@ -64,7 +73,7 @@ def deduce_objective_function(scopo: str) -> str:
     # sportiva" generica cadeva silenziosamente su BALANCED nonostante
     # ENERGY_PACING sia esattamente la lente di ottimizzazione per questo
     # caso (beachhead market).
-    if any(_keyword_matches(s, k) for k in ("torneo", "allenamento", "training", "match", "gara", "sport")):
+    if any(_keyword_matches(s, k) for k in ("torneo", "allenamento", "training", "match", "gara", "sport", "sportiv")):
         return "ENERGY_PACING"
     # [AGGIUNTO 2026-07-11] Terzo modulo verticale (src/modules.py):
     # "lavoro_nomadi_digitali". A differenza di sport/famiglia, "lavoro"
@@ -85,6 +94,17 @@ def deduce_objective_function(scopo: str) -> str:
 
 
 def _date_difference_days(start: str, end: str) -> int:
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # `date.fromisoformat(None)` (campo data non compilato nel form → null nel
+    # body Make.com) solleva `TypeError`, non `ValueError`, quindi sfuggiva al
+    # gestore di service.py che intercetta solo KeyError/ValueError → HTTP 500
+    # invece del 400 pulito che ricevono data mancante (KeyError) o data
+    # malformata (ValueError). Normalizzo a ValueError: input cliente non valido.
+    if not isinstance(start, str) or not isinstance(end, str):
+        raise ValueError(
+            f"date di arrivo/partenza devono essere stringhe ISO (ricevuti: "
+            f"{type(start).__name__}/{type(end).__name__}) — probabile campo non compilato"
+        )
     d1 = date.fromisoformat(start)
     d2 = date.fromisoformat(end)
     return (d2 - d1).days
@@ -108,7 +128,17 @@ def normalize_raw_input(raw: dict) -> Trip:
     date_start = raw["arrivo"]
     date_end = raw["partenza"]
     budget = raw.get("budget", 0) or 0
-    objective_function = deduce_objective_function(raw.get("scopo", ""))
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento] `float(budget)` su un
+    # budget non numerico (lista/dict da un wiring Make.com sbagliato) sollevava
+    # TypeError → 500; `deduce_objective_function` su uno scopo non-stringa
+    # faceva `(123).lower()` → AttributeError → 500. Normalizzo entrambi a
+    # ValueError (input cliente malformato → 400 pulito a valle).
+    if not isinstance(budget, (int, float)) or isinstance(budget, bool):
+        raise ValueError(f"budget deve essere numerico (ricevuto: {type(budget).__name__})")
+    scopo_raw = raw.get("scopo", "")
+    if not isinstance(scopo_raw, str):
+        raise ValueError(f"scopo deve essere una stringa (ricevuto: {type(scopo_raw).__name__})")
+    objective_function = deduce_objective_function(scopo_raw)
 
     trip = Trip(
         email=raw["email"],

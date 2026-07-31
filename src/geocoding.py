@@ -75,17 +75,37 @@ def parse_geocoding_response(data: dict) -> tuple[float, float]:
     # grezzo invece del GeocodingError esplicito già usato per gli altri
     # casi di fallimento in questa stessa funzione — inconsistente con la
     # filosofia "fallisci in modo esplicito" del resto del prototipo.
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # `float(...)` esplicito attorno a lat/lng: un `location["lat"]` presente ma
+    # null passava indenne e la funzione restituiva `(None, None)` violando in
+    # silenzio il contratto `tuple[float, float]`, col crash che emergeva molto
+    # più a valle (aritmetica su dest_lat). Ora un lat/lng null/non-numerico
+    # diventa subito un GeocodingError esplicito (TypeError catturato sotto).
     try:
         location = results[0]["geometry"]["location"]
-        return location["lat"], location["lng"]
-    except (KeyError, TypeError) as e:
-        raise GeocodingError(f"Geocoding OK ma shape della risposta inatteso: campo mancante {e}") from e
+        return float(location["lat"]), float(location["lng"])
+    except (KeyError, TypeError, ValueError) as e:
+        raise GeocodingError(f"Geocoding OK ma shape della risposta inatteso: campo mancante/invalido {e}") from e
+
+
+def _safe_json(resp, context: str) -> dict:
+    """[AGGIUNTO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    Una risposta 200 con body NON-JSON (pagina HTML da proxy/WAF/captive
+    portal — caso già incontrato realmente col proxy del sandbox) faceva
+    propagare un `requests.exceptions.JSONDecodeError` grezzo invece del
+    `GeocodingError` che il resto del modulo promette: chi cattura
+    `GeocodingError` per attivare il percorso email-scuse/refund non lo
+    intercettava. Normalizzo qui."""
+    try:
+        return resp.json()
+    except ValueError as e:
+        raise GeocodingError(f"{context}: risposta 200 ma body non-JSON ({e})") from e
 
 
 def geocode(address: str, api_key: str) -> tuple[float, float]:
     resp = requests.get(GEOCODE_URL, params=_geocode_params(address, api_key), timeout=15)
     resp.raise_for_status()
-    return parse_geocoding_response(resp.json())
+    return parse_geocoding_response(_safe_json(resp, "geocode"))
 
 
 def parse_geocoding_response_full(data: dict) -> dict:
@@ -122,4 +142,4 @@ def geocode_full(address: str, api_key: str) -> dict:
     poter segnalare match imprecisi invece di propagarli in silenzio."""
     resp = requests.get(GEOCODE_URL, params=_geocode_params(address, api_key), timeout=15)
     resp.raise_for_status()
-    return parse_geocoding_response_full(resp.json())
+    return parse_geocoding_response_full(_safe_json(resp, "geocode_full"))

@@ -215,11 +215,19 @@ def _normalize_price_level(raw: str | None) -> str | None:
 
 
 def _open_days(regular_opening_hours: dict | None) -> list[str]:
-    if not regular_opening_hours:
+    if not isinstance(regular_opening_hours, dict):
         return []
     days = set()
-    for period in regular_opening_hours.get("periods", []):
-        day_num = period.get("open", {}).get("day")
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # `regularOpeningHours: {"periods": null}` o un period `{"open": null}`
+    # (campi presenti ma null nella risposta Google) crashavano con
+    # TypeError/AttributeError, e la chiamata era FUORI dal try/except di
+    # map_places_response → l'intero batch di POI andava perso. `or {}`/`or []`
+    # coprono il null oltre all'assenza.
+    for period in regular_opening_hours.get("periods") or []:
+        if not isinstance(period, dict):
+            continue
+        day_num = (period.get("open") or {}).get("day")
         if day_num is not None and day_num in _DOW_MAP:
             days.add(_DOW_MAP[day_num])
     return sorted(days)
@@ -240,20 +248,26 @@ def map_places_response(data: dict) -> list[POI]:
     """
     pois = []
     skipped = 0
-    for item in data.get("places", []):
+    for item in data.get("places", []) or []:
+        # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+        # (1) l'INTERA costruzione del POI è ora dentro il try/except (prima
+        # solo id/lat/lng lo erano): un `displayName: null` faceva
+        # `None.get("text")` → AttributeError FUORI dal try, perdendo tutto il
+        # batch, incluso il place valido già mappato. `(item.get("displayName")
+        # or {})` copre il null; `AttributeError` aggiunto all'except come rete.
+        # (2) `item` stesso non-dict (es. null nella lista places) viene saltato.
+        if not isinstance(item, dict):
+            skipped += 1
+            continue
         primary_type = item.get("primaryType", "")
         try:
             poi_id = item["id"]
             lat = item["location"]["latitude"]
             lng = item["location"]["longitude"]
-        except (KeyError, TypeError):
-            skipped += 1
-            continue
-        pois.append(
-            POI(
+            poi = POI(
                 id=poi_id,
                 type=_normalize_type(primary_type),
-                name=item.get("displayName", {}).get("text", "[Da Verificare]"),
+                name=(item.get("displayName") or {}).get("text", "[Da Verificare]"),
                 lat=lat,
                 lng=lng,
                 energy_tag=_energy_tag(primary_type),
@@ -266,7 +280,10 @@ def map_places_response(data: dict) -> list[POI]:
                 affiliate_url="[Da Verificare]",
                 price_level=_normalize_price_level(item.get("priceLevel")),
             )
-        )
+        except (KeyError, TypeError, AttributeError):
+            skipped += 1
+            continue
+        pois.append(poi)
     if skipped:
         print(f"⚠️  map_places_response: {skipped} place scartati (schema inatteso: id/location mancanti)")
     return pois
@@ -284,13 +301,21 @@ def fetch_nearby_raw(
     stesso principio già applicato a LiteAPI (debug_liteapi_raw.py):
     ispeziona il JSON reale prima di fidarti di map_places_response().
 
-    [AGGIORNATO 2026-07-11] `included_types`: se omesso, usa ancora le 4
+    [AGGIORNATO 2026-07-11] `included_types`: se omesso (None), usa ancora le 4
     categorie originali (`_DEFAULT_INCLUDED_TYPES`) — nessuna rottura per
     chi chiamava questa funzione prima. Il chiamante (oggi pipeline.py)
     passa le categorie del modulo verticale attivo (src/modules.py), che
-    per "sport_active_travel" includono anche le categorie sportive."""
+    per "sport_active_travel" includono anche le categorie sportive.
+
+    [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    `included_types=[]` (lista vuota esplicita) ora significa "nessun filtro di
+    tipo": il campo `includedTypes` viene OMESSO dal body, e Google restituisce
+    place di qualsiasi tipo. Serviva per il controllo di freschezza dei POI
+    (freshness_check.py): prima passava None credendo di non filtrare, ma None =
+    default 4 categorie, quindi ogni POI dei moduli verticali (tennis_court,
+    water_park, gym, ...) veniva sistematicamente segnalato "non trovato /
+    forse chiuso" anche se aperto, perché quel filtro non poteva restituirlo."""
     body = {
-        "includedTypes": included_types if included_types is not None else _DEFAULT_INCLUDED_TYPES,
         "maxResultCount": max_results,
         "rankPreference": "DISTANCE",
         "languageCode": "it",
@@ -301,6 +326,11 @@ def fetch_nearby_raw(
             }
         },
     }
+    if included_types is None:
+        body["includedTypes"] = _DEFAULT_INCLUDED_TYPES
+    elif len(included_types) > 0:
+        body["includedTypes"] = included_types
+    # included_types == [] → nessun filtro: campo omesso, tutti i tipi.
     resp = requests.post(
         SEARCH_NEARBY_URL,
         json=body,

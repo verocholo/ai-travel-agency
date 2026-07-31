@@ -40,7 +40,13 @@ class ParseError(Exception):
 # scarta un elemento malformato invece di far fallire tutto;
 # distance_matrix.py: tollera il fallimento della modalità secondaria):
 # la difesa robusta è nel codice, non solo nell'istruzione al modello.
-_MARKDOWN_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```\s*$", re.DOTALL)
+# [AGGIORNATO 2026-07-31 — audit di perfezionamento] `re.IGNORECASE` aggiunto:
+# il pattern gestiva solo il tag lowercase ```` ```json ````, ma un modello LLM
+# emette con la stessa plausibilità ```` ```JSON ```` (variabilità reale già
+# osservata per la fence stessa). Senza IGNORECASE, un JSON perfettamente valido
+# avvolto in ```` ```JSON ```` veniva RIFIUTATO con ParseError — stessa classe di
+# bug del capstone Lisbona, solo sulla capitalizzazione del tag.
+_MARKDOWN_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```\s*$", re.DOTALL | re.IGNORECASE)
 
 
 def _strip_markdown_json_fence(raw_text: str) -> str:
@@ -122,9 +128,23 @@ def parse_claude_output(raw_text: str) -> dict:
     identico a prima (nessuna regressione per l'output già conforme)."""
     text = _strip_markdown_json_fence(raw_text)
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError as e:
         raise ParseError(f"Output di Claude non è JSON valido: {e}") from e
+    # [AGGIUNTO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # `json.loads` accetta QUALSIASI valore JSON top-level: un array `[...]`,
+    # uno scalare (`42`, `"ciao"`, `null`) sono JSON validi ma NON un itinerario.
+    # Prima venivano restituiti tali e quali e facevano crashare a valle
+    # (`'list'/'int' object has no attribute 'get'`) in pipeline/validator, fuori
+    # da qualsiasi try/except — un traceback grezzo (→ HTTP 500) invece del
+    # ParseError pulito che è lo scopo del Nodo 9. La docstring promette `-> dict`:
+    # ora il contratto è fatto rispettare qui, all'unico punto di ingresso.
+    if not isinstance(parsed, dict):
+        raise ParseError(
+            f"Output di Claude è JSON valido ma non è un oggetto (trovato "
+            f"{type(parsed).__name__}): un itinerario deve essere un oggetto JSON."
+        )
+    return parsed
 
 
 def check_format_compliance(
@@ -160,6 +180,13 @@ def check_format_compliance(
     validazione leggibile. Ora ogni forma inattesa produce un errore
     esplicito in `errors` ed è saltata in sicurezza, mai un crash."""
     errors = []
+    # [AGGIUNTO 2026-07-31 — audit di perfezionamento] guardia sul tipo
+    # dell'itinerario stesso: se Claude emette un array/scalare top-level (che
+    # `parse_claude_output` ora già respinge, ma la funzione è anche chiamata
+    # direttamente altrove/nei test), `itinerary.get(...)` crasherebbe. FAIL
+    # pulito invece del crash — coerente con "mai un crash" del docstring.
+    if not isinstance(itinerary, dict):
+        return (False, [f"itinerario non è un oggetto JSON (trovato {type(itinerary).__name__})"])
     days = itinerary.get("days")
     if not isinstance(days, list):
         errors.append(f"days deve essere una lista, trovato {type(days).__name__}")
@@ -193,7 +220,15 @@ def check_format_compliance(
                 f"(trip.duration_days)"
             )
         expected_numbers = list(range(1, expected_duration_days + 1))
-        if day_numbers != expected_numbers and sorted(n for n in day_numbers if n is not None) != expected_numbers:
+        # [AGGIUNTO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+        # `sorted(...)` su numeri di giorno di TIPO MISTO (es. `[1, "2"]`, se
+        # Claude emette un "day" come stringa) sollevava
+        # `TypeError: '<' not supported between 'str' and 'int'` — crash proprio
+        # nella funzione che promette "mai un crash". Filtro ai soli interi:
+        # un "day" non-intero non può comunque combaciare con la numerazione
+        # attesa, quindi il mismatch viene già segnalato dal ramo sotto.
+        sortable = sorted(n for n in day_numbers if isinstance(n, int))
+        if day_numbers != expected_numbers and sortable != expected_numbers:
             errors.append(
                 f"giorni numerati {day_numbers}, attesi 1..{expected_duration_days} senza buchi né duplicati"
             )
@@ -272,9 +307,17 @@ def check_no_raw_id_leakage(itinerary: dict, valid_ids: set[str]) -> tuple[bool,
     _add("budget_alert", itinerary.get("budget_alert"))
     for tip in itinerary.get("architect_tips") or []:
         _add("architect_tips", tip)
-    for day in itinerary.get("days", []):
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento] stesse guardie
+    # isinstance già presenti in check_rag_fidelity: senza, una forma
+    # `days`/`day`/`blocks`/`block` inattesa (None, non-dict) faceva crashare
+    # questa funzione con AttributeError/TypeError invece del FAIL pulito.
+    for day in itinerary.get("days") or []:
+        if not isinstance(day, dict):
+            continue
         _add(f"giorno {day.get('day')}: title", day.get("title"))
-        for block in day.get("blocks", []):
+        for block in day.get("blocks") or []:
+            if not isinstance(block, dict):
+                continue
             _add(f"giorno {day.get('day')}: activity", block.get("activity"))
             _add(f"giorno {day.get('day')}: location", block.get("location"))
             _add(f"giorno {day.get('day')}: logistics", block.get("logistics"))
@@ -351,12 +394,25 @@ def check_energy_pacing(
         for block in day.get("blocks", []) or []:
             if isinstance(block, dict):
                 all_blocks.append((day.get("day"), block))
+    # [AGGIUNTO 2026-07-31 — audit di perfezionamento, bug reale eseguito] un
+    # `poi_id` non hashable (es. una lista, forma inattesa da Claude) faceva
+    # sollevare `TypeError: unhashable type` da `poi_energy_by_id.get(poi_id)` —
+    # stessa classe già chiusa in check_rag_fidelity ma non qui, e questo ramo
+    # è SEMPRE attivo per i clienti ENERGY_PACING (il beachhead). Un id non-str
+    # non è comunque in mappa: lo tratto come energia sconosciuta (None), non
+    # crash.
+    def _energy_of(block: dict):
+        pid = block.get("poi_id")
+        if not isinstance(pid, str):
+            return None
+        return poi_energy_by_id.get(pid)
+
     for i in range(len(all_blocks) - 1):
         current_day, current_block = all_blocks[i]
         next_day, next_block = all_blocks[i + 1]
-        current_energy = poi_energy_by_id.get(current_block.get("poi_id"))
+        current_energy = _energy_of(current_block)
         if current_energy == "HIGH":
-            next_energy = poi_energy_by_id.get(next_block.get("poi_id"))
+            next_energy = _energy_of(next_block)
             if next_energy not in (None, "LOW"):
                 boundary = "" if current_day == next_day else f" (a cavallo tra giorno {current_day} e giorno {next_day})"
                 violations.append(
@@ -420,10 +476,20 @@ def check_geospatial_coherence(itinerary: dict) -> tuple[bool, list[str]]:
     errore più grave (blocchi fuori sequenza / sovrapposti).
     """
     errors = []
-    for day in itinerary.get("days", []):
-        blocks = day.get("blocks", [])
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento] guardie isinstance
+    # su days/day/blocks/block, come nelle altre funzioni del Nodo 9: una forma
+    # inattesa (None, non-dict) faceva crashare questo controllo invece di
+    # produrre il FAIL pulito. `or []` copre anche il caso `"days": null`.
+    for day in itinerary.get("days") or []:
+        if not isinstance(day, dict):
+            continue
+        blocks = day.get("blocks") or []
+        if not isinstance(blocks, list):
+            continue
         last_minutes = -1
         for block in blocks:
+            if not isinstance(block, dict):
+                continue
             minutes = _time_to_minutes(block.get("time", ""))
             if minutes is None:
                 errors.append(
@@ -467,6 +533,15 @@ def validate_itinerary(
     funzioni sopra per il razionale completo.
     """
     report = ValidationReport()
+    # [AGGIUNTO 2026-07-31 — audit di perfezionamento] guard top-level: se
+    # l'itinerario non è un oggetto (parse_claude_output lo respinge già, ma
+    # validate_itinerary è anche un punto di ingresso pubblico chiamabile
+    # direttamente), fallisci pulito su format_compliance senza far girare gli
+    # altri controlli su un tipo che li farebbe crashare.
+    if not isinstance(itinerary, dict):
+        report.format_compliance_ok = False
+        report.format_errors = [f"itinerario non è un oggetto JSON (trovato {type(itinerary).__name__})"]
+        return report
     report.format_compliance_ok, report.format_errors = check_format_compliance(
         itinerary, expected_duration_days=expected_duration_days
     )

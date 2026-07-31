@@ -76,6 +76,15 @@ class FreshnessReport:
 def check_hotel_freshness(hotel: Hotel, trip: Trip, client: LiteApiClient) -> FreshnessItemResult:
     try:
         offers = client.search_hotel_offers([hotel.id], trip.date_start, trip.date_end)
+        # [AGGIORNATO 2026-07-31 — audit di perfezionamento] il calcolo di
+        # `found` era FUORI dal try: una risposta `data:[null]`/`data:null`
+        # faceva `None.get(...)` → crash dell'intero run_freshness_check invece
+        # del contenimento per-item promesso. Spostato dentro il try, con
+        # filtro difensivo delle entry non-dict.
+        found = any(
+            isinstance(o, dict) and (o.get("hotelId") == hotel.id or o.get("id") == hotel.id)
+            for o in (offers or [])
+        )
     except Exception as e:
         # [FIX 2026-07-12 — trovato con una vera chiamata dal vivo contro
         # api.liteapi.travel, non in teoria] `search_hotel_offers()` NON
@@ -92,7 +101,6 @@ def check_hotel_freshness(hotel: Hotel, trip: Trip, client: LiteApiClient) -> Fr
         return FreshnessItemResult(
             hotel.id, hotel.name, "hotel", False, f"Verifica fallita (errore di rete/API): {e}"
         )
-    found = any(o.get("hotelId") == hotel.id or o.get("id") == hotel.id for o in offers)
     if found:
         return FreshnessItemResult(
             hotel.id, hotel.name, "hotel", True, "Tariffe ancora disponibili per queste date"
@@ -106,8 +114,15 @@ def check_hotel_freshness(hotel: Hotel, trip: Trip, client: LiteApiClient) -> Fr
 
 def check_poi_freshness(poi: POI, google_maps_key: str, radius_m: int = 200) -> FreshnessItemResult:
     try:
+        # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+        # `included_types=None` NON significa "cerca tutto": veniva tradotto
+        # nelle 4 categorie di default (restaurant/tourist_attraction/museum/
+        # park), quindi ogni POI di un modulo verticale (tennis_court, gym,
+        # water_park, ...) risultava SEMPRE "non trovato" = falso allarme
+        # garantito. `[]` ora è il segnale esplicito "nessun filtro / tutti i
+        # tipi" (vedi fetch_nearby_raw), così il POI può davvero essere ritrovato.
         fresh_pois = search_nearby(
-            poi.lat, poi.lng, google_maps_key, radius_m=radius_m, max_results=20, included_types=None
+            poi.lat, poi.lng, google_maps_key, radius_m=radius_m, max_results=20, included_types=[]
         )
     except Exception as e:  # stesso principio di places_client.py: non inghiottire, ma non serve un tipo specifico qui
         return FreshnessItemResult(

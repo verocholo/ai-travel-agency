@@ -198,6 +198,46 @@ class TestCreateItineraryValidation(ServiceTestCase):
         self.assertEqual(resp.status_code, 500)
         self.assertIn("ANTHROPIC_API_KEY", resp.get_json()["error"])
 
+    # [AGGIUNTO 2026-07-31 — audit di perfezionamento] Un campo del form col
+    # TIPO sbagliato (output tipico di un modulo HTTP Make.com che interpola
+    # campi Tally grezzi) deve dare un 400 pulito, MAI un 500 (prima:
+    # TypeError/AttributeError da normalize_raw_input sfuggivano all'except
+    # KeyError/ValueError → 500).
+    def test_trip_with_wrong_type_fields_rejected_as_400_not_500(self):
+        for bad in (
+            {**_RAW_TRIP, "budget": [1, 2]},
+            {**_RAW_TRIP, "budget": {"x": 1}},
+            {**_RAW_TRIP, "scopo": 123},
+            {**_RAW_TRIP, "arrivo": 20260910},
+            {**_RAW_TRIP, "destinazione": 42},
+            {**_RAW_TRIP, "email": 123},
+        ):
+            with self.subTest(bad=bad):
+                resp = self._post({"mode": "mock", "trip": bad, "scenario_key": "happy_path"})
+                self.assertEqual(resp.status_code, 400, resp.get_json())
+
+
+class TestAuthRobustness(ServiceTestCase):
+    # [AGGIUNTO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    def test_non_ascii_service_key_header_rejected_as_401_not_500(self):
+        resp = self.client.post(
+            "/v1/itinerary", json={"mode": "mock", "trip": _RAW_TRIP},
+            headers={"X-Service-Key": "chiavè-àccentata-🔑"},
+        )
+        self.assertEqual(resp.status_code, 401)
+
+
+class TestBodySizeLimit(ServiceTestCase):
+    # [AGGIUNTO 2026-07-31 — audit di perfezionamento] MAX_CONTENT_LENGTH
+    # protegge da body giganti (DoS memoria) — Werkzeug risponde 413.
+    def test_oversized_body_rejected(self):
+        big = "x" * (3 * 1024 * 1024)
+        resp = self.client.post(
+            "/v1/itinerary", data=big, content_type="application/json",
+            headers={"X-Service-Key": "segreto-di-test"},
+        )
+        self.assertEqual(resp.status_code, 413)
+
 
 class TestCreateItinerarySuccess(ServiceTestCase):
     def test_mock_mode_end_to_end_with_mocked_claude_call(self):
@@ -291,11 +331,42 @@ class TestRefine(ServiceTestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("non è precedente", str(resp.get_json()["error"]))
 
+    def test_api_payload_truthy_non_dict_rejected_as_400_not_500(self):
+        # [AGGIUNTO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+        # un api_payload truthy ma non-dict (lista/stringa) passava il fallback
+        # `or {}` e crashava su `.get(...)` → 500. Ora 400 pulito.
+        for bad in ([1, 2, 3], "notadict"):
+            with self.subTest(bad=bad):
+                resp = self._post({
+                    "trip": self.TRIP_DICT,
+                    "api_payload": bad,
+                    "current_itinerary": self.CURRENT_ITINERARY,
+                    "customer_request": "cambia il giorno 1",
+                })
+                self.assertEqual(resp.status_code, 400, resp.get_json())
+
+    def test_trip_non_string_field_rejected_as_400_not_500(self):
+        # [AGGIUNTO 2026-07-31] Trip.validate() type-safe: un campo non-stringa
+        # (qui date_start int) è un 400, non un crash 500.
+        broken = dict(self.TRIP_DICT)
+        broken["date_start"] = 5
+        resp = self._post({
+            "trip": broken,
+            "api_payload": self.API_PAYLOAD_DICT,
+            "current_itinerary": self.CURRENT_ITINERARY,
+            "customer_request": "x",
+        })
+        self.assertEqual(resp.status_code, 400, resp.get_json())
+
     def test_successful_refine_with_mocked_claude_call(self):
         with patch("src.config.SETTINGS.anthropic_api_key", "fake-key"), \
              patch("anthropic.Anthropic") as MockClient:
+            # [AGGIORNATO 2026-07-31 — FIX #6] refine_itinerary() ora usa
+            # client.messages.stream(): il mock riflette la nuova interfaccia.
             instance = MockClient.return_value
-            instance.messages.create.return_value = _mock_anthropic_response(_VALID_ITINERARY_JSON)
+            stream_cm = instance.messages.stream.return_value
+            stream_cm.__enter__.return_value.get_final_message.return_value = \
+                _mock_anthropic_response(_VALID_ITINERARY_JSON)
             resp = self._post({
                 "trip": self.TRIP_DICT,
                 "api_payload": self.API_PAYLOAD_DICT,

@@ -107,12 +107,23 @@ def refine_itinerary(
     system_prompt = load_system_prompt()
     user_message = build_refinement_user_message(current_itinerary, payload, customer_request)
 
-    response = client.messages.create(
+    # [FIX 2026-07-31, #6] Stesso bug gemello del [FIX #5] in claude_engine.py,
+    # trovato dall'audit PRIMA che un cliente reale lo colpisse: con
+    # BASE_MAX_TOKENS=32000, select_max_tokens() fa stimare all'SDK Anthropic
+    # una durata potenzialmente oltre i 10 minuti e l'API risponde 400
+    # ("Streaming is required for operations that may take longer than 10
+    # minutes") prima ancora di generare. L'affinamento rigenera un itinerario
+    # COMPLETO (stessa taglia della generazione iniziale), quindi era esposto
+    # esattamente come call_claude() — ma il fix streaming era stato applicato
+    # solo lì. Passo a client.messages.stream(): stream.get_final_message()
+    # ritorna lo stesso oggetto Message (content/stop_reason/usage).
+    with client.messages.stream(
         model=model,
         max_tokens=max_tokens,
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
-    )
+    ) as stream:
+        response = stream.get_final_message()
     raw_output = "".join(block.text for block in response.content if hasattr(block, "text"))
 
     if response.stop_reason == "max_tokens":

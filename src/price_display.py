@@ -27,6 +27,12 @@ def price_level_symbol(price_level: str | None) -> str:
     il dato non è disponibile — mai un simbolo inventato per un valore
     mancante o non riconosciuto (stesso principio di Fedeltà RAG di tutto
     il resto del progetto: un dato assente resta assente, non si finge)."""
-    if not price_level:
+    # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+    # `_SYMBOLS.get(price_level)` con un `price_level` non hashable (lista/dict
+    # da un `POI(**p)` costruito da body cliente non coercizzato in /v1/pdf)
+    # sollevava `TypeError: unhashable type`. La guardia `if not price_level`
+    # non protegge (una lista non vuota è truthy). Type-check esplicito: un
+    # valore non-stringa è "dato non riconosciuto" → assente, mai crash.
+    if not isinstance(price_level, str) or not price_level:
         return ""
     return _SYMBOLS.get(price_level, "")

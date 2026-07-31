@@ -45,9 +45,24 @@ class Trip:
         prototipo (LiteApiError, ClaudeEngineError, GeocodingError).
         """
         errors = []
-        if self.date_start >= self.date_end:
+        # [AGGIUNTO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
+        # `validate()` crashava sui dati malformati che dovrebbe RIFIUTARE,
+        # quando i campi non erano stringhe: `date_start >= date_end` con un
+        # int → `TypeError: '>=' not supported`; `destination.strip()` con un
+        # int → `AttributeError`; `"@" in email` con un int → `TypeError`.
+        # Raggiungibile in produzione: /v1/refine e /v1/pdf costruiscono
+        # `Trip(**body["trip"])` col body grezzo di Make.com e chiamano
+        # `.validate()` FUORI dal try/except di parsing → HTTP 500 invece del
+        # 400 pulito. Ora ogni campo di tipo sbagliato diventa un errore di
+        # validazione nella lista (fallimento esplicito), mai un crash.
+        if not isinstance(self.date_start, str) or not isinstance(self.date_end, str):
+            errors.append(
+                f"date_start/date_end devono essere stringhe ISO (ricevuti: "
+                f"{type(self.date_start).__name__}/{type(self.date_end).__name__})"
+            )
+        elif self.date_start >= self.date_end:
             errors.append("date_start non è precedente a date_end")
-        if not isinstance(self.budget_eur, (int, float)):
+        if not isinstance(self.budget_eur, (int, float)) or isinstance(self.budget_eur, bool):
             errors.append("budget_eur non è numerico")
         elif self.budget_eur < 0:
             errors.append(f"budget_eur non può essere negativo (ricevuto: {self.budget_eur})")
@@ -58,10 +73,10 @@ class Trip:
             )
         if self.budget_mode not in ("LIMITED", "UNLIMITED"):
             errors.append("budget_mode deve essere LIMITED o UNLIMITED")
-        if not self.destination or not self.destination.strip():
-            errors.append("destination è vuota")
-        if not self.email or "@" not in self.email:
-            errors.append(f"email non valida: '{self.email}'")
+        if not isinstance(self.destination, str) or not self.destination.strip():
+            errors.append("destination è vuota o non è una stringa")
+        if not isinstance(self.email, str) or "@" not in self.email:
+            errors.append(f"email non valida: {self.email!r}")
         return errors
 
     def to_dict(self) -> dict:

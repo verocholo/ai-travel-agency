@@ -55,6 +55,16 @@ def _mock_response(text: str, stop_reason: str = "end_turn"):
     return response
 
 
+def _wire_stream(MockClient, fake_response):
+    """[AGGIORNATO 2026-07-31 — FIX #6] refine_itinerary() ora usa
+    client.messages.stream() (context manager + get_final_message()), non
+    più messages.create(): il mock deve riflettere la nuova interfaccia.
+    Volutamente NON viene wired anche .create — una regressione a create()
+    farebbe fallire questi test invece di passare in silenzio."""
+    stream_cm = MockClient.return_value.messages.stream.return_value
+    stream_cm.__enter__.return_value.get_final_message.return_value = fake_response
+
+
 class TestBuildRefinementUserMessage(unittest.TestCase):
     def test_includes_customer_request_and_current_itinerary(self):
         msg = refinement.build_refinement_user_message(
@@ -90,7 +100,7 @@ class TestRefineItinerary(unittest.TestCase):
         }
         fake_response = _mock_response(json.dumps(updated_itinerary))
         with patch("anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = fake_response
+            _wire_stream(MockClient, fake_response)
             result = refinement.refine_itinerary(
                 CURRENT_ITINERARY, PAYLOAD, API_PAYLOAD, TRIP, "cambia il giorno 1", api_key="fake-key"
             )
@@ -115,7 +125,7 @@ class TestRefineItinerary(unittest.TestCase):
         }
         fake_response = _mock_response(json.dumps(short_itinerary))
         with patch("anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = fake_response
+            _wire_stream(MockClient, fake_response)
             result = refinement.refine_itinerary(
                 CURRENT_ITINERARY, PAYLOAD, API_PAYLOAD, TRIP, "cambia il giorno 1", api_key="fake-key"
             )
@@ -137,7 +147,7 @@ class TestRefineItinerary(unittest.TestCase):
         }
         fake_response = _mock_response(json.dumps(bad_itinerary))
         with patch("anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = fake_response
+            _wire_stream(MockClient, fake_response)
             result = refinement.refine_itinerary(
                 CURRENT_ITINERARY, PAYLOAD, API_PAYLOAD, TRIP, "aggiungi un'attività", api_key="fake-key"
             )
@@ -148,7 +158,7 @@ class TestRefineItinerary(unittest.TestCase):
         wrapped = "```json\n" + json.dumps(CURRENT_ITINERARY) + "\n```"
         fake_response = _mock_response(wrapped)
         with patch("anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = fake_response
+            _wire_stream(MockClient, fake_response)
             result = refinement.refine_itinerary(
                 CURRENT_ITINERARY, PAYLOAD, API_PAYLOAD, TRIP, "nessuna modifica", api_key="fake-key"
             )
@@ -158,7 +168,7 @@ class TestRefineItinerary(unittest.TestCase):
     def test_invalid_json_sets_parse_error_not_exception(self):
         fake_response = _mock_response("non e' JSON valido")
         with patch("anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = fake_response
+            _wire_stream(MockClient, fake_response)
             result = refinement.refine_itinerary(
                 CURRENT_ITINERARY, PAYLOAD, API_PAYLOAD, TRIP, "cambia qualcosa", api_key="fake-key"
             )
@@ -168,7 +178,7 @@ class TestRefineItinerary(unittest.TestCase):
     def test_truncated_response_raises_clear_error(self):
         fake_response = _mock_response("{incompleto", stop_reason="max_tokens")
         with patch("anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = fake_response
+            _wire_stream(MockClient, fake_response)
             with self.assertRaises(refinement.RefinementError) as ctx:
                 refinement.refine_itinerary(
                     CURRENT_ITINERARY, PAYLOAD, API_PAYLOAD, TRIP, "cambia qualcosa", api_key="fake-key"
@@ -183,22 +193,22 @@ class TestRefineItinerary(unittest.TestCase):
         long_trip = dataclasses.replace(TRIP, duration_days=14, date_end="2026-09-15")
         fake_response = _mock_response(json.dumps(CURRENT_ITINERARY))
         with patch("anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = fake_response
+            _wire_stream(MockClient, fake_response)
             refinement.refine_itinerary(
                 CURRENT_ITINERARY, PAYLOAD, API_PAYLOAD, long_trip, "cambia qualcosa", api_key="fake-key"
             )
-        kwargs = MockClient.return_value.messages.create.call_args.kwargs
+        kwargs = MockClient.return_value.messages.stream.call_args.kwargs
         self.assertGreater(kwargs["max_tokens"], BASE_MAX_TOKENS)
 
     def test_max_tokens_explicit_override_still_respected(self):
         fake_response = _mock_response(json.dumps(CURRENT_ITINERARY))
         with patch("anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = fake_response
+            _wire_stream(MockClient, fake_response)
             refinement.refine_itinerary(
                 CURRENT_ITINERARY, PAYLOAD, API_PAYLOAD, TRIP, "cambia qualcosa",
                 api_key="fake-key", max_tokens=1234,
             )
-        kwargs = MockClient.return_value.messages.create.call_args.kwargs
+        kwargs = MockClient.return_value.messages.stream.call_args.kwargs
         self.assertEqual(kwargs["max_tokens"], 1234)
 
 
