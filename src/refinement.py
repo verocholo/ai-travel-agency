@@ -105,7 +105,7 @@ def refine_itinerary(
     client = anthropic.Anthropic(api_key=api_key)
     model = select_model(trip.objective_function, trip.duration_days)
     system_prompt = load_system_prompt()
-    user_message = build_refinement_user_message(current_itinerary, payload, customer_request)
+    user_message = build_refinement_user_message(current_itinerario, payload, customer_request)
 
     # [FIX 2026-07-31, #6] Stesso bug gemello del [FIX #5] in claude_engine.py,
     # trovato dall'audit PRIMA che un cliente reale lo colpisse: con
@@ -117,13 +117,24 @@ def refine_itinerary(
     # esattamente come call_claude() — ma il fix streaming era stato applicato
     # solo lì. Passo a client.messages.stream(): stream.get_final_message()
     # ritorna lo stesso oggetto Message (content/stop_reason/usage).
-    with client.messages.stream(
-        model=model,
-        max_tokens=max_tokens,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
-    ) as stream:
-        response = stream.get_final_message()
+    # [FIX 2026-07-31, #7] Stesso gemello del fix in claude_engine.py: un errore
+    # dell'API di Anthropic (credito/rate limit/sovraccarico/rete) si propagava
+    # come eccezione grezza → HTTP 500 verso Make. Tradotto in RefinementError
+    # (l'errore tipizzato che questo percorso già gestisce).
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}],
+        ) as stream:
+            response = stream.get_final_message()
+    except anthropic.APIError as e:
+        raise RefinementError(
+            f"Chiamata all'API di Anthropic fallita durante l'affinamento "
+            f"({type(e).__name__}): {e}. Cause tipiche: credito esaurito, rate limit, "
+            f"o sovraccarico temporaneo — riprova più tardi."
+        ) from e
     raw_output = "".join(block.text for block in response.content if hasattr(block, "text"))
 
     if response.stop_reason == "max_tokens":
