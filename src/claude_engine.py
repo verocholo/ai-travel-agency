@@ -159,7 +159,15 @@ def call_claude(
     if temperature is not None:
         create_kwargs["temperature"] = temperature
 
-    response = client.messages.create(**create_kwargs)
+    # [FIX 2026-07-31, #5] max_tokens=32000 fa stimare all'SDK Anthropic una
+        # durata potenzialmente oltre i 10 minuti in modalita' sincrona, e l'API
+        # risponde 400 ("Streaming is required for operations that may take
+        # longer than 10 minutes") prima ancora di generare. Passo a
+        # client.messages.stream(), come raccomandato dall'SDK per le richieste
+        # lunghe: stream.get_final_message() ritorna lo stesso oggetto Message
+        # (content/stop_reason/usage), quindi il resto della funzione e' invariato.
+        with client.messages.stream(**create_kwargs) as stream:
+        response = stream.get_final_message() 
     text = "".join(block.text for block in response.content if hasattr(block, "text"))
     if use_prefill:
         text = "{" + text
