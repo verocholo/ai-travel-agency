@@ -173,8 +173,27 @@ def call_claude(
     # client.messages.stream(), come raccomandato dall'SDK per le richieste
     # lunghe: stream.get_final_message() ritorna lo stesso oggetto Message
     # (content/stop_reason/usage), quindi il resto della funzione e' invariato.
-    with client.messages.stream(**create_kwargs) as stream:
-        response = stream.get_final_message()
+    # [FIX 2026-07-31, #7 — trovato da un test end-to-end dal vivo su Make]
+    # Un errore dell'API di Anthropic (credito esaurito → BadRequestError
+    # "credit balance too low", rate limit → RateLimitError, sovraccarico →
+    # InternalServerError, timeout di rete → APIConnectionError) NON era
+    # catturato qui: si propagava come eccezione grezza fino all'handler
+    # globale di service.py → HTTP 500 con traceback verso Make.com, che si
+    # aspetta un errore parsabile. `anthropic.APIError` è la classe base di
+    # tutti gli errori dell'SDK: la traduco in ClaudeEngineError (l'errore
+    # tipizzato che pipeline.py già intercetta → errore pulito a valle),
+    # con un messaggio che distingue "servizio AI non disponibile" da un
+    # errore di formato dell'itinerario.
+    try:
+        with client.messages.stream(**create_kwargs) as stream:
+            response = stream.get_final_message()
+    except anthropic.APIError as e:
+        raise ClaudeEngineError(
+            f"Chiamata all'API di Anthropic fallita ({type(e).__name__}): {e}. "
+            f"Cause tipiche: credito esaurito, rate limit, o sovraccarico temporaneo "
+            f"del modello — NON è un errore di formato dell'itinerario. "
+            f"Riprova più tardi o verifica il saldo/limiti dell'account Anthropic."
+        ) from e
     text = "".join(block.text for block in response.content if hasattr(block, "text"))
     if use_prefill:
         text = "{" + text
