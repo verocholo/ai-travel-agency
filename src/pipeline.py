@@ -11,7 +11,6 @@ Orchestratore end-to-end — equivalente allo scenario Make.com completo
 """
 from __future__ import annotations
 import json
-import re
 from dataclasses import dataclass
 
 import requests
@@ -22,16 +21,12 @@ import requests
 # `requests.exceptions.RequestException` porta nel proprio messaggio la URL
 # completa, quindi `...&key=<CHIAVE_GOOGLE_REALE>...`. Quel messaggio finiva
 # tale e quale nel `data_layer_error` restituito al client (service.py) →
-# esfiltrazione della chiave. Redigo qualsiasi `key=<valore>` (e, per
-# prudenza, header stile X-API-Key/x-goog-api-key) prima di esporre il testo.
-_SECRET_QS_RE = re.compile(r"(key=)[^&\s'\"]+", re.IGNORECASE)
-_SECRET_HDR_RE = re.compile(r"((?:x-api-key|x-goog-api-key)['\"]?\s*[:=]\s*['\"]?)[^\s,'\"}]+", re.IGNORECASE)
-
-
-def _redact_secrets(msg: str) -> str:
-    msg = _SECRET_QS_RE.sub(r"\1REDACTED", msg)
-    msg = _SECRET_HDR_RE.sub(r"\1REDACTED", msg)
-    return msg
+# esfiltrazione della chiave.
+# [SPOSTATO 2026-08-01 in src/redaction.py] La stessa difesa serve ora anche
+# ad `alerting.py`, che manda i messaggi d'errore FUORI dal servizio: due
+# copie delle stesse regex sarebbero divergite. `_redact_secrets` resta come
+# alias per non rompere chi lo chiamava (incluso un test dell'audit).
+from .redaction import redact_secrets as _redact_secrets
 
 from .schemas import Trip
 from .triage import normalize_raw_input

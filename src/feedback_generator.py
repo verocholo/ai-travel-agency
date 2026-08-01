@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from . import cost_telemetry
 from .validator import parse_claude_output, ParseError
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -104,6 +105,11 @@ def generate_post_trip_feedback(
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
     )
+    # [AGGIUNTO 2026-08-01 — misura del costo reale]
+    cost_telemetry.record_llm(
+        "claude-sonnet-5", getattr(response, "usage", None), label="recensione"
+    )
+
     text = "".join(block.text for block in response.content if hasattr(block, "text"))
 
     if response.stop_reason == "max_tokens":

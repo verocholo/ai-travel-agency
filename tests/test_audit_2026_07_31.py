@@ -20,6 +20,11 @@ from src import renderer, pdf_renderer, pipeline
 from src.schemas import Trip
 
 
+class _FakeAnthropicAPIError(Exception):
+    """Sta in per anthropic.APIError (classe base degli errori dell'SDK)."""
+    pass
+
+
 # ---------------------------------------------------------------- validator.py
 
 class TestValidatorRobustness(unittest.TestCase):
@@ -252,6 +257,45 @@ class TestGeocodingRobustness(unittest.TestCase):
 
 
 # --------------------------------------------------------------- claude_engine.py
+
+class TestAnthropicApiErrorHandling(unittest.TestCase):
+    """[AGGIUNTO 2026-07-31 — trovato da un test end-to-end dal vivo su Make]
+    Un errore dell'API Anthropic (credito esaurito, rate limit, sovraccarico)
+    deve diventare un errore TIPIZZATO (ClaudeEngineError/RefinementError), non
+    propagarsi come eccezione grezza → HTTP 500 verso Make."""
+
+    def _fake_anthropic_raising(self, exc):
+        fake_client = MagicMock()
+        fake_client.messages.stream.side_effect = exc
+        fake_module = MagicMock()
+        fake_module.Anthropic.return_value = fake_client
+        # APIError deve essere una VERA classe eccezione perché `except
+        # anthropic.APIError` funzioni col modulo mockato.
+        fake_module.APIError = _FakeAnthropicAPIError
+        return fake_module
+
+    def test_call_claude_translates_api_error_to_claude_engine_error(self):
+        import sys
+        fake = self._fake_anthropic_raising(_FakeAnthropicAPIError("credit balance too low"))
+        with unittest.mock.patch.dict(sys.modules, {"anthropic": fake}):
+            with self.assertRaises(claude_engine.ClaudeEngineError) as ctx:
+                claude_engine.call_claude({"a": 1}, "BALANCED", 3, api_key="k")
+        self.assertIn("Anthropic", str(ctx.exception))
+
+    def test_refine_translates_api_error_to_refinement_error(self):
+        from src import refinement
+        from src.schemas import Trip, ApiPayload
+        trip = Trip(email="a@b.c", destination="R", date_start="2026-09-10",
+                    date_end="2026-09-12", duration_days=2, budget_mode="UNLIMITED",
+                    budget_eur=0.0, objective_function="BALANCED")
+        fake = self._fake_anthropic_raising(_FakeAnthropicAPIError("rate limit"))
+        with unittest.mock.patch("anthropic.Anthropic", fake.Anthropic), \
+             unittest.mock.patch("anthropic.APIError", _FakeAnthropicAPIError, create=True):
+            with self.assertRaises(refinement.RefinementError):
+                refinement.refine_itinerary(
+                    {"destination": "R", "days": []}, {}, ApiPayload(hotels=[], travel_times=[], poi=[]),
+                    trip, "cambia x", api_key="k")
+
 
 class TestSelectModelRobustness(unittest.TestCase):
     def test_none_objective_function_does_not_crash(self):

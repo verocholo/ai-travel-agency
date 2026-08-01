@@ -84,6 +84,14 @@ class ValidationReport:
     energy_pacing_violations: list[str] = field(default_factory=list)
     budget_compliance_ok: bool = True
     budget_compliance_violations: list[str] = field(default_factory=list)
+    # [AGGIUNTO 2026-07-31 — feedback diretto di Lorenzo dopo un viaggio
+    # reale: giornate troppo vuote / attività brevi gonfiate a 3 ore]
+    # Warning NON bloccanti (non toccano `passed`): densità/durata è in
+    # parte un giudizio (vedi certainty-matrix.md), quindi qui SEGNALIAMO
+    # all'operatore/Make senza bocciare il documento — la difesa primaria è
+    # la regola [HARD_CONSTRAINTS] punto 9 nel system prompt, questo è il
+    # termometro strutturale che rende visibile quando non viene rispettata.
+    day_density_warnings: list[str] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
@@ -113,6 +121,8 @@ class ValidationReport:
             lines += [f"  [pacing energetico] {e}" for e in self.energy_pacing_violations]
         if not self.budget_compliance_ok:
             lines += [f"  [budget] {e}" for e in self.budget_compliance_violations]
+        if self.day_density_warnings:
+            lines += [f"  [warning densità — non bloccante] {w}" for w in self.day_density_warnings]
         return "\n".join(lines)
 
 
@@ -505,6 +515,110 @@ def check_geospatial_coherence(itinerary: dict) -> tuple[bool, list[str]]:
     return (len(errors) == 0, errors)
 
 
+# [AGGIUNTI 2026-07-31 — feedback diretto di Lorenzo dopo aver testato di
+# persona un itinerario reale (interrail): "attività che richiedono poco
+# tempo le fai di lunghezze enormi (3 ore), lasciando così il cliente ad
+# annoiarsi in una città che non conosce"]
+# Soglie volutamente GENEROSE rispetto alla tabella di [HARD_CONSTRAINTS]
+# punto 9 nel system prompt: qui non stiamo giudicando se una singola visita
+# è tarata bene (è un giudizio, vedi certainty-matrix.md), stiamo cercando la
+# patologia strutturale — il buco di mezza giornata travestito da attività.
+# 180 min è oltre il massimo di QUALSIASI riga della tabella tranne il grande
+# museo nazionale (2h–3h), quindi un blocco che lo supera è quasi sempre
+# diluizione, non densità.
+_DENSITY_MAX_BLOCK_MINUTES = 180
+# Una giornata piena (né di arrivo né di partenza) deve coprire mattina,
+# pranzo, pomeriggio e sera: sotto i 5 blocchi è la "giornata con 3 sole
+# attività diluite" che il punto 9 chiama esplicitamente fallimento del
+# prodotto.
+_DENSITY_MIN_BLOCKS_FULL_DAY = 5
+
+
+def check_day_density(
+    itinerary: dict, objective_function: str | None = None
+) -> list[str]:
+    """
+    Termometro strutturale della regola [HARD_CONSTRAINTS] punto 9
+    ("DURATE REALISTICHE E GIORNATE PIENE", regola anti-noia).
+
+    Restituisce SOLO una lista di warning, NON una coppia (ok, errori) come
+    gli altri controlli del Nodo 9, ed è deliberatamente NON bloccante
+    (`ValidationReport.passed` la ignora). Il razionale è quello scritto in
+    `certainty-matrix.md`: "questa giornata è troppo vuota" è in parte un
+    giudizio editoriale, non una proprietà matematicamente decidibile —
+    bocciare un PDF su un giudizio significherebbe generare falsi FAIL su
+    itinerari legittimi (una giornata di trekking di 6 ore È un blocco solo,
+    ed è giusta). La difesa PRIMARIA resta la regola nel system prompt, che
+    agisce a monte in generazione; questo controllo è il termometro che rende
+    VISIBILE all'operatore (e a Make, via `_serialize_validation_report`)
+    quando quella regola non è stata rispettata, invece di lasciare che il
+    problema arrivi in silenzio fino al cliente — che è esattamente com'è
+    arrivato a Lorenzo la prima volta.
+
+    Due patologie rilevate:
+      1) blocco gonfiato — durata implicita (orario del blocco successivo −
+         orario del blocco) oltre `_DENSITY_MAX_BLOCK_MINUTES`;
+      2) giornata scarna — giornata intera (né la prima né l'ultima, che sono
+         legittimamente parziali per arrivo/partenza) con meno di
+         `_DENSITY_MIN_BLOCKS_FULL_DAY` blocchi.
+
+    L'ULTIMO blocco di ogni giornata non è mai valutato per la durata: non
+    esiste un orario successivo da cui dedurla, e inventare una fine della
+    giornata produrrebbe warning fantasma su ogni cena.
+
+    `objective_function == "EXCLUSIVITY_ZERO_FRICTION"` disattiva entrambi i
+    controlli: per quel profilo il vuoto è progettato (max 1 ancora forte al
+    giorno, vedi `[DYNAMIC_OBJECTIVE_FUNCTION]`), quindi ogni warning sarebbe
+    un falso positivo sistematico. Per gli altri profili i warning restano —
+    sono informativi, e ENERGY_PACING/WORK_CONNECTIVITY hanno comunque il
+    diritto di produrre blocchi lunghi purché siano blocchi ESPLICITI
+    (recupero, lavoro), cosa che l'operatore vede leggendo il warning.
+    """
+    if objective_function == "EXCLUSIVITY_ZERO_FRICTION":
+        return []
+    warnings: list[str] = []
+    # Stesse guardie difensive di check_geospatial_coherence: una forma
+    # inattesa non deve mai far crashare il Nodo 9.
+    days = itinerary.get("days") or []
+    if not isinstance(days, list):
+        return []
+    valid_days = [d for d in days if isinstance(d, dict)]
+    last_index = len(valid_days) - 1
+    for index, day in enumerate(valid_days):
+        day_label = day.get("day")
+        blocks_raw = day.get("blocks") or []
+        if not isinstance(blocks_raw, list):
+            continue
+        blocks = [b for b in blocks_raw if isinstance(b, dict)]
+        is_edge_day = index == 0 or index == last_index
+        if not is_edge_day and len(blocks) < _DENSITY_MIN_BLOCKS_FULL_DAY:
+            warnings.append(
+                f"giorno {day_label}: solo {len(blocks)} blocchi per una giornata intera "
+                f"(minimo di riferimento {_DENSITY_MIN_BLOCKS_FULL_DAY}: mattina, pranzo, "
+                f"pomeriggio, sera) — rischio giornata vuota/cliente annoiato"
+            )
+        for position, block in enumerate(blocks[:-1]):
+            start = _time_to_minutes(block.get("time", ""))
+            end = _time_to_minutes(blocks[position + 1].get("time", ""))
+            if start is None or end is None:
+                continue
+            duration = end - start
+            # Un delta negativo è un blocco fuori sequenza: già segnalato
+            # (come errore bloccante) da check_geospatial_coherence, qui
+            # sarebbe solo rumore duplicato.
+            if duration <= 0:
+                continue
+            if duration > _DENSITY_MAX_BLOCK_MINUTES:
+                hours = duration / 60
+                warnings.append(
+                    f"giorno {day_label}: blocco '{block.get('activity')}' delle "
+                    f"{block.get('time')} occupa {hours:.1f}h implicite "
+                    f"(soglia {_DENSITY_MAX_BLOCK_MINUTES // 60}h) — verificare che non sia "
+                    f"un'attività breve diluita per riempire un buco"
+                )
+    return warnings
+
+
 def validate_itinerary(
     itinerary: dict,
     valid_ids: set[str],
@@ -554,6 +668,10 @@ def validate_itinerary(
     report.budget_compliance_ok, report.budget_compliance_violations = check_budget_compliance(
         itinerary, budget_mode, budget_eur, min_cost_estimate
     )
+    # [AGGIUNTO 2026-07-31 — regola anti-noia, punto 9 di [HARD_CONSTRAINTS]]
+    # Non tocca `report.passed` (vedi docstring di check_day_density): è un
+    # termometro, non un filtro.
+    report.day_density_warnings = check_day_density(itinerary, objective_function)
     return report
 
 

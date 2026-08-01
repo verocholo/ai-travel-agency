@@ -2,7 +2,7 @@ import unittest
 from src.validator import (
     parse_claude_output, ParseError, check_format_compliance,
     check_rag_fidelity, check_geospatial_coherence, check_no_raw_id_leakage,
-    check_energy_pacing, check_budget_compliance,
+    check_energy_pacing, check_budget_compliance, check_day_density,
     validate_itinerary, strip_reasoning,
 )
 
@@ -506,6 +506,113 @@ class TestValidateItineraryIntegration(unittest.TestCase):
         self.assertFalse(report.passed)
         self.assertFalse(report.budget_compliance_ok)
         self.assertTrue(report.budget_compliance_violations)
+
+
+def _block(time, activity="Attività", poi_id=None):
+    return {"time": time, "activity": activity, "location": "x", "logistics": "", "poi_id": poi_id}
+
+
+def _full_day(day_number, times):
+    return {"day": day_number, "title": f"Giorno {day_number}", "blocks": [_block(t) for t in times]}
+
+
+# Giornata piena "sana": 6 blocchi, nessuna durata implicita oltre 3h.
+_DENSE_DAY_TIMES = ["09:00", "10:30", "13:00", "15:00", "17:30", "20:00"]
+
+
+class TestDayDensity(unittest.TestCase):
+    """
+    [AGGIUNTO 2026-07-31 — feedback diretto di Lorenzo dopo aver testato di
+    persona un itinerario reale: "attività che richiedono poco tempo le fai
+    di lunghezze enormi (3 ore), lasciando così il cliente ad annoiarsi in
+    una città che non conosce"] Termometro della regola [HARD_CONSTRAINTS]
+    punto 9. Volutamente NON bloccante: vedi check_day_density().
+    """
+
+    def _trip(self, middle_days):
+        # primo e ultimo giorno sono "di bordo" (arrivo/partenza): esenti dal
+        # controllo di densità, quindi li teniamo volutamente scarni per
+        # verificare proprio che NON generino warning.
+        days = [_full_day(1, ["16:00", "19:00"])]
+        for offset, times in enumerate(middle_days):
+            days.append(_full_day(2 + offset, times))
+        days.append(_full_day(2 + len(middle_days), ["09:00", "11:00"]))
+        return {**GOOD_ITINERARY, "days": days}
+
+    def test_dense_day_produces_no_warning(self):
+        warnings = check_day_density(self._trip([_DENSE_DAY_TIMES]))
+        self.assertEqual(warnings, [])
+
+    def test_sparse_full_day_is_flagged(self):
+        warnings = check_day_density(self._trip([["09:00", "12:00", "20:00"]]))
+        self.assertTrue(any("solo 3 blocchi" in w for w in warnings))
+
+    def test_inflated_block_is_flagged(self):
+        # 10:30 → 15:00 = 4h30 su una singola attività: attività breve diluita.
+        warnings = check_day_density(
+            self._trip([["09:00", "10:30", "15:00", "17:30", "19:00", "20:30"]])
+        )
+        self.assertTrue(any("4.5h implicite" in w for w in warnings))
+
+    def test_exactly_three_hours_is_not_flagged(self):
+        # La soglia è "oltre 3h", non "3h": un grande museo nazionale legittimo
+        # (Uffizi/Louvre, 2h–3h in tabella) non deve generare rumore.
+        warnings = check_day_density(
+            self._trip([["09:00", "10:00", "13:00", "15:00", "17:00", "19:00"]])
+        )
+        self.assertEqual(warnings, [])
+
+    def test_edge_days_are_exempt_from_block_count(self):
+        # Primo e ultimo giorno hanno 2 blocchi ciascuno e non devono essere
+        # segnalati: arrivo e partenza sono legittimamente parziali.
+        warnings = check_day_density(self._trip([_DENSE_DAY_TIMES]))
+        self.assertEqual(warnings, [])
+
+    def test_last_block_of_day_never_evaluated_for_duration(self):
+        # La cena delle 20:00 non ha un orario successivo: non deve produrre
+        # un warning fantasma su ogni singola giornata del prodotto.
+        warnings = check_day_density(self._trip([_DENSE_DAY_TIMES]))
+        self.assertFalse(any("20:00" in w for w in warnings))
+
+    def test_exclusivity_profile_is_exempt(self):
+        sparse = self._trip([["10:00", "18:00"]])
+        self.assertTrue(check_day_density(sparse))  # senza profilo: segnalato
+        self.assertEqual(
+            check_day_density(sparse, objective_function="EXCLUSIVITY_ZERO_FRICTION"), []
+        )
+
+    def test_out_of_sequence_block_not_double_reported(self):
+        # Fuori sequenza è già un errore BLOCCANTE di check_geospatial_coherence:
+        # qui sarebbe solo rumore duplicato.
+        bad = self._trip([["19:00", "10:00", "11:00", "12:00", "13:00", "14:00"]])
+        warnings = check_day_density(bad)
+        self.assertEqual(warnings, [])
+
+    def test_malformed_shapes_do_not_raise(self):
+        for broken in (
+            {"days": None},
+            {"days": "non-una-lista"},
+            {"days": [None, 42, "x"]},
+            {"days": [{"day": 1, "blocks": None}]},
+            {"days": [{"day": 1, "blocks": "no"}]},
+            {"days": [{"day": 1, "blocks": [None, {"time": "x"}]}]},
+            {},
+        ):
+            self.assertIsInstance(check_day_density(broken), list)
+
+    def test_warnings_do_not_block_validation(self):
+        # Il punto centrale del design: un itinerario diluito viene SEGNALATO,
+        # non bocciato — bocciare su un giudizio genererebbe falsi FAIL.
+        sparse = self._trip([["10:00", "18:00"]])
+        report = validate_itinerary(sparse, valid_ids={"H1", "POI1"})
+        self.assertTrue(report.day_density_warnings)
+        self.assertTrue(report.passed)
+        self.assertIn("densità", report.summary())
+
+    def test_good_itinerary_summary_has_no_density_noise(self):
+        report = validate_itinerary(GOOD_ITINERARY, valid_ids={"H1", "POI1"})
+        self.assertEqual(report.day_density_warnings, [])
+        self.assertNotIn("densità", report.summary())
 
 
 class TestStripReasoning(unittest.TestCase):

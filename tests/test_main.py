@@ -257,7 +257,13 @@ class TestBuildPdfExtras(unittest.TestCase):
         )
 
         self.assertEqual(len(guides), 1)
-        self.assertEqual(guides[0], {"title": "Guida OK"})
+        # [AGGIORNATO 2026-07-31] Ogni guida porta ora `poi_id`: è la chiave
+        # con cui `render_html()` costruisce l'ancora interna del PDF e con
+        # cui il link "Guida turistica tascabile" del giorno-per-giorno
+        # atterra sulla guida GIUSTA. Qui la prima guida fallisce, quindi la
+        # superstite deve portare l'id del SECONDO POI — non l'indice nella
+        # lista, che sarebbe sfasato di uno proprio a causa dello scarto.
+        self.assertEqual(guides[0], {"title": "Guida OK", "poi_id": "P2"})
         self.assertEqual(feedback, {"intro_message": "ciao"})
         # [Fedeltà RAG] used_pois riflette gli id EFFETTIVAMENTE usati
         # nell'itinerario, non dipende dal successo/fallimento della guida

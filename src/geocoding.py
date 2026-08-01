@@ -5,6 +5,8 @@ Trasforma trip.destination (o l'indirizzo del polo sportivo) in dest_lat/dest_ln
 from __future__ import annotations
 import requests
 
+from . import cost_telemetry
+
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 # [AGGIUNTO 2026-07-11 — audit di qualità, secondo giro] Bug reale scoperto
@@ -103,6 +105,7 @@ def _safe_json(resp, context: str) -> dict:
 
 
 def geocode(address: str, api_key: str) -> tuple[float, float]:
+    cost_telemetry.record_api_call("google_geocoding")
     resp = requests.get(GEOCODE_URL, params=_geocode_params(address, api_key), timeout=15)
     resp.raise_for_status()
     return parse_geocoding_response(_safe_json(resp, "geocode"))
@@ -140,6 +143,7 @@ def is_imprecise_match(location_type: str) -> bool:
 def geocode_full(address: str, api_key: str) -> dict:
     """Come geocode(), ma ritorna anche location_type/formatted_address per
     poter segnalare match imprecisi invece di propagarli in silenzio."""
+    cost_telemetry.record_api_call("google_geocoding")
     resp = requests.get(GEOCODE_URL, params=_geocode_params(address, api_key), timeout=15)
     resp.raise_for_status()
     return parse_geocoding_response_full(_safe_json(resp, "geocode_full"))

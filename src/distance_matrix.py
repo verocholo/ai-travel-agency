@@ -5,6 +5,8 @@ Decisione (Lorenzo): matrice piena N×N, hard-cap 10 punti (1 hotel + max 9 POI)
 """
 from __future__ import annotations
 import requests
+
+from . import cost_telemetry
 from .schemas import Hotel, POI, TravelTime
 
 DISTANCE_MATRIX_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -106,6 +108,9 @@ def fetch_distance_matrix_raw(points: list[dict], api_key: str, mode: str = "dri
     }
     if mode == "driving":
         params["departure_time"] = "now"
+    # Google fattura la Distance Matrix a ELEMENTI (origini x destinazioni),
+    # non a chiamata: qui la matrice e' quadrata sugli stessi punti.
+    cost_telemetry.record_api_call("google_distance_matrix", units=len(points) ** 2)
     resp = requests.get(DISTANCE_MATRIX_URL, params=params, timeout=20)
     resp.raise_for_status()
     return resp.json()

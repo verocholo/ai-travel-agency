@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from . import cost_telemetry
+
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 
@@ -194,6 +196,10 @@ def call_claude(
             f"del modello — NON è un errore di formato dell'itinerario. "
             f"Riprova più tardi o verifica il saldo/limiti dell'account Anthropic."
         ) from e
+    # [AGGIUNTO 2026-08-01 — misura del costo reale per itinerario] No-op fuori
+    # da un blocco `cost_telemetry.measure()`: nessun costo, nessun rischio.
+    cost_telemetry.record_llm(model, getattr(response, "usage", None), label="itinerario")
+
     text = "".join(block.text for block in response.content if hasattr(block, "text"))
     if use_prefill:
         text = "{" + text

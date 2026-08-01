@@ -22,6 +22,11 @@ from __future__ import annotations
 from src import guide_generator
 from src import feedback_generator
 from src import maps_static
+from src import directions as directions_mod
+from src import cost_estimator
+from src import place_links
+from src import tips_generator
+from src import feedback_link as feedback_link_mod
 from src.modules import get_module_for_objective_function
 
 
@@ -92,6 +97,14 @@ def build_pdf_extras(
                     poi.name, trip.destination, api_key=api_key,
                     objective_function=trip.objective_function, module_id=module.id,
                 )
+                # [AGGIUNTO 2026-07-31 — richiesta di Lorenzo: "reindirizzi il
+                # cliente alla fine del pdf ... portandolo DIRETTAMENTE
+                # sull'attrazione richiesta"] È l'unico anello che lega la
+                # guida al blocco del giorno-per-giorno da cui parte il link:
+                # `render_html()` costruisce l'ancora HTML da questo campo. Il
+                # nome del POI non basta come chiave (due "Duomo" nello stesso
+                # viaggio esistono davvero), l'id sì.
+                guide["poi_id"] = poi_id
                 guides.append(guide)
             except Exception:
                 # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale
@@ -130,3 +143,128 @@ def build_pdf_extras(
         )
 
     return guides, feedback, used_pois, map_png_bytes
+
+
+def build_pdf_sections(
+    itinerary: dict,
+    trip,
+    api_payload,
+    api_key: str | None = None,
+    google_maps_key: str | None = None,
+    travellers: int = 1,
+    include_day_maps: bool = True,
+    include_directions: bool = True,
+    include_costs: bool = True,
+    include_tips: bool = True,
+    include_place_links: bool = True,
+    include_feedback_link: bool = True,
+) -> dict:
+    """
+    [AGGIUNTO 2026-07-31 — richieste di Lorenzo del 2026-07-31: cartine per
+    giornata numerate, "cartina e come arrivare", "stima dei costi e dettaglio
+    budget", Architect's Tips per direttrici, "piani b se piove", menù e info
+    dei ristoranti]
+
+    Costruisce in UN SOLO POSTO le cinque nuove sezioni del PDF e le ritorna
+    come dizionario pronto da passare a `pdf_renderer.render_pdf(**sections)`.
+
+    Perché una funzione nuova e non altri valori di ritorno di
+    `build_pdf_extras()`: quella ritorna una 4-tupla posizionale usata da
+    `main.py`, da `service.py` e da una dozzina di test. Allargarla a nove
+    elementi posizionali significa rompere ogni chiamante per un guadagno
+    nullo — e ogni elemento aggiunto in futuro lo romperebbe di nuovo. Qui
+    ritorniamo un dict, che cresce senza rompere niente.
+
+    Ordine delle dipendenze (non è arbitrario):
+      1. i piani-giornata delle cartine numerate,
+      2. da quelli le tratte "come arrivare" — così i numeri stampati accanto
+         a ogni spostamento sono ESATTAMENTE i numeri disegnati sulla cartina,
+      3. la stima dei costi,
+      4. i consigli, che ricevono la stima come fatto verificato (un consiglio
+         di risparmio deve conoscere il totale, altrimenti è aria fritta).
+
+    Ogni sezione è best-effort e indipendente dalle altre, come guide e
+    feedback in `build_pdf_extras()`: una chiave API scaduta costa al cliente
+    quella sezione, mai il documento.
+    """
+    from src.itinerary_utils import extract_used_poi_ids
+
+    hotels = list(api_payload.hotels) if api_payload else []
+    pois = list(api_payload.poi) if api_payload else []
+    travel_times = getattr(api_payload, "travel_times", None) if api_payload else None
+    module = get_module_for_objective_function(trip.objective_function)
+
+    sections: dict = {
+        "day_maps": [], "directions": [], "cost_summary": None,
+        "tips": None, "place_cards": {}, "feedback_link": None,
+    }
+
+    # [AGGIUNTO 2026-08-01 — punto 6 del feedback "da investitore": la sezione
+    # recensione fa domande bellissime e non offre nessun posto dove
+    # rispondere] Non costa una chiamata di rete ne' una chiamata al modello:
+    # e' solo un codice opaco piu' una URL letta dall'ambiente. Se
+    # FEEDBACK_FORM_URL non e' impostata resta il solo `ref` (utile comunque a
+    # Make per archiviare la consegna) e il PDF non mostra nessun link morto.
+    if include_feedback_link:
+        try:
+            ref, url = feedback_link_mod.build_feedback_link(trip)
+            sections["feedback_link"] = {
+                "ref": ref,
+                "url": url,
+                "core_questions": feedback_link_mod.CORE_QUESTIONS if url else [],
+            }
+        except Exception:  # noqa: BLE001 — best-effort come ogni altra sezione
+            sections["feedback_link"] = None
+
+    # I piani servono sia alle cartine sia alle tratte: calcolati una volta.
+    try:
+        day_plans = maps_static.build_day_map_plans(hotels, pois, itinerary)
+    except Exception:
+        day_plans = []
+
+    if include_day_maps:
+        try:
+            sections["day_maps"] = maps_static.build_day_maps_for_itinerary(
+                hotels, pois, itinerary, google_maps_key,
+            )
+        except Exception:
+            sections["day_maps"] = []
+
+    if include_directions:
+        try:
+            sections["directions"] = directions_mod.build_directions_by_day(
+                day_plans, travel_times,
+            )
+        except Exception:
+            sections["directions"] = []
+
+    if include_costs:
+        try:
+            sections["cost_summary"] = cost_estimator.estimate_costs(
+                itinerary, trip, hotels, pois, travellers=travellers,
+            )
+        except Exception:
+            sections["cost_summary"] = None
+
+    if include_place_links:
+        try:
+            sections["place_cards"] = place_links.build_place_cards_by_id(
+                pois, only_ids=extract_used_poi_ids(itinerary),
+            )
+        except Exception:
+            sections["place_cards"] = {}
+
+    if include_tips and api_key:
+        try:
+            sections["tips"] = tips_generator.generate_architect_tips(
+                trip, itinerary, api_key=api_key, hotels=hotels, pois=pois,
+                cost_summary=sections["cost_summary"],
+                objective_function=trip.objective_function, module_id=module.id,
+            )
+        except Exception:
+            # Il ripiego non è "nessun consiglio": `render_html()` ristampa la
+            # vecchia lista piatta `itinerary["architect_tips"]` quando questa
+            # è None. Meglio sei consigli generici che una sezione vuota.
+            sections["tips"] = None
+
+    return sections

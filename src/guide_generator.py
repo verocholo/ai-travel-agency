@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import cost_telemetry
 from .validator import parse_claude_output, ParseError
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -115,6 +116,40 @@ def _validate_guide_shape(guide: dict, poi_name: str) -> None:
             f"'practical_tips' per '{poi_name}' deve essere una lista non vuota, "
             f"ricevuto: {guide['practical_tips']!r}"
         )
+    guide["highlights"] = normalize_highlights(guide.get("highlights"))
+
+
+def normalize_highlights(raw) -> list[dict]:
+    """
+    [AGGIUNTO 2026-07-31 — richiesta di Lorenzo: "piccola guida per un museo
+    che spiega le opere principali al suo interno"] Ripulisce il campo
+    OPZIONALE `highlights` (cosa guardare una volta dentro).
+
+    Scelta deliberata — questo campo NON entra in `_REQUIRED_FIELDS` e una
+    voce malformata viene scartata invece di far fallire l'intera guida: è un
+    arricchimento, e una guida senza "cosa cercare dentro" resta una guida
+    utile, mentre un'eccezione qui costerebbe al cliente anche la storia, i
+    consigli pratici e la durata consigliata di quel POI. Vale il contrario
+    per `practical_tips`, che è nel contratto minimo e infatti solleva.
+
+    Accetta sia `{"name", "why"}` sia una stringa nuda (i modelli a volte
+    "appiattiscono" le liste di oggetti): la stringa diventa
+    `{"name": ..., "why": ""}` invece di essere buttata via.
+    """
+    if not isinstance(raw, list):
+        return []
+    cleaned: list[dict] = []
+    for item in raw:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            why = str(item.get("why") or "").strip()
+        elif isinstance(item, str):
+            name, why = item.strip(), ""
+        else:
+            continue
+        if name:
+            cleaned.append({"name": name, "why": why})
+    return cleaned
 
 
 def generate_poi_guide(
@@ -123,7 +158,7 @@ def generate_poi_guide(
     api_key: str,
     objective_function: str | None = None,
     module_id: str | None = None,
-    max_tokens: int = 4000,
+    max_tokens: int = 6000,
 ) -> dict:
     """
     Genera una guida turistica per un singolo POI usando Claude. Ritorna
@@ -151,6 +186,13 @@ def generate_poi_guide(
     perché `history_summary` (2-4 paragrafi) più lo schema JSON pesano più
     di quanto stimato. Alzato a 4000, poi riverificato con una nuova
     chiamata reale che è andata a buon fine.
+
+    [ALZATO 2026-07-31 a 6000] Lo schema ha ora anche `highlights` (3-6 voci
+    con motivazione, vedi `normalize_highlights()`): senza margine ci si
+    ritroverebbe di nuovo nello stesso troncamento del 12 luglio, e stavolta
+    proprio sull'ultimo campo generato. Il troncamento resta comunque
+    rilevato ed esplicito, non silenzioso — il margine serve a non farlo
+    scattare, non a nasconderlo.
     """
     import anthropic  # import locale: cosi il resto del modulo resta testabile senza il pacchetto
 
@@ -166,6 +208,12 @@ def generate_poi_guide(
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
     )
+    # [AGGIUNTO 2026-08-01 — misura del costo reale] Una guida per ogni luogo
+    # del programma: e' la voce che moltiplica il costo di un itinerario.
+    cost_telemetry.record_llm(
+        "claude-sonnet-5", getattr(response, "usage", None), label="guide turistiche"
+    )
+
     text = "".join(block.text for block in response.content if hasattr(block, "text"))
 
     if response.stop_reason == "max_tokens":
@@ -192,10 +240,16 @@ def render_guide_markdown(guide: dict) -> str:
     impaginato per il cliente finale, che potrà integrare questo
     contenuto in futuro se Lorenzo lo desidera)."""
     tips = "\n".join(f"- {tip}" for tip in guide["practical_tips"])
+    highlights = ""
+    for item in guide.get("highlights") or []:
+        why = f" — {item['why']}" if item.get("why") else ""
+        highlights += f"- **{item['name']}**{why}\n"
+    highlights = f"## Cosa cercare, una volta dentro\n\n{highlights}\n" if highlights else ""
     return (
         f"# {guide['title']}\n\n"
         f"*Guida turistica: {guide['poi_name']}*\n\n"
         f"## Storia e contesto\n\n{guide['history_summary']}\n\n"
+        f"{highlights}"
         f"## Consigli pratici\n\n{tips}\n\n"
         f"## Quando visitare\n\n{guide['best_time_to_visit']}\n\n"
         f"## Durata consigliata della visita\n\n{guide['estimated_visit_duration']}\n\n"

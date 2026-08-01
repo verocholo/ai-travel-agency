@@ -4,14 +4,31 @@ Google Places API (New) — places:searchNearby.
 """
 from __future__ import annotations
 import requests
+
+from . import cost_telemetry
 from .schemas import POI
 
 SEARCH_NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby"
 
+# [AGGIORNATO 2026-07-31 — richiesta di Lorenzo: "per i ristoranti è utile che
+# crei un collegamento con il menù del ristorante che spesso trovi su internet
+# ed un altro collegamento con le info utili sul ristorante (indirizzo, numero,
+# ecc...)"]
+# Aggiunti `websiteUri`, `nationalPhoneNumber`, `formattedAddress`,
+# `googleMapsUri`: campi REALI della Places API (New), semplicemente mai
+# richiesti finora. Nota sui costi: il field mask determina la fascia di
+# fatturazione della chiamata; questi quattro campi stanno nella fascia
+# "Enterprise"/Contact già toccata da `regularOpeningHours`, quindi non
+# spostano la chiamata in una fascia superiore a quella attuale. Il sito
+# ufficiale è, nella pratica, la via più affidabile al menù di un ristorante
+# (il menù non è un campo dell'API: non esiste, e non lo inventiamo — vedi
+# src/place_links.py).
 FIELD_MASK = (
     "places.id,places.displayName,places.location,places.types,"
     "places.primaryType,places.rating,places.priceLevel,"
-    "places.regularOpeningHours,places.servesVegetarianFood"
+    "places.regularOpeningHours,places.servesVegetarianFood,"
+    "places.websiteUri,places.nationalPhoneNumber,"
+    "places.formattedAddress,places.googleMapsUri"
 )
 
 # [AGGIORNATO 2026-07-10] Le tabelle originali riconoscevano solo un pugno di
@@ -233,6 +250,17 @@ def _open_days(regular_opening_hours: dict | None) -> list[str]:
     return sorted(days)
 
 
+def _clean_str(value) -> str | None:
+    """[AGGIUNTO 2026-07-31] Un campo di contatto vale solo se è una stringa
+    non vuota: qualunque altra cosa (None, numero, dict, stringa di soli spazi)
+    diventa None, così `place_links.py` sa con certezza di dover ricadere sulla
+    ricerca onesta invece di costruire un link rotto."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
 def map_places_response(data: dict) -> list[POI]:
     """Funzione pura — mapping [5.2]/[5.3] di HTTP_MODULES_REALI.md.
 
@@ -279,6 +307,13 @@ def map_places_response(data: dict) -> list[POI]:
                 open_days=_open_days(item.get("regularOpeningHours")),
                 affiliate_url="[Da Verificare]",
                 price_level=_normalize_price_level(item.get("priceLevel")),
+                # [AGGIUNTI 2026-07-31] `_clean_str` normalizza a None
+                # qualunque valore non-stringa o vuoto: un campo presente ma
+                # null non deve diventare la stringa "None" dentro un link.
+                website=_clean_str(item.get("websiteUri")),
+                phone=_clean_str(item.get("nationalPhoneNumber")),
+                address=_clean_str(item.get("formattedAddress")),
+                google_maps_uri=_clean_str(item.get("googleMapsUri")),
             )
         except (KeyError, TypeError, AttributeError):
             skipped += 1
@@ -331,6 +366,7 @@ def fetch_nearby_raw(
     elif len(included_types) > 0:
         body["includedTypes"] = included_types
     # included_types == [] → nessun filtro: campo omesso, tutti i tipi.
+    cost_telemetry.record_api_call("google_places_nearby")
     resp = requests.post(
         SEARCH_NEARBY_URL,
         json=body,

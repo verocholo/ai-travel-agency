@@ -416,10 +416,19 @@ class TestGeneratePdf(ServiceTestCase):
 
     @staticmethod
     def _fake_render_pdf(itinerary, trip, hotels=None, guides=None, feedback=None,
-                          poi=None, map_png_bytes=None, output_path=None):
+                          poi=None, map_png_bytes=None, output_path=None, **kwargs):
         # Scrive un PDF finto ma non vuoto nel path richiesto — stesso
         # contratto reale di pdf_renderer.render_pdf() (scrive su
         # `output_path`, ritorna quel path), senza invocare wkhtmltopdf.
+        #
+        # [AGGIUNTO `**kwargs` il 2026-07-31] `render_pdf()` ha ora anche
+        # `day_maps`/`directions`/`cost_summary`/`tips`/`place_cards`, che il
+        # servizio passa sempre. Questi test verificano il CONTRATTO HTTP
+        # (codici di stato, forma del JSON, degrado senza chiave), non
+        # l'impaginazione: assorbire i parametri nuovi qui evita di dover
+        # aggiornare questa firma a ogni sezione aggiunta al documento. Che
+        # le sezioni arrivino davvero al renderer è verificato altrove, dai
+        # test dedicati di `tests/test_pdf_renderer.py`.
         from pathlib import Path
         Path(output_path).write_bytes(b"%PDF-1.4 contenuto finto\n")
         return output_path
@@ -540,6 +549,161 @@ class TestGeneratePdf(ServiceTestCase):
             })
         self.assertEqual(resp.status_code, 500)
         self.assertIn("wkhtmltopdf assente", resp.get_json()["error"])
+
+
+class TestGeneratePdfNewSections(TestGeneratePdf):
+    """
+    [AGGIUNTO 2026-07-31 — richieste di Lorenzo del 2026-07-31: cartine per
+    giornata numerate, "cartina e come arrivare", "stima dei costi e dettaglio
+    budget", Architect's Tips per direttrici, menù e info dei ristoranti]
+
+    Perché questi test esistono, e perché stanno qui e non in
+    `test_pdf_renderer.py`: il renderer sapeva già disegnare queste sezioni
+    PRIMA di questo lavoro, ma nessuno gliele passava. Il percorso che porta a
+    un cliente pagante è UNO — lo scenario Make.com che chiama `POST /v1/pdf` —
+    quindi una sezione che il renderer sa impaginare ma che il servizio non
+    inoltra semplicemente non esiste. È esattamente il modo in cui questa
+    funzionalità può tornare a sparire in silenzio in futuro (un refactoring
+    della firma, un `**sections` dimenticato) senza che un solo test rosso lo
+    segnali. Questi test bloccano proprio quel punto: il collegamento, non il
+    disegno.
+
+    Eredita da `TestGeneratePdf` per riusarne fixture, `_post()` e
+    `_fake_render_pdf` — le stesse, non copie che possono divergere.
+    """
+
+    def _post_capturing_render_kwargs(self, body):
+        """Esegue la richiesta e restituisce `(risposta, kwargs_del_renderer)`.
+
+        Registra i kwargs davvero ricevuti da `render_pdf()` invece di
+        fidarsi del JSON di risposta: i contatori nella risposta sono
+        anch'essi codice nostro e potrebbero mentire in modo coerente. Qui si
+        guarda il confine vero — cosa arriva all'impaginatore.
+        """
+        captured = {}
+
+        def _recording_render_pdf(*args, **kwargs):
+            captured.update(kwargs)
+            return self._fake_render_pdf(*args, **kwargs)
+
+        with patch("service.pdf_renderer.render_pdf", side_effect=_recording_render_pdf):
+            resp = self._post(body)
+        return resp, captured
+
+    _PURE = {"include_guides": False, "include_feedback": False, "include_map": False}
+
+    def test_new_sections_are_forwarded_by_default_without_being_requested(self):
+        # IL test di questo blocco. Il body NON nomina nessuno dei flag nuovi
+        # — è esattamente il body che invia lo scenario Make.com in
+        # produzione oggi, scritto prima che queste sezioni esistessero. Se
+        # il default fosse `False`, o se `**sections` sparisse dalla chiamata,
+        # il cliente riceverebbe il vecchio documento senza che nulla si
+        # rompa: da qui la richiesta "senza ulteriori prompt o strigliate".
+        resp, kwargs = self._post_capturing_render_kwargs({
+            "trip": self.TRIP_DICT,
+            "api_payload": self.API_PAYLOAD_DICT,
+            "itinerary": self.ITINERARY_WITH_POI,
+            **self._PURE,
+        })
+        self.assertEqual(resp.status_code, 200)
+        for key in ("day_maps", "directions", "cost_summary", "tips", "place_cards"):
+            self.assertIn(key, kwargs, f"'{key}' non è arrivato a render_pdf()")
+        # Le tratte "come arrivare", la stima costi e le schede luogo sono
+        # calcolate in Python puro (nessuna chiave API): con questo itinerario
+        # devono esserci per davvero, non solo essere presenti come chiave.
+        self.assertTrue(kwargs["directions"])
+        self.assertIsNotNone(kwargs["cost_summary"])
+        self.assertIn("P1", kwargs["place_cards"])
+
+    def test_response_reports_which_sections_made_it_into_the_document(self):
+        # Ogni sezione degrada in silenzio: senza questi contatori, un PDF
+        # monco è indistinguibile da uno completo lato Make.com.
+        resp, _ = self._post_capturing_render_kwargs({
+            "trip": self.TRIP_DICT,
+            "api_payload": self.API_PAYLOAD_DICT,
+            "itinerary": self.ITINERARY_WITH_POI,
+            **self._PURE,
+        })
+        data = resp.get_json()
+        self.assertEqual(data["directions_included"], 1)
+        self.assertEqual(data["place_cards_included"], 1)
+        self.assertTrue(data["costs_included"])
+        # Senza ANTHROPIC_API_KEY i consigli estesi non si generano: il campo
+        # deve dirlo, non tacerlo.
+        self.assertFalse(data["tips_included"])
+        # Senza GOOGLE_MAPS_KEY nessuna cartina: idem.
+        self.assertEqual(data["day_maps_included"], 0)
+
+    def test_single_section_can_be_switched_off_without_touching_the_others(self):
+        # I flag servono a spegnere una sezione in produzione se dà problemi,
+        # senza ri-deployare e senza perdere il resto del documento.
+        resp, kwargs = self._post_capturing_render_kwargs({
+            "trip": self.TRIP_DICT,
+            "api_payload": self.API_PAYLOAD_DICT,
+            "itinerary": self.ITINERARY_WITH_POI,
+            "include_directions": False,
+            **self._PURE,
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(kwargs["directions"], [])
+        self.assertIsNotNone(kwargs["cost_summary"])
+        self.assertIn("P1", kwargs["place_cards"])
+
+    def test_non_boolean_new_flag_rejected_naming_the_offending_field(self):
+        resp = self._post({
+            "trip": self.TRIP_DICT,
+            "api_payload": self.API_PAYLOAD_DICT,
+            "itinerary": self.ITINERARY_WITH_POI,
+            "include_costs": "si",
+        })
+        self.assertEqual(resp.status_code, 400)
+        # Il messaggio deve nominare il campo sbagliato: con otto flag, un
+        # "devono essere booleani" generico costringe chi integra a provarli
+        # a uno a uno.
+        self.assertIn("include_costs", resp.get_json()["error"])
+
+    def test_travellers_reaches_the_cost_estimate(self):
+        resp, kwargs = self._post_capturing_render_kwargs({
+            "trip": self.TRIP_DICT,
+            "api_payload": self.API_PAYLOAD_DICT,
+            "itinerary": self.ITINERARY_WITH_POI,
+            "travellers": 2,
+            **self._PURE,
+        })
+        self.assertEqual(resp.status_code, 200)
+        # `travellers` non è un campo di `Trip` (non esiste nello schema):
+        # viaggia solo per questa strada, quindi se il parametro si perde per
+        # via nessun altro test se ne accorge.
+        self.assertEqual(kwargs["cost_summary"]["travellers"], 2)
+
+    def test_invalid_travellers_rejected(self):
+        for bad in ("due", 0, -1, 21, 2.5, True):
+            with self.subTest(travellers=bad):
+                resp = self._post({
+                    "trip": self.TRIP_DICT,
+                    "api_payload": self.API_PAYLOAD_DICT,
+                    "itinerary": self.ITINERARY_WITH_POI,
+                    "travellers": bad,
+                })
+                self.assertEqual(resp.status_code, 400)
+                self.assertIn("travellers", resp.get_json()["error"])
+
+    def test_broken_section_costs_that_section_not_the_document(self):
+        # Il patto dichiarato in `build_pdf_sections()`: una chiave scaduta o
+        # un fornitore che cambia formato costano al cliente UNA sezione, mai
+        # il documento che ha pagato.
+        with patch("src.pdf_extras.cost_estimator") as mock_costs:
+            mock_costs.estimate_costs.side_effect = RuntimeError("fornitore giù")
+            resp, kwargs = self._post_capturing_render_kwargs({
+                "trip": self.TRIP_DICT,
+                "api_payload": self.API_PAYLOAD_DICT,
+                "itinerary": self.ITINERARY_WITH_POI,
+                **self._PURE,
+            })
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(kwargs["cost_summary"])
+        self.assertFalse(resp.get_json()["costs_included"])
+        self.assertTrue(kwargs["directions"])
 
 
 if __name__ == "__main__":

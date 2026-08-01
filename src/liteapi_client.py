@@ -41,6 +41,8 @@ Val d'Orcia — vedi debug_liteapi_raw.py e prototipo-status.md.
 from __future__ import annotations
 import math
 import requests
+
+from . import cost_telemetry
 from .schemas import Hotel
 
 BASE_URL = "https://api.liteapi.travel/v3.0"
@@ -146,6 +148,7 @@ class LiteApiClient:
         }
         if hotel_type_ids:
             params["hotelTypeIds"] = ",".join(str(t) for t in hotel_type_ids)
+        cost_telemetry.record_api_call("liteapi")
         resp = requests.get(
             HOTELS_BY_GEOCODE_URL,
             headers=self._headers(),
@@ -174,6 +177,7 @@ class LiteApiClient:
         # budget_eur non è un filtro diretto documentato per hotels/rates (a
         # differenza di Amadeus priceRange): il filtro budget resta applicato
         # a valle in select_anchor_hotel/Claude, non qui. [Da Verificare]
+        cost_telemetry.record_api_call("liteapi")
         resp = requests.post(
             HOTEL_RATES_URL,
             headers=self._headers(json_body=True),

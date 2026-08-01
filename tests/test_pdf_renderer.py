@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+from src import pdf_renderer
 from src.pdf_renderer import render_html, render_pdf, PdfRendererError, _build_poi_energy_lookup
 
 TRIP = {
@@ -197,6 +198,88 @@ class TestRenderHtml(unittest.TestCase):
         out = render_html(itinerary, TRIP)
         self.assertEqual(out.count("class='day-card'"), 1)
         self.assertNotIn("(continua)", out)
+
+    # -- Difetti grafici trovati ispezionando il PDF di esempio (2026-07-31) --
+    # Tutti e tre nascono dalla stessa richiesta di Lorenzo ("migliorare la
+    # parte grafica, il pdf in sé deve essere accattivante, bello da vedere
+    # e facile da comprendere") e tutti e tre sono stati visti su un PDF
+    # vero, non dedotti leggendo il codice.
+
+    def test_day_card_does_not_force_its_own_page(self):
+        # Il programma di una giornata NON deve essere tenuto insieme a
+        # forza: quando cartina + blocchi + "Come arrivare" non entravano in
+        # una pagina, wkhtmltopdf spostava tutto alla pagina dopo lasciando
+        # ~metà pagina bianca sotto ogni cartina (3 pagine su 14 sprecate nel
+        # PDF di esempio). La regola "non spezzare" appartiene al singolo
+        # blocco orario, che tagliato a metà fra due pagine è illeggibile.
+        css = pdf_renderer._CSS
+        day_card_rule = css.split(".day-card {", 1)[1].split("}", 1)[0]
+        self.assertNotIn("page-break-inside", day_card_rule)
+        block_rule = css.split("\n    .block {", 1)[1].split("}", 1)[0]
+        self.assertIn("page-break-inside: avoid", block_rule)
+
+    def test_cover_lists_only_the_sections_actually_generated(self):
+        # La copertina riempiva un terzo di pagina: i due terzi bianchi sotto
+        # sono la prima cosa che vede chi ha appena pagato. Ora ospita "Cosa
+        # troverai dentro" — che però deve elencare SOLO le sezioni davvero
+        # prodotte: promettere in copertina un capitolo assente sarebbe un
+        # bug visibile al cliente esattamente come un indice rotto.
+        itinerary = {
+            "destination": "Roma", "executive_summary": "x",
+            "days": [{"day": 1, "title": "Arrivo", "blocks": [
+                {"time": "09:00", "activity": "Colosseo", "location": "Roma"},
+            ]}],
+        }
+        out = render_html(itinerary, TRIP)
+        cover = out.split("class='cover'", 1)[1].split("class='toc'", 1)[0]
+        self.assertIn("Cosa troverai dentro", cover)
+        self.assertIn("Il programma, giorno per giorno", cover)
+        # Nessun costo/consiglio/guida è stato passato al renderer: quelle
+        # voci non devono comparire in copertina.
+        self.assertNotIn("Stima dei costi", cover)
+        self.assertNotIn("Guide turistiche tascabili", cover)
+
+    def test_cover_strip_omitted_when_there_is_almost_nothing_to_list(self):
+        # Con una sola sezione la striscia a due colonne sarebbe sbilanciata
+        # e peggiorerebbe l'impaginazione invece di migliorarla: meglio non
+        # stamparla. (Un itinerario senza giorni produce il solo "colpo
+        # d'occhio".)
+        out = render_html({"destination": "Roma", "executive_summary": "x", "days": []}, TRIP)
+        cover = out.split("class='cover'", 1)[1].split("class='toc'", 1)[0]
+        self.assertNotIn("Cosa troverai dentro", cover)
+
+    def test_no_duplicate_google_maps_link_when_place_card_exists(self):
+        # Ogni blocco mostrava DUE pulsanti quasi identici verso Google Maps:
+        # quello della scheda luogo ("Info, orari e recensioni", che oltre
+        # alla posizione dà orari e recensioni) e quello generico costruito
+        # sulle sole coordinate. Vince la scheda, che è strettamente più
+        # utile; il link generico resta solo per i POI senza scheda.
+        itinerary = {
+            "destination": "Roma", "executive_summary": "x",
+            "days": [{"day": 1, "title": "Arrivo", "blocks": [
+                {"time": "09:00", "activity": "Colosseo", "location": "Roma", "poi_id": "POI1"},
+                {"time": "14:00", "activity": "Foro", "location": "Roma", "poi_id": "POI2"},
+            ]}],
+        }
+        poi = [
+            {"id": "POI1", "type": "museum", "name": "Colosseo", "lat": 41.89, "lng": 12.49},
+            {"id": "POI2", "type": "activity", "name": "Foro", "lat": 41.892, "lng": 12.485},
+        ]
+        place_cards = {
+            "POI1": {
+                "poi_id": "POI1", "name": "Colosseo", "address": None, "phone": None,
+                "menu_link": None,
+                "info_link": {"url": "https://maps.google.com/?cid=1",
+                              "label": "Info, orari e recensioni", "is_search": False},
+            },
+            # POI2 volutamente senza scheda: deve conservare il link generico.
+        }
+        out = render_html(itinerary, TRIP, poi=poi, place_cards=place_cards)
+        block1 = out.split("Colosseo (Roma)", 1)[1].split("</div><div class='block'>", 1)[0]
+        self.assertIn("Info, orari e recensioni", block1)
+        self.assertNotIn("block-maps-link", block1)
+        block2 = out.split("Foro (Roma)", 1)[1].split("</div></div>", 1)[0]
+        self.assertIn("block-maps-link", block2)
 
     def test_header_meta_uses_solid_opaque_color_no_alpha_channel(self):
         # Bug reale trovato il 2026-07-12 durante la prima verifica dal vivo
@@ -634,7 +717,12 @@ class TestGuideAndFeedbackSections(unittest.TestCase):
         self.assertIn("2-3 ore", out)
         self.assertIn("Perfetto per una pausa rigenerante", out)
         self.assertIn("Orari e accesso possono variare", out)
-        self.assertIn("class='page-break'", out)
+        # [AGGIORNATO 2026-07-31] La guida ora ha una sua classe grafica
+        # (`guide-card`) e continua ad applicare la regola condivisa
+        # `page-break` — che dal 2026-07-13 significa "non spezzare a metà",
+        # non "vai a pagina nuova". È quest'ultima la proprietà che conta:
+        # una guida tagliata in due è inutilizzabile davanti al monumento.
+        self.assertIn("class='guide-card page-break'", out)
 
     def test_guide_falls_back_to_poi_name_when_title_missing(self):
         guide = dict(self.GUIDE)
@@ -643,9 +731,15 @@ class TestGuideAndFeedbackSections(unittest.TestCase):
         self.assertIn("Terme di San Filippo", out)
 
     def test_multiple_guides_each_get_own_page_break_section(self):
+        # [AGGIORNATO 2026-07-31] L'etichetta era "Guida turistica:"; Lorenzo
+        # ha chiesto esplicitamente la dicitura "guida turistica tascabile"
+        # (la stessa che compare sul link dentro il giorno-per-giorno, così
+        # il cliente riconosce dove sta atterrando). Cambia la stringa, non
+        # il contratto: ogni guida resta una sezione a sé.
         guide2 = dict(self.GUIDE, poi_name="Colosseo", title="Il Colosseo")
         out = render_html(self._base_itinerary(), TRIP, guides=[self.GUIDE, guide2])
-        self.assertEqual(out.count("Guida turistica:"), 2)
+        self.assertEqual(out.count("<div class='guide-eyebrow'>Guida turistica tascabile</div>"), 2)
+        self.assertEqual(out.count("class='guide-card page-break'"), 2)
         self.assertIn("Il Colosseo", out)
 
     def test_feedback_section_rendered_with_all_fields(self):
@@ -672,6 +766,323 @@ class TestGuideAndFeedbackSections(unittest.TestCase):
         out = render_html(self._base_itinerary(), TRIP, guides=[guide], feedback=feedback)
         self.assertNotIn("<script>", out)
         self.assertNotIn("<b>ciao</b>", out)
+
+
+class TestNewSections2026_07_31(unittest.TestCase):
+    """
+    [AGGIUNTO 2026-07-31 — blocco di richieste di Lorenzo dopo aver testato
+    dal vivo, in Interrail, il PDF generato per sé]
+
+    Copre le sezioni nuove del documento cliente: cartina per giornata con
+    legenda numerata, "Come arrivare" spostamento per spostamento, stima dei
+    costi, Architect's Tips per direttrici, piani B se piove, menù/info dei
+    ristoranti, link interni alle guide tascabili, copertina e indice.
+
+    I fixture qui sotto NON sono inventati a mano: sono l'output reale di
+    `maps_static.build_day_map_plans()`, `directions.build_directions_by_day()`,
+    `cost_estimator.estimate_costs()` e `place_links.build_place_cards_by_id()`
+    su un itinerario di prova, copiato pari pari. Un fixture "verosimile"
+    scritto a mano è il modo classico per avere test verdi su una forma di
+    dato che in produzione non esiste.
+    """
+
+    DAY_MAP = {
+        "day": 1,
+        "title": "Arrivo",
+        "hotel_name": "Hotel Test",
+        "png": None,
+        "stops": [
+            {"label": "1", "time": "09:00", "activity": "Visita", "location": "Colosseo",
+             "poi_id": "P1", "type": "museum", "type_label": "Museo / cultura", "color": "orange"},
+            {"label": "2", "time": "13:00", "activity": "Pranzo", "location": "Da Mario",
+             "poi_id": "P2", "type": "restaurant", "type_label": "Dove mangiare", "color": "green"},
+        ],
+    }
+    DIRECTIONS = [{
+        "day": 1, "title": "Arrivo",
+        "legs": [
+            {"from_label": "H", "from_name": "Hotel Test", "to_label": "1", "to_name": "Colosseo",
+             "arrival_time": "09:00", "minutes": 12, "mode": "walking", "mode_label": "a piedi",
+             "url": "https://www.google.com/maps/dir/?api=1&origin=41.9,12.5"
+                    "&destination=41.89,12.49&travelmode=walking"},
+            {"from_label": "1", "from_name": "Colosseo", "to_label": "2", "to_name": "Da Mario",
+             "arrival_time": "13:00", "minutes": None, "mode": "walking", "mode_label": "a piedi",
+             "url": "https://www.google.com/maps/dir/?api=1&origin=41.89,12.49"
+                    "&destination=41.895,12.48&travelmode=walking"},
+        ],
+    }]
+    COST_SUMMARY = {
+        "travellers": 1, "nights": 3,
+        "lines": [
+            {"category": "lodging", "category_label": "Alloggio", "label": "Hotel Test",
+             "detail": "3 notti × 100 € a notte (prezzo reale del fornitore)",
+             "min_eur": 300.0, "max_eur": 300.0, "known": True},
+            {"category": "meals", "category_label": "Pasti e ristoranti", "label": "Da Mario",
+             "detail": "fascia di prezzo non fornita — [Da Verificare]",
+             "min_eur": None, "max_eur": None, "known": False},
+        ],
+        "total_min_eur": 300.0, "total_max_eur": 300.0, "unknown_count": 1,
+        "budget_eur": 250.0, "budget_verdict": "over",
+        "excluded_note": "Non inclusi in questa stima: viaggio di andata e ritorno.",
+    }
+    TIPS = {
+        "sections": [
+            {"category_id": "biglietti", "title": "Biglietti e prenotazioni",
+             "tips": ["Prenota il Colosseo con almeno due settimane di anticipo."]},
+            {"category_id": "risparmio", "title": "Risparmio e pagamenti",
+             "tips": ["Le carte estere passano ovunque, ma i bar piccoli preferiscono contanti."]},
+        ],
+        "rain_plans": [
+            {"day": 1, "summary": "Se piove, il pomeriggio si sposta al chiuso.",
+             "swaps": [{"replaces": "Passeggiata al Foro", "name": "Musei Capitolini",
+                        "poi_id": "P3", "why": "A dieci minuti a piedi e completamente coperto."}]},
+        ],
+        "dropped_swaps": 0,
+    }
+    PLACE_CARDS = {
+        "P2": {
+            "poi_id": "P2", "name": "Da Mario",
+            "address": "Via Roma 1", "phone": "+39 06 1234567",
+            "menu_link": {"url": "https://damario.example/menu", "label": "Menù del ristorante",
+                          "is_search": False},
+            "info_link": {"url": "https://www.google.com/maps/search/?api=1&query=41.895,12.48",
+                          "label": "Apri in Google Maps", "is_search": False},
+        },
+    }
+
+    def _itinerary(self):
+        return {
+            "destination": "Roma",
+            "executive_summary": "Tre giorni a Roma.",
+            "days": [{"day": 1, "title": "Arrivo", "blocks": [
+                {"time": "09:00", "activity": "Visita", "location": "Colosseo", "poi_id": "P1"},
+                {"time": "13:00", "activity": "Pranzo", "location": "Da Mario", "poi_id": "P2"},
+            ]}],
+        }
+
+    # --- Cartina del giorno + legenda numerata ---------------------------
+    def test_day_map_legend_names_every_numbered_marker(self):
+        # LA richiesta: "non si capisce cosa siano gli indicatori, sarebbe
+        # opportuno indicare vicino ad ogni indicatore cosa sono e il numero".
+        # Il numero da solo non basta: deve stare accanto al NOME.
+        out = render_html(self._itinerary(), TRIP, day_maps=[self.DAY_MAP])
+        self.assertIn("<span class='map-pin pin-orange'>1</span>", out)
+        self.assertIn("<span class='map-pin pin-green'>2</span>", out)
+        self.assertIn("Colosseo", out)
+        self.assertIn("Museo / cultura", out)
+        self.assertIn("Dove mangiare", out)
+        # L'alloggio è il punto di partenza e rientro: senza questa riga il
+        # marker "H" resta senza spiegazione, che è il difetto originale.
+        self.assertIn("Punto di partenza e rientro", out)
+
+    def test_legend_survives_a_missing_map_image(self):
+        # La quota Google si esaurisce, la rete cade. In quel caso il cliente
+        # perde la figura ma NON deve perdere l'informazione: la legenda è la
+        # risposta vera alla richiesta, l'immagine è il contorno.
+        no_png = dict(self.DAY_MAP, png=None)
+        out = render_html(self._itinerary(), TRIP, day_maps=[no_png])
+        self.assertNotIn("data:image/png;base64", out)
+        self.assertIn("map-legend", out)
+        self.assertIn("<span class='map-pin pin-orange'>1</span>", out)
+
+    def test_day_map_is_matched_by_day_number_not_by_position(self):
+        # Se un giorno non ha cartina, un accoppiamento posizionale
+        # stamperebbe la cartina del giorno 2 sotto il titolo del giorno 1 —
+        # un errore che il cliente scopre solo in strada, sbagliando strada.
+        itinerary = self._itinerary()
+        itinerary["days"].append({"day": 2, "title": "Centro", "blocks": [
+            {"time": "10:00", "activity": "Giro", "location": "Trastevere", "poi_id": "P9"},
+        ]})
+        day2_map = dict(self.DAY_MAP, day=2, stops=[
+            dict(self.DAY_MAP["stops"][0], label="1", location="Trastevere"),
+        ])
+        out = render_html(itinerary, TRIP, day_maps=[day2_map])
+        # La cartina esiste solo per il giorno 2: il blocco `day-open` (che
+        # contiene la cartina) deve comparire una volta sola, e con quel
+        # titolo.
+        self.assertEqual(out.count("class='day-open'"), 1)
+        self.assertIn("<div class='day-title'>Giorno 2 — Centro</div>", out)
+
+    # --- Come arrivare ----------------------------------------------------
+    def test_directions_render_each_leg_with_ready_to_open_route(self):
+        out = render_html(self._itinerary(), TRIP, directions=self.DIRECTIONS)
+        self.assertIn("Come arrivare — giorno 1", out)
+        self.assertIn("H → 1", out)
+        self.assertIn("1 → 2", out)
+        self.assertIn("circa 12 min a piedi", out)
+        self.assertIn("arrivo previsto 09:00", out)
+        self.assertIn("apri il percorso", out)
+        self.assertIn("travelmode=walking", out)
+
+    def test_unknown_travel_time_is_declared_not_invented(self):
+        # La seconda tratta ha `minutes: None` (nessuna misura reale dalla
+        # Distance Matrix). Il documento deve DIRLO. Stampare una stima
+        # plausibile qui significherebbe far perdere un treno a qualcuno.
+        out = render_html(self._itinerary(), TRIP, directions=self.DIRECTIONS)
+        self.assertIn("tempo di percorrenza da verificare sul momento", out)
+
+    def test_directions_numbers_are_the_same_numbers_drawn_on_the_map(self):
+        # Il patto implicito fra le due sezioni: se la cartina dice "2" e la
+        # tratta dice "2", sono lo stesso posto. Le etichette arrivano
+        # entrambe dagli stessi `day_plans` (vedi build_pdf_sections), e
+        # questo test blocca il giorno in cui qualcuno le calcolasse due
+        # volte in due modi diversi.
+        map_labels = [s["label"] for s in self.DAY_MAP["stops"]]
+        leg_labels = [leg["to_label"] for leg in self.DIRECTIONS[0]["legs"]]
+        self.assertEqual(map_labels, [l for l in leg_labels if l != "H"])
+
+    # --- Stima dei costi --------------------------------------------------
+    def test_cost_table_totals_only_the_known_lines(self):
+        out = render_html(self._itinerary(), TRIP, cost_summary=self.COST_SUMMARY)
+        self.assertIn("Stima dei costi e dettaglio budget", out)
+        self.assertIn("Hotel Test", out)
+        # La voce senza prezzo resta VISIBILE (ometterla nasconderebbe una
+        # spesa) ma marcata, e il totale resta quello delle sole voci note.
+        self.assertIn("[Da Verificare]", out)
+        self.assertIn("Totale stimato", out)
+        # Maiuscolo voluto nel documento ("NON incluse"): è l'unico punto in cui
+        # il PDF ammette di non conoscere un prezzo, e deve saltare all'occhio.
+        # L'asserzione lo verifica alla lettera proprio per questo.
+        self.assertIn("NON incluse nel totale", out)
+        self.assertIn("Sopra il budget indicato", out)
+
+    def test_cost_section_absent_when_there_is_nothing_to_estimate(self):
+        # Nessuna riga = nessuna sezione e nessuna voce di indice: un indice
+        # che rimanda a una pagina vuota è un difetto che il cliente vede.
+        out = render_html(self._itinerary(), TRIP, cost_summary={"lines": []})
+        self.assertNotIn("Stima dei costi e dettaglio budget", out)
+
+    # --- Architect's Tips per direttrici + piani B ------------------------
+    def test_tips_are_grouped_by_directive(self):
+        out = render_html(self._itinerary(), TRIP, tips=self.TIPS)
+        self.assertIn("Architect&#x27;s Tips", out)
+        self.assertIn("Biglietti e prenotazioni", out)
+        self.assertIn("Risparmio e pagamenti", out)
+        self.assertEqual(out.count("class='tip-group'"), 2)
+
+    def test_legacy_flat_tips_used_only_when_the_new_ones_are_missing(self):
+        # Un itinerario generato PRIMA di questa modifica (o una chiamata
+        # fallita) non deve lasciare il cliente senza consigli: meglio la
+        # vecchia lista piatta che una sezione vuota.
+        itinerary = dict(self._itinerary(), architect_tips=["Porta scarpe comode."])
+        out = render_html(itinerary, TRIP)
+        self.assertIn("Porta scarpe comode.", out)
+        self.assertIn("class='tips-box'", out)
+        # E quando i consigli nuovi ci sono, i vecchi NON si sommano ad essi:
+        # due sezioni di consigli nello stesso documento sono un difetto.
+        out2 = render_html(itinerary, TRIP, tips=self.TIPS)
+        self.assertNotIn("Porta scarpe comode.", out2)
+
+    def test_rain_plans_rendered_as_explicit_swaps(self):
+        out = render_html(self._itinerary(), TRIP, tips=self.TIPS)
+        self.assertIn("Piani B: se piove", out)
+        self.assertIn("Passeggiata al Foro", out)
+        self.assertIn("Musei Capitolini", out)
+        self.assertIn("completamente coperto", out)
+
+    # --- Menù e info dei ristoranti ---------------------------------------
+    def test_restaurant_block_carries_menu_and_info_links(self):
+        out = render_html(self._itinerary(), TRIP, place_cards=self.PLACE_CARDS)
+        self.assertIn("https://damario.example/menu", out)
+        self.assertIn("Menù del ristorante", out)
+        self.assertIn("Apri in Google Maps", out)
+        self.assertIn("Via Roma 1 · +39 06 1234567", out)
+
+    def test_place_links_only_on_the_block_they_belong_to(self):
+        # `P1` (il Colosseo) non ha scheda: il suo blocco non deve ereditare
+        # i link del ristorante.
+        out = render_html(self._itinerary(), TRIP, place_cards=self.PLACE_CARDS)
+        self.assertEqual(out.count("https://damario.example/menu"), 1)
+
+    # --- Link interni alle guide tascabili --------------------------------
+    def test_guide_link_in_the_day_plan_points_at_that_exact_guide(self):
+        # "reindirizzi il cliente alla fine del pdf ... portandolo
+        # DIRETTAMENTE sull'attrazione richiesta": il link deve puntare
+        # all'ancora della guida di QUEL poi_id, non alla sezione generica.
+        guide = {
+            "poi_id": "P1", "poi_name": "Colosseo", "title": "Il Colosseo",
+            "history_summary": "Storia.", "practical_tips": ["Arriva presto."],
+            "best_time_to_visit": "Mattina", "estimated_visit_duration": "2 ore",
+            "consiglio_personalizzato": "Riposa dopo.", "disclaimer": "Verifica gli orari.",
+        }
+        out = render_html(self._itinerary(), TRIP, guides=[guide])
+        self.assertIn("Guida turistica tascabile</a>", out)
+        anchor = guide["_anchor"]
+        self.assertIn(f"href='#{anchor}'", out)
+        self.assertIn(f"id='{anchor}'", out)
+
+    def test_no_dead_guide_link_when_the_guide_failed_for_that_poi(self):
+        # Una guida può fallire (rete, parsing) e viene saltata. Il blocco di
+        # quel POI non deve restare con un link che non porta da nessuna
+        # parte: in un PDF un'ancora rotta non dà errore, semplicemente non
+        # succede nulla — e il cliente pensa che il documento sia rotto.
+        guide = {
+            "poi_id": "P2", "poi_name": "Da Mario", "title": "Da Mario",
+            "history_summary": "Storia.", "practical_tips": ["Prenota."],
+            "best_time_to_visit": "Sera", "estimated_visit_duration": "1 ora",
+            "consiglio_personalizzato": "x", "disclaimer": "y",
+        }
+        out = render_html(self._itinerary(), TRIP, guides=[guide])
+        self.assertEqual(out.count("Guida turistica tascabile</a>"), 1)
+
+    # --- Copertina e indice -----------------------------------------------
+    def test_cover_page_is_present_and_states_the_no_invented_data_promise(self):
+        out = render_html(self._itinerary(), TRIP)
+        self.assertIn("class='cover'", out)
+        self.assertIn("Itinerario su misura", out)
+        self.assertIn("mai sostituito da una stima inventata", out)
+
+    def test_toc_lists_only_sections_that_actually_exist(self):
+        bare = render_html(self._itinerary(), TRIP)
+        self.assertNotIn("Stima dei costi e dettaglio budget</a>", bare)
+        self.assertNotIn("Piani B: se piove</a>", bare)
+
+        full = render_html(
+            self._itinerary(), TRIP,
+            cost_summary=self.COST_SUMMARY, tips=self.TIPS,
+        )
+        self.assertIn("Stima dei costi e dettaglio budget</a>", full)
+        self.assertIn("Piani B: se piove</a>", full)
+        # Ogni voce dell'indice deve avere una destinazione reale nel
+        # documento: un indice che punta al vuoto è un difetto visibile.
+        import re
+        for anchor in re.findall(r"<a href='#([a-z0-9\-]+)'>", full):
+            self.assertIn(f"id='{anchor}'", full, f"l'indice punta a '#{anchor}', che non esiste")
+
+    # --- Tutto insieme, e i vincoli di wkhtmltopdf ------------------------
+    def test_full_document_still_respects_the_engine_constraints(self):
+        # Le tre proprietà che il motore Qt WebKit (~2014) di wkhtmltopdf non
+        # sa rendere hanno già rotto il documento tre volte sul PC di
+        # Lorenzo. Le sezioni nuove non fanno eccezione: qui il controllo
+        # gira sul documento COMPLETO, non su quello minimo.
+        out = render_html(
+            self._itinerary(), TRIP,
+            hotels=[{"name": "Hotel Test", "property_type": "Hotels", "price_night_eur": 100}],
+            day_maps=[self.DAY_MAP], directions=self.DIRECTIONS,
+            cost_summary=self.COST_SUMMARY, tips=self.TIPS,
+            place_cards=self.PLACE_CARDS,
+        )
+        self.assertNotIn("opacity", out)
+        self.assertNotIn("rgba(", out)
+        self.assertNotIn("linear-gradient", out)
+        self.assertNotIn("display: flex", out)
+        self.assertNotIn("display:flex", out)
+
+    def test_sections_are_independent_of_each_other(self):
+        # Ogni sezione degrada da sola (best-effort in build_pdf_sections):
+        # il documento deve restare valido con QUALUNQUE sottoinsieme.
+        for name, kwargs in (
+            ("solo cartine", {"day_maps": [self.DAY_MAP]}),
+            ("solo tragitti", {"directions": self.DIRECTIONS}),
+            ("solo costi", {"cost_summary": self.COST_SUMMARY}),
+            ("solo consigli", {"tips": self.TIPS}),
+            ("solo schede luogo", {"place_cards": self.PLACE_CARDS}),
+            ("niente", {}),
+        ):
+            with self.subTest(name):
+                out = render_html(self._itinerary(), TRIP, **kwargs)
+                self.assertTrue(out.startswith("<!DOCTYPE html>"))
+                self.assertTrue(out.rstrip().endswith("</html>"))
 
 
 class TestRenderPdf(unittest.TestCase):

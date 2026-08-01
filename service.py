@@ -68,7 +68,13 @@ from src.schemas import ApiPayload, Hotel, POI, Trip, TravelTime
 from src.triage import normalize_raw_input
 from src import refinement
 from src import pdf_renderer
-from src.pdf_extras import build_pdf_extras
+from src.pdf_extras import build_pdf_extras, build_pdf_sections
+# [AGGIUNTI 2026-08-01 — punti 2 e 5 del feedback "da investitore"]
+# cost_telemetry: misura il costo REALE di ogni generazione (finora mai
+# misurato, quindi ogni ragionamento su prezzo e margine era un'opinione).
+# alerting: rende rumoroso un fallimento che finora era silenzioso.
+from src import alerting
+from src import cost_telemetry
 
 app = Flask(__name__)
 
@@ -164,8 +170,16 @@ def _handle_unexpected_error(e):
     500 JSON leggibile invece che a una pagina HTML.
     """
     if isinstance(e, HTTPException):
+        # 404, 405, 413... sono errori del CHIAMANTE: rumorosi per niente se
+        # finissero nell'allarme. Restano nei log, come oggi.
         return jsonify({"error": e.description}), e.code
     app.logger.exception("Errore interno non gestito")
+    # [AGGIUNTO 2026-08-01] Un 500 non previsto da nessuna route è, per
+    # definizione, il caso che non abbiamo saputo anticipare: è esattamente
+    # quello che non deve restare sepolto in un log che nessuno guarda.
+    # `notify()` non solleva mai — vedi la regola 1 in src/alerting.py — quindi
+    # non può trasformare un 500 leggibile in una pagina HTML di Werkzeug.
+    alerting.notify("errore_interno", f"{e.__class__.__name__}: {e}")
     return jsonify({
         "error": f"errore interno del servizio ({e.__class__.__name__}): {e}"
     }), 500
@@ -229,6 +243,11 @@ def _serialize_validation_report(vr) -> dict | None:
         "energy_pacing_violations": vr.energy_pacing_violations,
         "budget_compliance_ok": vr.budget_compliance_ok,
         "budget_compliance_violations": vr.budget_compliance_violations,
+        # [AGGIUNTO 2026-07-31 — regola anti-noia, [HARD_CONSTRAINTS] punto 9]
+        # Warning NON bloccanti: `passed` resta vero anche a lista piena (vedi
+        # validator.check_day_density). Esposti qui perché Make possa
+        # loggarli/allertare senza bloccare la consegna del PDF al cliente.
+        "day_density_warnings": getattr(vr, "day_density_warnings", []),
     }
 
 
@@ -269,30 +288,55 @@ def create_itinerary():
     if trip_error:
         return jsonify({"error": trip_error}), 400
 
-    try:
-        if mode == "mock":
-            scenario_key = body.get("scenario_key")
-            missing = SETTINGS.missing_for_mock_mode()
-            if missing:
-                return jsonify({"error": f"variabili d'ambiente mancanti sul server: {missing}"}), 500
-            result = run_mock_from_raw(raw_trip, scenario_key, SETTINGS.anthropic_api_key)
-        else:
-            missing = SETTINGS.missing_for_live_mode()
-            if missing:
-                return jsonify({"error": f"variabili d'ambiente mancanti sul server: {missing}"}), 500
-            result = run_live_from_raw(raw_trip, SETTINGS)
-    except KeyError as e:
-        return jsonify({"error": f"campo obbligatorio mancante in 'trip': {e}"}), 400
-    except ValueError as e:
-        # Trip non valido (Trip.validate() ha trovato errori) o data non ISO
-        return jsonify({"error": str(e)}), 400
+    # [AGGIUNTO 2026-08-01 — misura del costo reale] Il blocco `measure()`
+    # installa un contatore per QUESTA richiesta: ogni chiamata a Claude e ogni
+    # chiamata alle API esterne fatta qui dentro si registra da sola, senza che
+    # nessuna funzione della pipeline debba passarsi un parametro in più. Fuori
+    # da questo blocco quelle stesse registrazioni sono no-op — è per questo
+    # che il CLI e i test non cambiano comportamento di una virgola.
+    with cost_telemetry.measure("itinerary") as ledger:
+        try:
+            if mode == "mock":
+                scenario_key = body.get("scenario_key")
+                missing = SETTINGS.missing_for_mock_mode()
+                if missing:
+                    return jsonify({"error": f"variabili d'ambiente mancanti sul server: {missing}"}), 500
+                result = run_mock_from_raw(raw_trip, scenario_key, SETTINGS.anthropic_api_key)
+            else:
+                missing = SETTINGS.missing_for_live_mode()
+                if missing:
+                    return jsonify({"error": f"variabili d'ambiente mancanti sul server: {missing}"}), 500
+                result = run_live_from_raw(raw_trip, SETTINGS)
+        except KeyError as e:
+            return jsonify({"error": f"campo obbligatorio mancante in 'trip': {e}"}), 400
+        except ValueError as e:
+            # Trip non valido (Trip.validate() ha trovato errori) o data non ISO
+            return jsonify({"error": str(e)}), 400
 
     if result.data_layer_error:
+        # [AGGIUNTO 2026-08-01] Il cliente ha già pagato quando arriviamo qui:
+        # un errore dello strato dati va saputo subito, non scoperto da chi ha
+        # pagato e non riceve niente.
+        alerting.notify(
+            "data_layer_error",
+            result.data_layer_error,
+            context=alerting.safe_trip_context(result.trip),
+        )
         return jsonify({
             "error": f"errore nello strato dati (Geocoding/LiteAPI/Places/Distance Matrix): "
                      f"{result.data_layer_error}",
             "trip": result.trip.to_dict(),
         }), 502
+
+    if result.parse_error:
+        # La risposta del modello non è JSON valido: l'itinerario esce vuoto e
+        # tutto il resto del flusso Make fallisce a valle. È un fallimento
+        # vero, anche se la risposta HTTP è 200.
+        alerting.notify(
+            "parse_error",
+            result.parse_error,
+            context=alerting.safe_trip_context(result.trip),
+        )
 
     return jsonify({
         "trip": result.trip.to_dict(),
@@ -302,6 +346,11 @@ def create_itinerary():
         "geocoding_warning": result.geocoding_warning,
         "validation": _serialize_validation_report(result.validation_report),
         "rendered_markdown": result.rendered_markdown,
+        # [AGGIUNTO 2026-08-01] Quanto è costato DAVVERO generare questo
+        # itinerario, in euro. Vedi src/cost_telemetry.py: i conteggi di token
+        # e di chiamate sono esatti, i prezzi unitari sono un listino
+        # configurabile da confermare (campo `prezzi_da_verificare`).
+        "cost_estimate": ledger.to_dict(),
     })
 
 
@@ -484,9 +533,44 @@ def generate_pdf():
     include_guides = body.get("include_guides", True)
     include_feedback = body.get("include_feedback", True)
     include_map = body.get("include_map", True)
-    if not all(isinstance(v, bool) for v in (include_guides, include_feedback, include_map)):
-        return jsonify({"error": "'include_guides'/'include_feedback'/'include_map', se "
-                                  "presenti, devono essere booleani"}), 400
+    # [AGGIUNTI 2026-07-31 — richieste di Lorenzo del 2026-07-31: cartine per
+    # giornata numerate, "cartina e come arrivare", "stima dei costi e
+    # dettaglio budget", Architect's Tips per direttrici + "piani b se piove",
+    # menù e info dei ristoranti]
+    #
+    # DEFAULT `True`, deliberatamente: la richiesta esplicita era che il
+    # prodotto finale rispetti tutto questo "in maniera standard, senza
+    # ulteriori prompt". Lo scenario Make.com in produzione oggi NON conosce
+    # questi nomi e non li invierà mai: se il default fosse `False`, ogni
+    # nuova sezione esisterebbe nel codice e non arriverebbe a un solo
+    # cliente pagante. I flag restano solo come valvola per spegnere una
+    # sezione in caso di problema, senza dover ri-deployare.
+    include_day_maps = body.get("include_day_maps", True)
+    include_directions = body.get("include_directions", True)
+    include_costs = body.get("include_costs", True)
+    include_tips = body.get("include_tips", True)
+    include_place_links = body.get("include_place_links", True)
+    _flags = {
+        "include_guides": include_guides, "include_feedback": include_feedback,
+        "include_map": include_map, "include_day_maps": include_day_maps,
+        "include_directions": include_directions, "include_costs": include_costs,
+        "include_tips": include_tips, "include_place_links": include_place_links,
+    }
+    _bad_flags = sorted(k for k, v in _flags.items() if not isinstance(v, bool))
+    if _bad_flags:
+        return jsonify({"error": f"i seguenti campi, se presenti, devono essere "
+                                  f"booleani: {_bad_flags}"}), 400
+
+    # [AGGIUNTO 2026-07-31] Numero di viaggiatori: serve SOLO alla stima dei
+    # costi (`cost_estimator.estimate_costs`), perché il totale di un viaggio
+    # per due non è quello di un viaggio per uno. Non è un campo di `Trip`
+    # (non esiste nello schema) e non lo diventa qui: il form Tally oggi non
+    # lo chiede, quindi il default 1 è anche il comportamento reale odierno.
+    # Se un giorno il form lo chiederà, basta passarlo nel body.
+    travellers = body.get("travellers", 1)
+    if not isinstance(travellers, int) or isinstance(travellers, bool) or not 1 <= travellers <= 20:
+        return jsonify({"error": "'travellers', se presente, deve essere un intero "
+                                  "tra 1 e 20"}), 400
 
     # Guide e feedback richiedono una chiamata Claude ciascuna — servono
     # solo se almeno una delle due sezioni è richiesta. Un PDF "puro"
@@ -494,45 +578,113 @@ def generate_pdf():
     # wkhtmltopdf sia installato sul server (controllato più sotto da
     # render_pdf() stesso, che degrada con un errore leggibile — mai un
     # crash — se manca).
+    #
+    # [DECISO 2026-07-31, dopo che il primo tentativo ha rotto due test
+    # esistenti] `include_tips` NON entra in questo controllo, pur essendo
+    # anch'esso una chiamata Claude. Il motivo: quel flag vale `True` di
+    # default, quindi metterlo qui trasformerebbe in un 500 ogni richiesta di
+    # PDF "puro" fatta da un chiamante che non ha mai nemmeno sentito
+    # nominare i consigli — cioè romperebbe un contratto già pubblicato per
+    # colpa di un default nuovo. `build_pdf_sections()` salta i consigli
+    # quando la chiave manca (`if include_tips and api_key`) e in quel caso
+    # `render_html()` ristampa la lista base `itinerary["architect_tips"]`:
+    # la sezione degrada, il documento esce comunque.
     if include_guides or include_feedback:
         missing_env = SETTINGS.missing_for_mock_mode()
         if missing_env:
             return jsonify({"error": f"variabili d'ambiente mancanti sul server: {missing_env}"}), 500
 
-    guides, feedback, used_pois, map_png_bytes = build_pdf_extras(
-        itinerary, trip, api_payload, SETTINGS.anthropic_api_key,
-        google_maps_key=SETTINGS.google_maps_key,
-        include_guides=include_guides, include_feedback=include_feedback, include_map=include_map,
-    )
+    # [AGGIUNTO 2026-08-01] Costo già sostenuto da /v1/itinerary per QUESTA
+    # stessa vendita. Opzionale: se Make non lo passa, vale zero e il margine
+    # mostrato è solo quello di questa fase — vedi Ledger.to_dict().
+    carryover_eur = body.get("cost_carryover_eur", 0.0)
 
-    tmp_pdf_path = None
-    try:
-        tmp_pdf_fd, tmp_pdf_path = tempfile.mkstemp(suffix=".pdf")
-        os.close(tmp_pdf_fd)
-        pdf_renderer.render_pdf(
-            itinerary, trip.to_dict(), hotels=[h.to_dict() for h in api_payload.hotels],
-            guides=guides, feedback=feedback, poi=used_pois,
-            map_png_bytes=map_png_bytes, output_path=tmp_pdf_path,
+    with cost_telemetry.measure("pdf") as ledger:
+        guides, feedback, used_pois, map_png_bytes = build_pdf_extras(
+            itinerary, trip, api_payload, SETTINGS.anthropic_api_key,
+            google_maps_key=SETTINGS.google_maps_key,
+            include_guides=include_guides, include_feedback=include_feedback, include_map=include_map,
         )
-        pdf_bytes = Path(tmp_pdf_path).read_bytes()
-    except pdf_renderer.PdfRendererError as e:
-        # Stesso principio di missing_env sopra: un problema di
-        # configurazione/dipendenza del SERVER (wkhtmltopdf assente,
-        # subprocess fallito) è un 500, non un errore del cliente.
-        return jsonify({"error": f"generazione PDF fallita sul server: {e}"}), 500
-    finally:
-        # Pulizia sempre eseguita, successo o fallimento — stesso
-        # principio "mai lasciare file temporanei orfani" già seguito in
-        # pdf_renderer.py per la scrittura atomica.
-        if tmp_pdf_path and os.path.exists(tmp_pdf_path):
-            os.remove(tmp_pdf_path)
 
-    return jsonify({
-        "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+        # Ogni sezione qui dentro è best-effort e indipendente dalle altre: una
+        # chiave Google scaduta costa al cliente le cartine, non il documento.
+        sections = build_pdf_sections(
+            itinerary, trip, api_payload, SETTINGS.anthropic_api_key,
+            google_maps_key=SETTINGS.google_maps_key, travellers=travellers,
+            include_day_maps=include_day_maps, include_directions=include_directions,
+            include_costs=include_costs, include_tips=include_tips,
+            include_place_links=include_place_links,
+        )
+
+        tmp_pdf_path = None
+        try:
+            tmp_pdf_fd, tmp_pdf_path = tempfile.mkstemp(suffix=".pdf")
+            os.close(tmp_pdf_fd)
+            pdf_renderer.render_pdf(
+                itinerary, trip.to_dict(), hotels=[h.to_dict() for h in api_payload.hotels],
+                guides=guides, feedback=feedback, poi=used_pois,
+                map_png_bytes=map_png_bytes, output_path=tmp_pdf_path,
+                **sections,
+            )
+            pdf_bytes = Path(tmp_pdf_path).read_bytes()
+        except pdf_renderer.PdfRendererError as e:
+            # Stesso principio di missing_env sopra: un problema di
+            # configurazione/dipendenza del SERVER (wkhtmltopdf assente,
+            # subprocess fallito) è un 500, non un errore del cliente.
+            # [AGGIUNTO 2026-08-01] È il fallimento peggiore di tutti: il
+            # cliente ha pagato, l'itinerario è stato generato (costo già
+            # speso) e il documento non esiste. Va saputo subito.
+            alerting.notify(
+                "pdf_render_error", str(e), context=alerting.safe_trip_context(trip)
+            )
+            return jsonify({"error": f"generazione PDF fallita sul server: {e}"}), 500
+        finally:
+            # Pulizia sempre eseguita, successo o fallimento — stesso
+            # principio "mai lasciare file temporanei orfani" già seguito in
+            # pdf_renderer.py per la scrittura atomica.
+            if tmp_pdf_path and os.path.exists(tmp_pdf_path):
+                os.remove(tmp_pdf_path)
+
+    counters = {
         "guides_requested": len(used_pois) if include_guides else 0,
         "guides_generated": len(guides),
         "feedback_included": feedback is not None,
         "map_included": map_png_bytes is not None,
+        # [AGGIUNTI 2026-07-31] Contatori per sezione. Non sono decorativi:
+        # ogni sezione degrada in silenzio (best-effort), quindi senza questi
+        # campi un PDF a cui mancano tutte le cartine è indistinguibile da uno
+        # completo, sia in Make.com sia guardando i log. Sono numeri/booleani,
+        # non stringhe, così un filtro Make può alzare un allarme da solo.
+        "day_maps_included": len(sections["day_maps"]),
+        "directions_included": len(sections["directions"]),
+        "costs_included": sections["cost_summary"] is not None,
+        "tips_included": sections["tips"] is not None,
+        "place_cards_included": len(sections["place_cards"]),
+    }
+
+    # [AGGIUNTO 2026-08-01] Il PDF esce comunque, ma se gli mancano delle
+    # sezioni qualcuno deve accorgersene: degradare bene in silenzio è
+    # esattamente il problema che questo allarme risolve. `notify_degraded_pdf`
+    # legge gli STESSI contatori restituiti qui sotto — nessuna seconda logica
+    # da tenere allineata — ed è inerte se ALERT_WEBHOOK_URL non è impostata.
+    alerting.notify_degraded_pdf(counters, alerting.safe_trip_context(trip))
+
+    # [AGGIUNTO 2026-08-01] Il codice opaco della consegna, restituito perché
+    # Make possa archiviarlo accanto al viaggio (Airtable, vedi
+    # airtable-data-moat-schema.md): è la chiave che ricollega una risposta
+    # del modulo al viaggio giusto, senza che il cliente debba ricordarsi
+    # niente e senza mettere la sua email in una URL.
+    _feedback_link = sections.get("feedback_link") or {}
+
+    return jsonify({
+        "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+        **counters,
+        "feedback_ref": _feedback_link.get("ref"),
+        "feedback_url": _feedback_link.get("url"),
+        # [AGGIUNTO 2026-08-01] Costo reale di QUESTA fase più, se passato,
+        # quello dell'itinerario: è il numero che dice se 4,90 € sono un
+        # prezzo o una perdita. Vedi src/cost_telemetry.py.
+        "cost_estimate": ledger.to_dict(carryover_eur=carryover_eur),
     })
 
 

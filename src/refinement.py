@@ -30,6 +30,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import cost_telemetry
 from .claude_engine import load_system_prompt, select_model, select_max_tokens
 from .schemas import Trip, ApiPayload
 from .validator import parse_claude_output, validate_itinerary, strip_reasoning, ParseError, ValidationReport
@@ -105,7 +106,7 @@ def refine_itinerary(
     client = anthropic.Anthropic(api_key=api_key)
     model = select_model(trip.objective_function, trip.duration_days)
     system_prompt = load_system_prompt()
-    user_message = build_refinement_user_message(current_itinerario, payload, customer_request)
+    user_message = build_refinement_user_message(current_itinerary, payload, customer_request)
 
     # [FIX 2026-07-31, #6] Stesso bug gemello del [FIX #5] in claude_engine.py,
     # trovato dall'audit PRIMA che un cliente reale lo colpisse: con
@@ -135,6 +136,9 @@ def refine_itinerary(
             f"({type(e).__name__}): {e}. Cause tipiche: credito esaurito, rate limit, "
             f"o sovraccarico temporaneo — riprova più tardi."
         ) from e
+    # [AGGIUNTO 2026-08-01 — misura del costo reale]
+    cost_telemetry.record_llm(model, getattr(response, "usage", None), label="affinamento")
+
     raw_output = "".join(block.text for block in response.content if hasattr(block, "text"))
 
     if response.stop_reason == "max_tokens":

@@ -141,6 +141,23 @@ class POI:
     # "VERY_EXPENSIVE" | None — vedi src/price_display.py per la
     # conversione in simbolo mostrato al cliente.
     price_level: Optional[str] = None
+    # [AGGIUNTI 2026-07-31 — richiesta di Lorenzo: "per i ristoranti è utile
+    # che crei un collegamento con il menù del ristorante che spesso trovi su
+    # internet ed un altro collegamento con le info utili sul ristorante
+    # (indirizzo, numero, ecc...)"]
+    # Sono TUTTI campi che Google Places API (New) restituisce già davvero
+    # (`websiteUri`, `nationalPhoneNumber`, `formattedAddress`,
+    # `googleMapsUri`): finora semplicemente non li chiedevamo nel field mask
+    # (vedi places_client.FIELD_MASK) e non c'era dove metterli. Nessuno di
+    # questi dati viene MAI inventato: `None` significa "il fornitore non ce
+    # l'ha dato", e src/place_links.py ricade su una ricerca onesta invece che
+    # su un sito plausibile — stesso principio di Fedeltà RAG del resto.
+    # Optional con default None -> `POI(**p)` (service.py) resta retro-
+    # compatibile con i payload che non li contengono.
+    website: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    google_maps_uri: Optional[str] = None
 
     @property
     def coord(self) -> str:

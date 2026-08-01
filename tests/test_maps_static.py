@@ -6,6 +6,7 @@ liteapi_client.py, geocoding.py).
 """
 import unittest
 from unittest.mock import patch, MagicMock
+from urllib.parse import parse_qs, urlparse
 
 from src.maps_static import (
     build_static_map_url, fetch_static_map_png, build_map_for_itinerary, MapsStaticError,
@@ -446,6 +447,240 @@ class TestPickDayAnchor(unittest.TestCase):
         # difesa in profondità.
         anchor = _pick_day_anchor([], self.HOTEL_POINTS, self.HOTEL_IDS, self.ALL_POINTS)
         self.assertEqual(anchor, self.HOTEL_POINTS[0])
+
+
+# ---------------------------------------------------------------------------
+# [AGGIUNTO 2026-07-31 — richiesta di Lorenzo: "nelle mappe varie che generi
+# non si capisce cosa siano gli indicatori ... indicare vicino ad ogni
+# indicatore cosa sono e il numero (1=prima attività del giorno, 2=seconda) ...
+# le mappe devono essere ad hoc"]
+#
+# Questi test coprono il livello "una cartina per giorno". I due test di
+# principio sono `test_zoom_ad_hoc_borgo_vs_metropoli` (la cartina di un borgo
+# DEVE essere più zoomata di quella di una metropoli: è la richiesta, ed è
+# verificabile numericamente) e `test_legenda_sempre_presente_anche_senza_png`
+# (se la cartina non arriva, il cliente deve comunque sapere cos'è il punto 1).
+# ---------------------------------------------------------------------------
+
+from src.maps_static import (  # noqa: E402
+    build_day_map_plans, build_day_map_url, build_day_maps_for_itinerary,
+    _ORDER_LABELS, _DAY_FALLBACK_MARKER_COLOR,
+)
+
+# Borgo: tre tappe entro ~400 m.
+BORGO_HOTEL = Hotel(id="BH", name="Locanda del Borgo", lat=43.0800, lng=11.6000,
+                    price_night_eur=90.0)
+BORGO_P1 = POI(id="B1", type="museum", name="Museo civico", lat=43.0810, lng=11.6010)
+BORGO_P2 = POI(id="B2", type="restaurant", name="Osteria", lat=43.0795, lng=11.6025)
+
+# Metropoli: stesse tre tappe ma sparse su ~25 km (scala Londra).
+CITTA_HOTEL = Hotel(id="LH", name="London Hotel", lat=51.5100, lng=-0.1300,
+                    price_night_eur=200.0)
+CITTA_P1 = POI(id="L1", type="museum", name="Greenwich", lat=51.4800, lng=0.0000)
+CITTA_P2 = POI(id="L2", type="restaurant", name="Kew", lat=51.4800, lng=-0.2900)
+
+
+def _day(day, poi_ids, title="Giornata"):
+    return {"day": day, "title": title, "blocks": [
+        {"time": f"{8 + i:02d}:00", "activity": f"Tappa {i + 1}",
+         "location": f"Luogo {i + 1}", "poi_id": pid}
+        for i, pid in enumerate(poi_ids)
+    ]}
+
+
+class TestBuildDayMapPlans(unittest.TestCase):
+    def test_numerazione_nell_ordine_di_visita(self):
+        plan = build_day_map_plans(
+            [BORGO_HOTEL], [BORGO_P1, BORGO_P2],
+            {"days": [_day(1, ["BH", "B1", "B2"])]},
+        )[0]
+        self.assertEqual([s["label"] for s in plan["stops"]], ["1", "2"])
+        self.assertEqual([s["poi_id"] for s in plan["stops"]], ["B1", "B2"])
+
+    def test_l_hotel_non_e_una_tappa_numerata(self):
+        # L'hotel ha il suo marker "H": numerarlo come "1" sposterebbe di uno
+        # tutti i riferimenti del testo ("la prima attività del giorno").
+        plan = build_day_map_plans(
+            [BORGO_HOTEL], [BORGO_P1],
+            {"days": [_day(1, ["BH", "B1"])]},
+        )[0]
+        self.assertEqual(len(plan["stops"]), 1)
+        self.assertEqual(plan["hotel_point"], (43.08, 11.60))
+        self.assertEqual(plan["hotel_name"], "Locanda del Borgo")
+        self.assertEqual(plan["hotel_id"], "BH")
+
+    def test_poi_ripetuto_nello_stesso_giorno_occupa_un_solo_marker(self):
+        plan = build_day_map_plans(
+            [BORGO_HOTEL], [BORGO_P1, BORGO_P2],
+            {"days": [_day(1, ["B1", "B2", "B1"])]},
+        )[0]
+        self.assertEqual([s["poi_id"] for s in plan["stops"]], ["B1", "B2"])
+
+    def test_poi_sconosciuto_o_senza_coordinate_saltato_senza_rompere_i_numeri(self):
+        senza_coord = POI(id="B3", type="museum", name="Ignoto", lat=None, lng=None)
+        plan = build_day_map_plans(
+            [BORGO_HOTEL], [BORGO_P1, senza_coord, BORGO_P2],
+            {"days": [_day(1, ["B1", "FANTASMA", "B3", "B2"])]},
+        )[0]
+        # Restano due tappe, numerate 1 e 2 senza buchi.
+        self.assertEqual([s["label"] for s in plan["stops"]], ["1", "2"])
+        self.assertEqual([s["poi_id"] for s in plan["stops"]], ["B1", "B2"])
+
+    def test_ogni_tappa_porta_l_etichetta_leggibile_del_tipo(self):
+        plan = build_day_map_plans(
+            [BORGO_HOTEL], [BORGO_P1, BORGO_P2],
+            {"days": [_day(1, ["B1", "B2"])]},
+        )[0]
+        labels = [s["type_label"] for s in plan["stops"]]
+        self.assertEqual(labels, ["Museo / cultura", "Dove mangiare"])
+        for stop in plan["stops"]:
+            # mai l'id grezzo al posto del nome leggibile
+            self.assertNotIn(stop["poi_id"], stop["location"])
+
+    def test_tipo_ignoto_ha_comunque_un_colore_e_un_etichetta(self):
+        strano = POI(id="B9", type="mongolfiera", name="Volo", lat=43.081, lng=11.601)
+        plan = build_day_map_plans([], [strano], {"days": [_day(1, ["B9"])]})[0]
+        self.assertEqual(plan["stops"][0]["color"], _DAY_FALLBACK_MARKER_COLOR)
+        self.assertTrue(plan["stops"][0]["type_label"])
+
+    def test_giornata_senza_tappe_geolocalizzabili_resta_nella_lista(self):
+        plans = build_day_map_plans(
+            [BORGO_HOTEL], [BORGO_P1],
+            {"days": [_day(1, ["B1"]), {"day": 2, "title": "Riposo", "blocks": []}]},
+        )
+        self.assertEqual(len(plans), 2)
+        self.assertEqual(plans[1]["stops"], [])
+
+    def test_oltre_le_etichette_disponibili_niente_crash(self):
+        many = [POI(id=f"M{i}", type="museum", name=f"M{i}",
+                    lat=43.08 + i / 1000, lng=11.60 + i / 1000)
+                for i in range(len(_ORDER_LABELS) + 3)]
+        plan = build_day_map_plans([], many, {"days": [_day(1, [p.id for p in many])]})[0]
+        self.assertEqual(len(plan["stops"]), len(many))
+        self.assertEqual(plan["stops"][-1]["label"], "")
+
+    def test_input_malformati_non_sollevano_mai(self):
+        for itinerary in (None, {}, {"days": None}, {"days": "x"}, {"days": [None, 7]},
+                          {"days": [{"blocks": None}]}, {"days": [{"blocks": [None, "x"]}]},
+                          {"days": [{"blocks": [{"poi_id": 5}]}]}):
+            with self.subTest(itinerary=itinerary):
+                self.assertIsInstance(build_day_map_plans([BORGO_HOTEL], [BORGO_P1], itinerary), list)
+
+
+class TestBuildDayMapUrl(unittest.TestCase):
+    def _plan(self, hotel, pois, ids):
+        return build_day_map_plans([hotel], pois, {"days": [_day(1, ids)]})[0]
+
+    def test_un_gruppo_markers_per_tappa_con_la_sua_etichetta(self):
+        plan = self._plan(BORGO_HOTEL, [BORGO_P1, BORGO_P2], ["BH", "B1", "B2"])
+        url = build_day_map_url(plan, "fake-key")
+        self.assertIn("label:H", url)
+        self.assertIn("label:1", url)
+        self.assertIn("label:2", url)
+        # hotel + 2 tappe = 3 gruppi markers distinti
+        self.assertEqual(url.count("markers="), 3)
+
+    def test_percorso_torna_in_hotel(self):
+        plan = self._plan(BORGO_HOTEL, [BORGO_P1, BORGO_P2], ["BH", "B1", "B2"])
+        url = build_day_map_url(plan, "fake-key")
+        self.assertIn("path=", url)
+
+    def test_retina_e_dimensione(self):
+        plan = self._plan(BORGO_HOTEL, [BORGO_P1], ["BH", "B1"])
+        url = build_day_map_url(plan, "fake-key", size="600x400", scale=2)
+        self.assertIn("scale=2", url)
+        self.assertIn("size=600x400", url)
+
+    def test_zoom_ad_hoc_borgo_vs_metropoli(self):
+        # LA richiesta di Lorenzo, verificata numericamente: le stesse tre
+        # tappe in un borgo devono produrre uno zoom nettamente maggiore
+        # (più vicino) che sparse per una metropoli.
+        borgo = build_day_map_url(
+            self._plan(BORGO_HOTEL, [BORGO_P1, BORGO_P2], ["BH", "B1", "B2"]), "k")
+        citta = build_day_map_url(
+            self._plan(CITTA_HOTEL, [CITTA_P1, CITTA_P2], ["LH", "L1", "L2"]), "k")
+        zoom_borgo = int(parse_qs(urlparse(borgo).query)["zoom"][0])
+        zoom_citta = int(parse_qs(urlparse(citta).query)["zoom"][0])
+        self.assertGreater(zoom_borgo, zoom_citta)
+
+    def test_metropoli_con_tappe_vicine_resta_zoomata(self):
+        # "a meno che le attività siano comunque vicine": lo zoom dipende dal
+        # bbox reale del giorno, non dalla dimensione della città.
+        vicino_a = POI(id="LV1", type="museum", name="A", lat=51.5105, lng=-0.1305)
+        vicino_b = POI(id="LV2", type="restaurant", name="B", lat=51.5112, lng=-0.1290)
+        url = build_day_map_url(
+            self._plan(CITTA_HOTEL, [vicino_a, vicino_b], ["LH", "LV1", "LV2"]), "k")
+        self.assertGreater(int(parse_qs(urlparse(url).query)["zoom"][0]), 13)
+
+    def test_giornata_senza_tappe_non_produce_url(self):
+        self.assertIsNone(build_day_map_url({"stops": [], "hotel_point": None}, "k"))
+
+    def test_url_troppo_lungo_rinuncia_al_percorso_prima_che_alla_cartina(self):
+        plan = self._plan(BORGO_HOTEL, [BORGO_P1, BORGO_P2], ["BH", "B1", "B2"])
+        completo = build_day_map_url(plan, "fake-key")
+        self.assertIn("path=", completo)
+        # soglia appena sotto la lunghezza reale: il percorso è un di più,
+        # i marker numerati sono l'informazione — si sacrifica il primo.
+        with patch("src.maps_static._MAX_URL_LENGTH", len(completo) - 1):
+            url = build_day_map_url(plan, "fake-key")
+        self.assertIsNotNone(url)
+        self.assertNotIn("path=", url)
+        self.assertIn("label:1", url)
+
+    def test_url_irrimediabilmente_lungo_da_none_non_un_link_rotto(self):
+        plan = self._plan(BORGO_HOTEL, [BORGO_P1, BORGO_P2], ["BH", "B1", "B2"])
+        with patch("src.maps_static._MAX_URL_LENGTH", 10):
+            self.assertIsNone(build_day_map_url(plan, "fake-key"))
+
+
+class TestBuildDayMapsForItinerary(unittest.TestCase):
+    ITIN = {"days": [_day(1, ["BH", "B1", "B2"], "Centro storico"),
+                     {"day": 2, "title": "Riposo", "blocks": []}]}
+
+    @patch("src.maps_static.fetch_static_map_png")
+    def test_una_voce_per_giorno_con_legenda(self, mock_fetch):
+        mock_fetch.return_value = b"PNG"
+        result = build_day_maps_for_itinerary(
+            [BORGO_HOTEL], [BORGO_P1, BORGO_P2], self.ITIN, "fake-key")
+        self.assertEqual([r["day"] for r in result], [1, 2])
+        self.assertEqual(result[0]["title"], "Centro storico")
+        self.assertEqual(result[0]["png"], b"PNG")
+        self.assertEqual([s["label"] for s in result[0]["stops"]], ["1", "2"])
+
+    @patch("src.maps_static.fetch_static_map_png")
+    def test_giornata_senza_tappe_non_chiama_la_rete(self, mock_fetch):
+        mock_fetch.return_value = b"PNG"
+        result = build_day_maps_for_itinerary(
+            [BORGO_HOTEL], [BORGO_P1, BORGO_P2], self.ITIN, "fake-key")
+        self.assertIsNone(result[1]["png"])
+        self.assertEqual(mock_fetch.call_count, 1)
+
+    def test_senza_chiave_api_lista_vuota_senza_sollevare(self):
+        for key in (None, ""):
+            with self.subTest(key=key):
+                self.assertEqual(
+                    build_day_maps_for_itinerary([BORGO_HOTEL], [BORGO_P1], self.ITIN, key), [])
+
+    @patch("src.maps_static.fetch_static_map_png", side_effect=MapsStaticError("quota esaurita"))
+    def test_errore_di_rete_non_fa_cadere_il_pdf(self, _mock):
+        result = build_day_maps_for_itinerary(
+            [BORGO_HOTEL], [BORGO_P1, BORGO_P2], self.ITIN, "fake-key")
+        self.assertIsNone(result[0]["png"])
+
+    @patch("src.maps_static.fetch_static_map_png", side_effect=RuntimeError("inatteso"))
+    def test_errore_inatteso_non_fa_cadere_il_pdf(self, _mock):
+        result = build_day_maps_for_itinerary(
+            [BORGO_HOTEL], [BORGO_P1, BORGO_P2], self.ITIN, "fake-key")
+        self.assertIsNone(result[0]["png"])
+
+    @patch("src.maps_static.fetch_static_map_png", side_effect=MapsStaticError("boom"))
+    def test_legenda_sempre_presente_anche_senza_png(self, _mock):
+        # Se la cartina non arriva, il cliente deve comunque poter leggere
+        # "1 = Museo civico": la legenda è testo, non pixel.
+        result = build_day_maps_for_itinerary(
+            [BORGO_HOTEL], [BORGO_P1, BORGO_P2], self.ITIN, "fake-key")
+        self.assertEqual(len(result[0]["stops"]), 2)
+        self.assertTrue(all(s["location"] for s in result[0]["stops"]))
 
 
 if __name__ == "__main__":

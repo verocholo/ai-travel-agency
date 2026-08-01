@@ -206,6 +206,59 @@ def _build_pdf_extras(
     return guides, feedback, used_pois, map_png_bytes
 
 
+def _build_pdf_sections(
+    itinerary: dict, trip, api_payload, api_key: str | None = None,
+    google_maps_key: str | None = None, travellers: int = 1,
+) -> dict:
+    """
+    [AGGIUNTO 2026-07-31 — richieste di Lorenzo del 2026-07-31] Wrapper CLI
+    di `src/pdf_extras.py::build_pdf_sections()`, con la stessa identica
+    divisione di responsabilità del wrapper qui sopra: la logica vive nel
+    modulo condiviso (usato anche da `POST /v1/pdf`), qui si aggiungono solo
+    i messaggi di progresso su console.
+
+    Il motivo per cui questi messaggi esistono: ogni sezione degrada in
+    silenzio se qualcosa va storto (è una scelta deliberata — meglio un PDF
+    senza cartine che nessun PDF). Senza una riga stampata per sezione, un
+    documento a cui mancano tutte le cartine è indistinguibile da uno
+    completo finché non lo si apre e lo si sfoglia pagina per pagina.
+    """
+    sections = pdf_extras.build_pdf_sections(
+        itinerary, trip, api_payload, api_key,
+        google_maps_key=google_maps_key, travellers=travellers,
+    )
+
+    n_maps = len(sections.get("day_maps") or [])
+    print(f"🗺️  Cartine per giornata generate: {n_maps}" if n_maps
+          else "⚠️  Cartine per giornata saltate (per il PDF)")
+
+    n_dir = len(sections.get("directions") or [])
+    print(f"🧭 Sezioni 'Come arrivare' generate: {n_dir}" if n_dir
+          else "⚠️  Sezione 'Come arrivare' saltata (per il PDF)")
+
+    print("💶 Stima dei costi generata (per il PDF)" if sections.get("cost_summary")
+          else "⚠️  Stima dei costi saltata (per il PDF)")
+
+    print("💡 Architect's Tips estesi generati (per il PDF)" if sections.get("tips")
+          else "⚠️  Architect's Tips estesi saltati — resta la lista base (per il PDF)")
+
+    n_cards = len(sections.get("place_cards") or {})
+    print(f"🔗 Schede luogo (menù/info) generate: {n_cards}" if n_cards
+          else "⚠️  Schede luogo (menù/info) saltate (per il PDF)")
+
+    # [AGGIUNTO 2026-08-01] Il link a cui il cliente risponde. Se manca, la
+    # sezione recensione continua a fare domande a cui nessuno può rispondere:
+    # è esattamente il difetto che questa riga serve a rendere visibile.
+    _fb_link = sections.get("feedback_link") or {}
+    if _fb_link.get("url"):
+        print(f"📝 Modulo recensione collegato (codice {_fb_link.get('ref')})")
+    else:
+        print("⚠️  Modulo recensione NON collegato — imposta FEEDBACK_FORM_URL, "
+              "altrimenti la sezione recensione resta senza un posto dove rispondere")
+
+    return sections
+
+
 def _safe_fixture_call(fixture: str, loader):
     """
     [AGGIUNTO 2026-07-12 — bug reale trovato in audit di qualità] La difesa
@@ -350,11 +403,16 @@ def _run_one(fixture: str, scenario: str, mode: str, run_suffix: str = "", gener
             result.itinerary, result.trip, result.api_payload, SETTINGS.anthropic_api_key,
             google_maps_key=SETTINGS.google_maps_key,
         )
+        sections = _build_pdf_sections(
+            result.itinerary, result.trip, result.api_payload, SETTINGS.anthropic_api_key,
+            google_maps_key=SETTINGS.google_maps_key,
+        )
         try:
             out_pdf = OUTPUT_DIR / f"{scenario}{run_suffix}.pdf"
             pdf_renderer.render_pdf(result.itinerary, result.trip.to_dict(), hotels=sanitized_hotels,
                                      guides=guides, feedback=feedback, poi=used_pois,
-                                     map_png_bytes=map_png_bytes, output_path=str(out_pdf))
+                                     map_png_bytes=map_png_bytes, output_path=str(out_pdf),
+                                     **sections)
             print(f"📄 PDF cliente salvato in: {out_pdf}")
         except pdf_renderer.PdfRendererError as e:
             print(f"⚠️  Generazione PDF saltata: {e}")
@@ -513,11 +571,16 @@ def _run_refine(fixture: str, scenario: str, customer_request: str, generate_pdf
             result.itinerary, base_result.trip, api_payload, SETTINGS.anthropic_api_key,
             google_maps_key=SETTINGS.google_maps_key,
         )
+        sections = _build_pdf_sections(
+            result.itinerary, base_result.trip, api_payload, SETTINGS.anthropic_api_key,
+            google_maps_key=SETTINGS.google_maps_key,
+        )
         try:
             out_pdf = OUTPUT_DIR / f"{scenario}_affinato.pdf"
             pdf_renderer.render_pdf(result.itinerary, base_result.trip.to_dict(), hotels=sanitized_hotels,
                                      guides=guides, feedback=feedback, poi=used_pois,
-                                     map_png_bytes=map_png_bytes, output_path=str(out_pdf))
+                                     map_png_bytes=map_png_bytes, output_path=str(out_pdf),
+                                     **sections)
             print(f"📄 PDF cliente (itinerario affinato) salvato in: {out_pdf}")
         except pdf_renderer.PdfRendererError as e:
             print(f"⚠️  Generazione PDF saltata: {e}")

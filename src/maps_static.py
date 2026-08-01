@@ -30,6 +30,7 @@ from urllib.parse import quote
 
 import requests
 
+from . import cost_telemetry
 from .itinerary_utils import extract_used_poi_ids_by_day
 
 STATIC_MAP_BASE_URL = "https://maps.googleapis.com/maps/api/staticmap"
@@ -86,6 +87,7 @@ def build_static_map_url(
     size: str = "640x400",
     center: tuple[float, float] | None = None,
     zoom: int | None = None,
+    scale: int | None = None,
 ) -> str | None:
     """
     Funzione pura — costruisce l'URL della Google Static Maps API.
@@ -119,6 +121,14 @@ def build_static_map_url(
         query_parts.append(f"center={_quote(f'{center[0]},{center[1]}')}")
     if zoom is not None:
         query_parts.append(f"zoom={_quote(zoom)}")
+    # [AGGIUNTO 2026-07-31 — feedback di Lorenzo: "migliorare la parte grafica,
+    # la parte da migliorare maggiormente è quella delle cartine"] `scale=2`
+    # raddoppia i pixel reali dell'immagine mantenendo la stessa area
+    # geografica (parametro documentato della Static API): sullo schermo il PDF
+    # non cambia, ma STAMPATO e sullo zoom la cartina smette di essere sfocata.
+    # Il costo è zero in termini di quota (stessa richiesta), solo byte in più.
+    if scale is not None:
+        query_parts.append(f"scale={_quote(scale)}")
     has_content = False
 
     for style in markers_by_style:
@@ -152,6 +162,7 @@ def fetch_static_map_png(url: str, timeout: int = 15) -> bytes:
     """Isola la sola chiamata HTTP (stesso principio di
     places_client.py::fetch_nearby_raw() — ispeziona la risposta reale
     prima di fidarti del chiamante che la usa)."""
+    cost_telemetry.record_api_call("google_static_maps")
     resp = requests.get(url, timeout=timeout)
     if resp.status_code != 200:
         raise MapsStaticError(
@@ -368,6 +379,279 @@ def build_map_for_itinerary(
     except (MapsStaticError, requests.exceptions.RequestException) as e:
         print(f"⚠️  Cartina saltata (impossibile scaricarla da Google Static Maps): {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# CARTINE PER GIORNO, NUMERATE — [AGGIUNTO 2026-07-31]
+#
+# Feedback diretto di Lorenzo dopo aver usato di persona un itinerario reale:
+#   "è brutta esteticamente e onestamente non ci capisce nulla, sono
+#    semplicemente puntini con coordinate che non aiutano minimamente il
+#    cliente ad orientarsi durante la giornata"
+#   "sarebbe opportuno indicare vicino ad ogni indicatore cosa sono e il numero
+#    (1=prima attività del giorno, 2=seconda attività del giorno e così via),
+#    le mappe devono essere ad hoc quindi se la città è piccola e le attrazioni
+#    sono vicine la cartina dovrà essere molto zoomata"
+#
+# Tre cause reali del problema, tutte chiuse qui:
+#   1) UNA cartina per l'INTERO viaggio -> su un multi-città il bbox include
+#      tutte le città e lo zoom collassa a livello regionale: i punti di una
+#      singola giornata diventano indistinguibili. Fix: una cartina PER GIORNO,
+#      il cui bbox contiene solo le tappe di quel giorno -> lo zoom "ad hoc"
+#      che Lorenzo chiede esce da solo dalla matematica di compute_center_zoom
+#      (città piccola con tappe vicine = bbox stretto = zoom alto).
+#   2) marker etichettati per TIPO (R/M/A/S) -> il cliente vede lettere che non
+#      dicono in che ORDINE muoversi. Fix: etichetta = numero della tappa
+#      nell'ordine di visita, esattamente come chiesto.
+#   3) nessuna legenda -> anche un marker numerato è muto senza la riga che dice
+#      "2 · 11:30 · Galleria dell'Accademia". La legenda vive nell'HTML del PDF
+#      (testo vero, selezionabile e leggibile), non bruciata nel PNG: qui
+#      restituiamo i dati strutturati e pdf_renderer li impagina.
+# ---------------------------------------------------------------------------
+
+# Le etichette dei marker della Static API sono UN SOLO carattere alfanumerico
+# maiuscolo (0-9, A-Z) — documentato. Quindi: cifre 1..9 per le prime nove
+# tappe (il caso reale di quasi ogni giornata), poi lettere. Sono escluse:
+# "H" (riservata all'hotel, sarebbe ambigua), "I" e "O" (indistinguibili da 1 e
+# 0 a questa dimensione).
+_ORDER_LABELS = "123456789ABCDEFGJKLMNPQRSTUVWXYZ"
+
+# Colore del marker per tipo, così la cartina resta leggibile a colpo d'occhio
+# ("il verde è dove mangio") MENTRE il numero dice l'ordine. Le due
+# informazioni non competono più per lo stesso spazio.
+_DAY_MARKER_COLOR_BY_TYPE = {
+    "restaurant": "green",
+    "museum": "orange",
+    "activity": "blue",
+    "shopping": "purple",
+}
+_DAY_FALLBACK_MARKER_COLOR = "blue"
+_DAY_PATH_COLOR = "0x1a3b5c"
+
+# Etichette italiane della categoria, per la legenda nel PDF (mai mostrare al
+# cliente il valore tecnico "restaurant").
+_TYPE_LABEL_IT = {
+    "restaurant": "Dove mangiare",
+    "museum": "Museo / cultura",
+    "activity": "Attività",
+    "shopping": "Shopping",
+    "hotel": "Alloggio",
+}
+
+
+def _type_label_it(poi_type) -> str:
+    return _TYPE_LABEL_IT.get(poi_type, "Tappa")
+
+
+def build_day_map_plans(hotels: list, pois: list, itinerary: dict) -> list[dict]:
+    """
+    Funzione PURA (nessuna rete): dall'itinerario già generato + i dati reali
+    costruisce, per ciascun giorno, l'elenco ordinato delle tappe geolocalizzate
+    con la loro etichetta di ordine.
+
+    Ritorna una lista di `{"day", "title", "hotel_point", "stops": [...]}` dove
+    ogni stop è `{"label", "time", "activity", "location", "poi_id", "point",
+    "type", "type_label", "color"}`.
+
+    Regole (tutte pensate per non mentire al cliente):
+      - si itera sui BLOCCHI nell'ordine in cui compaiono, non su un insieme:
+        l'ordine è l'informazione di prodotto qui;
+      - un blocco senza `poi_id`, o con un id sconosciuto, o con coordinate non
+        numeriche, NON entra in cartina (non abbiamo un punto reale da mettere:
+        preferiamo una tappa in meno che un puntino inventato) ma non rompe la
+        numerazione delle altre;
+      - un poi_id ripetuto nello stesso giorno (es. si torna in piazza la sera)
+        occupa UN solo marker, quello della prima visita — due marker
+        sovrapposti sono illeggibili; l'orario successivo resta comunque nel
+        programma testuale del PDF;
+      - i blocchi in hotel non diventano tappe numerate: l'hotel ha il suo
+        marker rosso "H", ed è il punto di partenza/ritorno del percorso.
+    """
+    hotel_by_id = {getattr(h, "id", None): h for h in (hotels or [])}
+    poi_by_id = {getattr(p, "id", None): p for p in (pois or [])}
+    days = (itinerary or {}).get("days") or []
+    if not isinstance(days, list):
+        return []
+
+    plans = []
+    for day in days:
+        if not isinstance(day, dict):
+            continue
+        blocks = day.get("blocks") or []
+        if not isinstance(blocks, list):
+            blocks = []
+        stops = []
+        seen_ids: set[str] = set()
+        hotel_point = None
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            poi_id = block.get("poi_id")
+            if not isinstance(poi_id, str) or not poi_id:
+                continue
+            if poi_id in hotel_by_id:
+                point = _point_of(hotel_by_id[poi_id])
+                if point is not None and hotel_point is None:
+                    hotel_point = point
+                continue
+            if poi_id in seen_ids:
+                continue
+            poi = poi_by_id.get(poi_id)
+            if poi is None:
+                continue
+            point = _point_of(poi)
+            if point is None:
+                continue
+            seen_ids.add(poi_id)
+            index = len(stops)
+            poi_type = getattr(poi, "type", None)
+            stops.append({
+                "label": _ORDER_LABELS[index] if index < len(_ORDER_LABELS) else "",
+                "time": block.get("time") or "",
+                "activity": block.get("activity") or getattr(poi, "name", "") or "",
+                "location": block.get("location") or getattr(poi, "name", "") or "",
+                "poi_id": poi_id,
+                "point": point,
+                "type": poi_type,
+                "type_label": _type_label_it(poi_type),
+                "color": _DAY_MARKER_COLOR_BY_TYPE.get(poi_type, _DAY_FALLBACK_MARKER_COLOR),
+            })
+        if hotel_point is None:
+            # Nessun blocco in hotel quel giorno (il caso normale a metà
+            # viaggio): usa comunque l'hotel-ancora più pertinente, così la
+            # cartina mostra "da dove parto e dove torno a dormire".
+            hotel_point = _pick_day_anchor(
+                [s["poi_id"] for s in stops],
+                [pt for pt in (_point_of(h) for h in (hotels or [])) if pt is not None],
+                set(hotel_by_id),
+                {pid: pt for pid, pt in (
+                    (getattr(o, "id", None), _point_of(o)) for o in list(hotels or []) + list(pois or [])
+                ) if pid is not None and pt is not None},
+            )
+        # Nome/id dell'hotel effettivamente usato come ancora, per la sezione
+        # "Come arrivare" (src/directions.py): al cliente va detto "dall'Hotel
+        # Duomo", mai "da H1" (vedi check_no_raw_id_leakage — stesso principio).
+        hotel_id, hotel_name = None, None
+        for h in (hotels or []):
+            if _point_of(h) == hotel_point and hotel_point is not None:
+                hotel_id, hotel_name = getattr(h, "id", None), getattr(h, "name", None)
+                break
+        plans.append({
+            "day": day.get("day"),
+            "title": day.get("title") or "",
+            "hotel_point": hotel_point,
+            "hotel_id": hotel_id,
+            "hotel_name": hotel_name,
+            "stops": stops,
+        })
+    return plans
+
+
+def _point_of(obj) -> tuple[float, float] | None:
+    """Coordinate reali di un hotel/POI, o None se assenti/non numeriche —
+    difesa contro una forma inattesa che altrimenti farebbe saltare l'intera
+    cartina invece della singola tappa."""
+    lat = getattr(obj, "lat", None)
+    lng = getattr(obj, "lng", None)
+    try:
+        return float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_day_map_url(
+    plan: dict, api_key: str, size: str = "640x420", scale: int | None = 2
+) -> str | None:
+    """Funzione pura: URL della cartina di UN giorno, marker numerati
+    nell'ordine di visita + percorso hotel -> tappe -> hotel.
+
+    Lo zoom NON è fisso: `compute_center_zoom` lo calcola sul bbox delle sole
+    tappe di QUESTA giornata — che è precisamente la richiesta "le mappe devono
+    essere ad hoc": tre attrazioni a 300 m l'una dall'altra in un borgo
+    producono uno zoom da quartiere, le stesse tre sparse per Londra uno zoom
+    da città. Nessuna soglia arbitraria da tarare a mano.
+    """
+    stops = plan.get("stops") or []
+    hotel_point = plan.get("hotel_point")
+    markers_by_style = []
+    if hotel_point is not None:
+        markers_by_style.append({**_HOTEL_MARKER_STYLE, "points": [hotel_point]})
+    # Un gruppo `markers=` per tappa: colore E etichetta cambiano a ogni punto,
+    # quindi non sono raggruppabili come nella cartina d'insieme.
+    for stop in stops:
+        markers_by_style.append({
+            "color": stop.get("color") or _DAY_FALLBACK_MARKER_COLOR,
+            "label": stop.get("label") or "",
+            "points": [stop["point"]],
+        })
+
+    path_points = []
+    if hotel_point is not None:
+        path_points.append(hotel_point)
+    path_points += [s["point"] for s in stops]
+    if hotel_point is not None and len(path_points) > 1:
+        path_points.append(hotel_point)
+    paths = [{"color": _DAY_PATH_COLOR, "points": path_points}] if len(path_points) >= 2 else []
+
+    marker_points = [p for style in markers_by_style for p in style["points"]]
+    width_px, height_px = _parse_size(size)
+    center_zoom = compute_center_zoom(marker_points, width_px, height_px)
+    center = (center_zoom[0], center_zoom[1]) if center_zoom else None
+    zoom = center_zoom[2] if center_zoom else None
+
+    url = build_static_map_url(
+        markers_by_style, paths, api_key, size=size, center=center, zoom=zoom, scale=scale
+    )
+    if url is not None and len(url) > _MAX_URL_LENGTH and paths:
+        url = build_static_map_url(
+            markers_by_style, [], api_key, size=size, center=center, zoom=zoom, scale=scale
+        )
+    if url is not None and len(url) > _MAX_URL_LENGTH:
+        return None
+    return url
+
+
+def build_day_maps_for_itinerary(
+    hotels: list,
+    pois: list,
+    itinerary: dict,
+    api_key: str | None,
+    size: str = "640x420",
+    scale: int | None = 2,
+) -> list[dict]:
+    """
+    Orchestrazione: una cartina numerata PER GIORNO + la sua legenda.
+
+    Ritorna una lista di `{"day", "title", "png": bytes|None, "stops": [...]}`.
+    `png=None` per una giornata senza tappe geolocalizzabili o il cui download
+    fallisce: il PDF impagina comunque la legenda testuale, e una cartina
+    mancante non fa MAI fallire il documento (stesso principio già applicato a
+    guida/feedback/cartina d'insieme). Non solleva mai verso il chiamante.
+    """
+    if not api_key:
+        return []
+    plans = build_day_map_plans(hotels, pois, itinerary)
+    results = []
+    for plan in plans:
+        png = None
+        if plan.get("stops"):
+            try:
+                url = build_day_map_url(plan, api_key, size=size, scale=scale)
+                if url is not None:
+                    png = fetch_static_map_png(url)
+            except (MapsStaticError, requests.exceptions.RequestException) as e:
+                print(f"⚠️  Cartina del giorno {plan.get('day')} saltata: {e}")
+                png = None
+            except Exception as e:  # difesa in profondità: mai far cadere il PDF
+                print(f"⚠️  Cartina del giorno {plan.get('day')} saltata (errore inatteso): {e}")
+                png = None
+        results.append({
+            "day": plan.get("day"),
+            "title": plan.get("title"),
+            "png": png,
+            "stops": plan.get("stops") or [],
+        })
+    return results
 
 
 def _pick_day_anchor(
