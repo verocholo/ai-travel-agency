@@ -18,11 +18,42 @@ gunicorn>=22.0.0
 # Il codice degrada comunque se manca (`render_day_map_png()` ritorna None).
 Pillow>=10.0.0
 
-# [AGGIUNTO 2026-08-02 — serve SOLO ai test, vedi tests/test_standard_qualita.py]
-# Il cliente non clicca l'HTML, clicca il PDF: fra i due c'è wkhtmltopdf, che
-# i collegamenti interni li ricostruisce da capo e puo' perderli per strada.
-# E' successo davvero (il rimando alla guida e quello alla recensione erano
-# scritti bene e sulla carta non facevano niente). pypdf serve a guardare
-# dentro il PDF prodotto e contare i salti che funzionano davvero. Il prodotto
-# non lo importa da nessuna parte: se manca, quel controllo si salta.
+# [AGGIUNTO 2026-08-02, RICLASSIFICATO 2026-08-05] pypdf.
+#
+# Nasceva come dipendenza dei soli test: serviva a guardare dentro il PDF
+# prodotto e contare i salti interni che funzionano davvero. La riga qui
+# sopra diceva infatti «il prodotto non lo importa da nessuna parte: se
+# manca, quel controllo si salta».
+#
+# DAL 2026-08-05 NON È PIÙ VERO. `src/fascicolo.py` lo importa per cucire le
+# guide dentro l'unico file e per allegare il foglio della valigia. Se manca,
+# `unisci()` cattura l'eccezione e restituisce il documento principale senza
+# capitoli: il cliente riceve un PDF che sembra completo e non lo è, e nessun
+# errore compare da nessuna parte.
+#
+# La nota vecchia è rimasta scritta qui apposta invece di essere cancellata:
+# era esatta quando fu scritta, ed è il tipo di frase che fra sei mesi
+# convincerebbe qualcuno a togliere questa riga «perché tanto serve solo ai
+# test».
 pypdf>=3.17
+
+# [AGGIUNTO 2026-08-05 — DIFETTO REALE, trovato al primo deploy dopo quattro
+# giorni in cui il prodotto era rotto in produzione senza che nessuno lo
+# sapesse.]
+#
+# `src/checklist_xlsx.py` importa openpyxl per costruire il foglio della
+# valigia. Questa riga non c'era. In produzione la libreria non era
+# installata, l'import falliva, e `build_checklist_xlsx()` — che cattura ogni
+# eccezione apposta per non poter mai togliere il PDF al cliente —
+# restituiva `None`.
+#
+# Effetto: dal giorno in cui il foglio della valigia è stato scritto, NESSUN
+# cliente in produzione lo avrebbe ricevuto, e nel PDF il riquadro che lo
+# annuncia sarebbe semplicemente sparito. Nessun errore nei log, nessuna
+# eccezione, nessun test rosso: il guasto perfetto.
+#
+# È la stessa forma di tutti i difetti gravi di questo progetto — degrada
+# invece di rompersi — ed è il motivo per cui esiste
+# `tests/test_dipendenze_dichiarate_2026_08_05.py`, che confronta ogni import
+# esterno del prodotto con questo file e fallisce se uno manca.
+openpyxl>=3.1
