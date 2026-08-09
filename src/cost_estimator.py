@@ -112,8 +112,30 @@ def estimate_costs(itinerary: dict, trip, hotels: list, pois: list, travellers: 
     lines: list[dict] = []
 
     # --- ALLOGGIO: dato reale, unica voce con importo esatto ---------------
+    # [CORRETTO 2026-08-02 — difetto visto rigenerando il campione, non dedotto
+    # a tavolino] Prima ogni struttura in `hotels` diventava una voce di costo e
+    # tutte finivano nel totale. Con due strutture in elenco il documento
+    # addebitava al cliente DUE alberghi per le stesse notti: nel campione,
+    # 420 € + 354 € = 774 € per tre notti dormite in un letto solo, e il verdetto
+    # sul budget passava a "sopra il budget" per una spesa che non esiste.
+    # Le strutture in elenco sono ALTERNATIVE fra cui il cliente sceglie (è la
+    # decisione di prodotto già presa a monte: un solo hotel-àncora per viaggio,
+    # vedi il feedback al business plan) e la copertina infatti ne stampa una
+    # sola, sotto "BASE". Qui vale la stessa regola: si conta la prima, cioè
+    # quella che il documento presenta come base, e si DICE che le altre sono
+    # alternative — mai sommarle in silenzio, mai ometterle in silenzio.
     nights = count_nights(getattr(trip, "date_start", None), getattr(trip, "date_end", None))
-    for hotel in hotels:
+    alternatives = max(len(hotels) - 1, 0)
+    if alternatives == 1:
+        alt_note = " · l'altra struttura in elenco è un'alternativa a questa, non si somma"
+    elif alternatives > 1:
+        alt_note = (
+            f" · le altre {alternatives} strutture in elenco sono alternative a questa,"
+            " non si sommano"
+        )
+    else:
+        alt_note = ""
+    for hotel in hotels[:1]:
         price = getattr(hotel, "price_night_eur", None)
         name = getattr(hotel, "name", None) or "Alloggio"
         if isinstance(price, (int, float)) and not isinstance(price, bool) and nights:
@@ -122,7 +144,10 @@ def estimate_costs(itinerary: dict, trip, hotels: list, pois: list, travellers: 
                 "category": "lodging",
                 "category_label": _CATEGORY_LABELS["lodging"],
                 "label": name,
-                "detail": f"{nights} notti × {price:.0f} € a notte (prezzo reale del fornitore)",
+                "detail": (
+                    f"{nights} notti × {price:.0f} € a notte (prezzo reale del fornitore)"
+                    + alt_note
+                ),
                 "min_eur": total,
                 "max_eur": total,
                 "known": True,
@@ -132,7 +157,7 @@ def estimate_costs(itinerary: dict, trip, hotels: list, pois: list, travellers: 
                 "category": "lodging",
                 "category_label": _CATEGORY_LABELS["lodging"],
                 "label": name,
-                "detail": f"prezzo per notte non fornito — {_UNKNOWN_LABEL}",
+                "detail": f"prezzo per notte non fornito — {_UNKNOWN_LABEL}" + alt_note,
                 "min_eur": None, "max_eur": None, "known": False,
             })
 

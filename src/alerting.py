@@ -196,9 +196,20 @@ def notify_degraded_pdf(counters: dict, context: dict | None = None) -> bool:
         missing.append("richiesta di recensione")
     if not missing:
         return False
+    message = "Il PDF è stato consegnato SENZA queste sezioni: " + ", ".join(missing)
+    # [AGGIUNTO 2026-08-01] Il messaggio diceva COSA mancava, mai PERCHÉ.
+    # Chi riceve l'allarme deve poter riparare senza dover riprodurre il caso:
+    # una chiave scaduta, un timeout di rete e un troncamento da max_tokens
+    # producono tutti la stessa riga "mancano i consigli dell'architetto" e
+    # tre interventi completamente diversi. `section_errors` arriva dallo
+    # stesso dizionario di contatori — nessuna seconda fonte da allineare.
+    errors = counters.get("section_errors") or {}
+    if isinstance(errors, dict) and errors:
+        detail = "; ".join(f"{k}: {v}" for k, v in sorted(errors.items()))
+        message += f" — motivo: {detail}"
     return notify(
         "pdf_degradato",
-        "Il PDF è stato consegnato SENZA queste sezioni: " + ", ".join(missing),
+        message,
         context=context,
         level=LEVEL_WARNING,
     )

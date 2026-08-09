@@ -38,10 +38,22 @@ modulo fornisce:
    invece di cento aneddoti. Le due cose convivono: le personalizzate
    fanno aprire la persona, queste producono il dato.
 
+[AGGIUNTO 2026-08-03 — segnalazione del cliente: «il link di tally non
+funziona ancora»] Le tre cose sopra erano scritte, ma nessuna di esse
+controllava che la URL configurata potesse davvero funzionare. Con
+`FEEDBACK_FORM_URL` a `https://tally.so/r/ESEMPIO` (il valore lasciato nel
+generatore del campione) il PDF usciva con un link al 404 di Tally; con un
+valore senza schema (`tally.so/r/xyz`) wkhtmltopdf lo risolveva contro il
+file HTML temporaneo e ne faceva un `file:///tmp/...` che `pdf_links.py`
+scarta — un link morto e invisibile. Da qui la regola di `validate_form_url()`:
+una URL che non può funzionare NON viene stampata affatto. Meglio un
+capitolo senza riquadro che un riquadro che porta al nulla: il primo si
+nota e si sistema, il secondo sembra funzionare fino al clic del cliente.
+
 Variabili d'ambiente (tutte opzionali):
 
-    FEEDBACK_FORM_URL     URL del modulo di risposta. Assente → nessun
-                          link nel PDF, comportamento di oggi.
+    FEEDBACK_FORM_URL     URL del modulo di risposta, `https://` assoluta.
+                          Assente o non valida → nessun link nel PDF.
     FEEDBACK_REF_SECRET   segreto per derivare il `ref` in modo stabile.
                           Assente → `ref` casuale (funziona lo stesso, ma
                           rigenerare il PDF produce un codice diverso).
@@ -53,7 +65,7 @@ import hashlib
 import hmac
 import os
 import secrets
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 # Lunghezza del codice mostrato al cliente. 10 caratteri esadecimali sono
 # ~40 bit: abbastanza da non collidere su qualunque volume questo progetto
@@ -131,10 +143,84 @@ CORE_QUESTIONS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Validazione della URL configurata.
+#
+# La regola è asimmetrica di proposito, perché i due errori non costano
+# uguale: stampare una URL rotta manda il cliente su un 404 (e quello che
+# perdiamo è la sua fiducia, non solo la sua risposta), mentre scartare per
+# sbaglio una URL buona toglie il riquadro in silenzio e nessuno se ne
+# accorge finché non smettono di arrivare risposte. Quindi si scarta solo
+# quello che NON PUÒ funzionare, mai quello che "sembra strano".
+# ---------------------------------------------------------------------------
+
+# Nomi che nessun generatore di moduli assegnerebbe mai a un form vero: sono
+# parole che una persona scrive quando ancora non ha l'id definitivo. Gli id
+# di Tally sono stringhe casuali (`wA5b2Q`), quindi il rischio di falso
+# positivo è nullo su questi e alto su qualunque parola di senso compiuto in
+# più — per questo NON ci sono qui dentro "test", "demo" o "sample", che un
+# modulo vero può legittimamente chiamarsi (un form di prova usato davvero
+# resta un form che risponde).
+_ID_SEGNAPOSTO = frozenset({
+    "esempio", "esempi", "example", "placeholder", "segnaposto",
+    "changeme", "cambiami", "todo", "tbd", "fixme",
+    "none", "null", "undefined", "xxx", "xxxx", "xxxxx",
+    "formid", "idform", "yourformid", "tuoformid", "iddelmodulo",
+    "daimpostare", "dainserire", "inseriscilaurl", "urldelmodulo",
+})
+
+# Domini che per definizione non ospitano niente (RFC 2606 e RFC 6761): una
+# URL che punta lì non è "probabilmente" sbagliata, è sbagliata e basta.
+_HOST_RISERVATI = frozenset({"localhost", "example.com", "example.net", "example.org"})
+_SUFFISSI_RISERVATI = (".localhost", ".invalid", ".test", ".example",
+                       ".example.com", ".example.net", ".example.org")
+
+
+def _normalizza_id(testo: str) -> str:
+    """`TUO-FORM-ID`, `tuo_form_id` e `TuoFormId` sono lo stesso segnaposto:
+    il confronto va fatto sulle sole lettere e cifre, minuscole."""
+    return "".join(c for c in testo.lower() if c.isalnum())
+
+
+def validate_form_url(raw: object) -> str | None:
+    """La URL configurata se può funzionare, None altrimenti. Non solleva mai.
+
+    Scarta, in quest'ordine: quello che non è testo (una variabile
+    d'ambiente è sempre una stringa, ma questa funzione la chiamano anche
+    altri), il vuoto e i soli spazi (il modo più comune di credere di aver
+    configurato qualcosa senza averlo fatto), tutto ciò che non è una URL
+    assoluta `https` (`http://` è vietato in tutto il repo: questo documento
+    contiene nome e date di viaggio di una persona; senza schema il PDF
+    produce un `file:///` morto), le URL senza host, i domini riservati e gli
+    id di modulo che sono chiaramente un segnaposto mai sostituito.
+    """
+    if not isinstance(raw, str):
+        return None
+    base = raw.strip()
+    if not base:
+        return None
+    try:
+        pezzi = urlsplit(base)
+        host = (pezzi.hostname or "").lower()
+    except ValueError:
+        # URL sintatticamente indecifrabile (parentesi IPv6 sbilanciate, ecc.).
+        return None
+    if pezzi.scheme.lower() != "https" or not host:
+        return None
+    if host in _HOST_RISERVATI or host.endswith(_SUFFISSI_RISERVATI):
+        return None
+    segmenti = [s for s in pezzi.path.split("/") if s]
+    if segmenti and _normalizza_id(segmenti[-1]) in _ID_SEGNAPOSTO:
+        return None
+    return base
+
+
 def form_url() -> str | None:
-    """URL del modulo di risposta, o None se non configurato."""
-    url = (os.getenv("FEEDBACK_FORM_URL") or "").strip()
-    return url or None
+    """URL del modulo di risposta, o None se non configurata o non valida."""
+    try:
+        return validate_form_url(os.getenv("FEEDBACK_FORM_URL"))
+    except Exception:  # noqa: BLE001 — il PDF non fallisce per una variabile
+        return None
 
 
 def _ref_param() -> str:
@@ -175,14 +261,37 @@ def build_reference(trip: object = None) -> str:
 
 
 def build_feedback_url(ref: str | None = None) -> str | None:
-    """URL completa da mettere nel PDF, o None se il modulo non è configurato."""
+    """URL completa da mettere nel PDF, o None se il modulo non è configurato
+    o se la URL configurata non può funzionare (vedi `validate_form_url`).
+
+    [CORRETTO 2026-08-03] Il parametro veniva attaccato in coda con una
+    `f`-string. Su una URL con un'ancora (`https://.../wA5b2Q#inizio`) il
+    risultato era `...#inizio?ref=abc`: sintatticamente valido, ma `ref`
+    finisce DENTRO l'ancora e il modulo non lo riceve mai — il cliente
+    risponde e la risposta arriva senza sapere di quale viaggio parli, che è
+    esattamente il caso in cui non serve a niente. Ora la query si ricostruisce
+    con `urllib.parse`, quindi il parametro entra dove deve (prima
+    dell'ancora, che resta in fondo) e il vecchio comportamento sul
+    separatore `?`/`&` si ottiene di conseguenza invece che a mano. Anche il
+    NOME del parametro viene ora codificato: `FEEDBACK_REF_PARAM` la scrive
+    una persona a mano nella dashboard, e uno spazio o una `&` di troppo
+    spezzerebbero la URL in due parametri diversi.
+    """
     base = form_url()
     if not base:
         return None
     if not ref:
         return base
-    separator = "&" if "?" in base else "?"
-    return f"{base}{separator}{_ref_param()}={quote(str(ref), safe='')}"
+    try:
+        pezzi = urlsplit(base)
+        parametri = parse_qsl(pezzi.query, keep_blank_values=True)
+        parametri.append((_ref_param(), str(ref)))
+        # `quote_via=quote` e non il `quote_plus` di default: uno spazio
+        # diventa `%20` e non `+`, che è la forma che tutti i moduli
+        # interpretano allo stesso modo.
+        return urlunsplit(pezzi._replace(query=urlencode(parametri, quote_via=quote)))
+    except Exception:  # noqa: BLE001 — nessun PDF fallisce per un link
+        return None
 
 
 def build_feedback_link(trip: object = None) -> tuple[str | None, str | None]:

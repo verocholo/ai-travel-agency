@@ -51,6 +51,7 @@ Variabili d'ambiente riconosciute (tutte opzionali, tutte numeriche):
     COST_USD_PER_1K_GEOCODING
     COST_USD_PER_1K_PLACES_NEARBY
     COST_USD_PER_1K_DISTANCE_ELEMENTS
+    COST_USD_PER_1K_DISTANCE_ELEMENTS_ADVANCED   tariffa con traffico (doppia)
     COST_USD_PER_1K_STATIC_MAPS
     COST_EUR_STRIPE_FIXED            parte fissa della commissione (0.25)
     COST_STRIPE_PERCENT              parte percentuale (1.5 = 1,5%)
@@ -80,7 +81,23 @@ _DEFAULT_PRICES = {
     "usd_per_1k_geocoding": 5.0,
     "usd_per_1k_places_nearby": 32.0,
     "usd_per_1k_distance_elements": 5.0,
+    # [AGGIUNTO 2026-08-01 — verificato sul listino ufficiale di Google]
+    # La Distance Matrix ha DUE SKU, non uno. "Essentials" costa 5 $/1000
+    # elementi; "Advanced/Pro" ne costa 10 — cioè il DOPPIO — e si attiva da
+    # sola nel momento in cui la richiesta contiene informazioni di traffico
+    # (`departure_time`) o modificatori di posizione. Finché qui c'era una
+    # voce sola a 5 $, ogni richiesta "driving con traffico" veniva contata
+    # a metà del suo prezzo reale: sulla prima misura in produzione questo
+    # da solo nascondeva circa 0,46 € per itinerario, cioè quasi il 10% del
+    # prezzo di vendita.
+    "usd_per_1k_distance_elements_advanced": 10.0,
     "usd_per_1k_static_maps": 2.0,
+    # [AGGIUNTO 2026-08-03 — task #181] Places Photo: SKU a se', fatturato per
+    # foto scaricata, non compreso nella ricerca dei luoghi. E' il motivo per
+    # cui `src/foto.py` ha un tetto: a questo prezzo venti foto per itinerario
+    # costerebbero circa 0,13 € — piu' delle cartine e del geocoding messi
+    # insieme — e nessuno le guarderebbe tutte.
+    "usd_per_1k_place_photo": 7.0,
     # LiteAPI: modello a commissione sulla prenotazione, nessun costo per
     # chiamata di ricerca. Contato lo stesso in unità (serve a vedere quante
     # chiamate si fanno), a costo zero finché il contratto resta questo.
@@ -102,7 +119,9 @@ _PROVIDER_LABELS = {
     "google_geocoding": "Google Geocoding",
     "google_places_nearby": "Google Places (ricerca luoghi)",
     "google_distance_matrix": "Google Distance Matrix (tempi di percorrenza)",
+    "google_distance_matrix_advanced": "Google Distance Matrix con traffico (tariffa Advanced, doppia)",
     "google_static_maps": "Google Static Maps (cartine)",
+    "google_place_photo": "Google Places (foto delle attrazioni)",
     "liteapi": "LiteAPI (hotel)",
 }
 
@@ -110,7 +129,9 @@ _PROVIDER_PRICE_KEYS = {
     "google_geocoding": "usd_per_1k_geocoding",
     "google_places_nearby": "usd_per_1k_places_nearby",
     "google_distance_matrix": "usd_per_1k_distance_elements",
+    "google_distance_matrix_advanced": "usd_per_1k_distance_elements_advanced",
     "google_static_maps": "usd_per_1k_static_maps",
+    "google_place_photo": "usd_per_1k_place_photo",
     "liteapi": "usd_per_1k_liteapi",
 }
 

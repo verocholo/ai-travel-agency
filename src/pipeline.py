@@ -31,6 +31,7 @@ from .redaction import redact_secrets as _redact_secrets
 from .schemas import Trip
 from .triage import normalize_raw_input
 from . import geocoding, liteapi_client, places_client, distance_matrix, temporal_filter, modules
+from . import poi_discovery
 from .payload_builder import assemble_payload
 from .claude_engine import call_claude, ClaudeEngineError
 from .validator import parse_claude_output, validate_itinerary, strip_reasoning, ParseError
@@ -170,9 +171,29 @@ def run_live_from_raw(raw: dict, settings) -> PipelineResult:
         # trovato (mai coperto da test, invisibile in --mode mock) e perché la
         # mappa esplicita per objective_function è la correzione giusta.
         active_module = modules.get_module_for_objective_function(trip.objective_function)
-        pois_raw = places_client.search_nearby(
-            lat, lng, settings.google_maps_key,
+        # [RISCRITTO 2026-08-01 — collaudo del primo PDF venduto davvero]
+        # Prima: UNA ricerca, centrata sul centroide della città, ordinata per
+        # distanza, con nove risultati. Risultato reale: sette ristoranti e due
+        # attrazioni per tre giorni di viaggio, cioè quattro blocchi vuoti nel
+        # documento del cliente. Vedi src/poi_discovery.py per il ragionamento
+        # completo: due passate con due centri diversi (la destinazione per le
+        # visite, l'hotel-ancora per i ristoranti), raggio proporzionato alla
+        # dimensione reale della destinazione, ordinamento per rilevanza.
+        anchor = hotels[0] if hotels else None
+        pois_raw = poi_discovery.discover(
+            dest_lat=lat, dest_lng=lng, api_key=settings.google_maps_key,
             included_types=active_module.included_place_types,
+            anchor_lat=getattr(anchor, "lat", None),
+            anchor_lng=getattr(anchor, "lng", None),
+            region_code=geo.get("country_code"),
+            destination_radius_m=geo.get("viewport_radius_m"),
+            limit=distance_matrix.MAX_POI_POINTS_COMPACT,
+        )
+        # [AGGIUNTO 2026-08-01 — difetto 3] Un nome tornato in una lingua che
+        # non è quella del cliente né quella del posto è un errore visibile in
+        # un documento pagato. Riparazione mirata e a numero chiuso.
+        pois_raw = places_client.repair_name_languages(
+            pois_raw, settings.google_maps_key, region_code=geo.get("country_code")
         )
 
         # Nodo 6 — Filtro temporale
@@ -186,8 +207,26 @@ def run_live_from_raw(raw: dict, settings) -> PipelineResult:
         # a San Marino (centro storico pedonale, "in auto" tornava sempre
         # 0 minuti). Ora richiediamo anche "walking" e lasciamo a Claude la
         # scelta di quale tempo comunicare per ciascuna coppia di punti.
-        points = distance_matrix.build_points(hotels, pois)
-        travel_times = distance_matrix.get_distance_matrix_multi_mode(points, settings.google_maps_key) if points else []
+        # [AGGIORNATO 2026-08-01] `plan_matrix` decide quanti punti misurare e
+        # in quali modalità A PARITÀ DI ELEMENTI FATTURATI: in una destinazione
+        # compatta interroga solo "walking" e reinveste il budget in quattro
+        # punti in più (14 invece di 10), invece di spenderlo per una matrice
+        # "in auto" che su un centro storico produce solo righe "circa 0 min".
+        candidate_points = distance_matrix.build_points(
+            hotels, pois, max_poi=distance_matrix.MAX_POI_POINTS_COMPACT
+        )
+        points, matrix_modes = distance_matrix.plan_matrix(candidate_points)
+        travel_times = (
+            distance_matrix.get_distance_matrix_multi_mode(
+                points, settings.google_maps_key, modes=matrix_modes
+            ) if points else []
+        )
+        # I POI oltre i punti effettivamente misurati resterebbero senza alcun
+        # tempo di percorrenza: li togliamo dal payload invece di consegnarli a
+        # Claude senza il dato che gli serve per collocarli.
+        measured_ids = {p["id"] for p in points}
+        if measured_ids:
+            pois = [p for p in pois if p.id in measured_ids]
     except (geocoding.GeocodingError, liteapi_client.LiteApiError,
             requests.exceptions.RequestException, RuntimeError) as e:
         return PipelineResult(
@@ -250,6 +289,13 @@ def _call_claude_and_validate(trip: Trip, payload: dict, api_payload, api_key: s
         # ApiPayload.hotels[].price_night_eur), per QUALSIASI itinerario —
         # non serve più uno scenario di test scritto a mano.
         poi_energy_by_id = {p.id: p.energy_tag for p in api_payload.poi}
+        # [AGGIUNTO 2026-08-02 — task #166] La stessa mappa, ma con il POI
+        # intero invece del solo tag energia: al controllo di densità serve il
+        # TIPO del luogo per sapere quanto dura di norma una sosta lì. I POI
+        # sono già qui; senza questa riga il controllo restava tarato su una
+        # soglia unica per tutti, ed è per questo che non vedeva il difetto
+        # che Lorenzo ha trovato rileggendo un PDF reale.
+        poi_by_id = {p.id: p for p in api_payload.poi}
         known_prices = [h.price_night_eur for h in api_payload.hotels if h.price_night_eur is not None]
         min_cost_estimate = min(known_prices) * trip.duration_days if known_prices else None
         # [AGGIUNTO 2026-07-12 — audit di revisione completa, gap reale
@@ -271,6 +317,7 @@ def _call_claude_and_validate(trip: Trip, payload: dict, api_payload, api_key: s
             budget_mode=trip.budget_mode,
             budget_eur=trip.budget_eur,
             min_cost_estimate=min_cost_estimate,
+            poi_by_id=poi_by_id,
         )
         sanitized = strip_reasoning(itinerary)
         # [AGGIORNATO 2026-07-11 — link di ricerca multi-piattaforma] passa

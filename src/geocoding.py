@@ -3,6 +3,8 @@ NODO 2b — Geocoding. HTTP_MODULES_REALI.md §NODO 2 (upgrade).
 Trasforma trip.destination (o l'indirizzo del polo sportivo) in dest_lat/dest_lng.
 """
 from __future__ import annotations
+import math
+
 import requests
 
 from . import cost_telemetry
@@ -127,7 +129,78 @@ def parse_geocoding_response_full(data: dict) -> dict:
         "lng": lng,
         "location_type": result.get("geometry", {}).get("location_type", "UNKNOWN"),
         "formatted_address": result.get("formatted_address", ""),
+        # [AGGIUNTI 2026-08-01 — collaudo PDF reale, difetto 1 "bolla
+        # geografica"] Due campi che Google restituisce GIÀ in ogni risposta
+        # di geocoding e che finora buttavamo via, pagando la chiamata e non
+        # leggendone metà del contenuto.
+        "country_code": _extract_country_code(result),
+        "viewport_radius_m": _viewport_radius_m(result),
     }
+
+
+def _extract_country_code(result: dict) -> str | None:
+    """Codice paese ISO-3166-1 alpha-2 (`IT`, `PT`, `FR`...) dal risultato di
+    geocoding. Serve a `places_client.fetch_nearby_raw(region_code=...)`: senza
+    di esso Google applica le convenzioni di denominazione del chiamante e non
+    quelle del paese di destinazione — una delle due cause del difetto "nomi in
+    lingua sbagliata" trovato nel collaudo del 2026-08-01 (un POI di Lisbona
+    tornato con nome portoghese-brasiliano). None se assente: il chiamante
+    semplicemente non passa `regionCode` e il comportamento resta quello di
+    prima, mai peggiore."""
+    for component in result.get("address_components") or []:
+        if not isinstance(component, dict):
+            continue
+        if "country" in (component.get("types") or []):
+            short = component.get("short_name")
+            if isinstance(short, str) and len(short.strip()) == 2:
+                return short.strip().upper()
+    return None
+
+
+# Limiti di sicurezza sul raggio derivato dal viewport. Il minimo evita che un
+# borgo minuscolo produca un raggio di 300 m in cui non esiste abbastanza da
+# fare; il massimo evita che una richiesta su una regione o su una città
+# enorme produca un raggio da decine di km, che è esattamente il modo in cui
+# si finisce con nove POI sparsi e inarrivabili a piedi.
+_MIN_VIEWPORT_RADIUS_M = 1200
+_MAX_VIEWPORT_RADIUS_M = 12000
+_EARTH_RADIUS_M = 6371000.0
+
+
+def _viewport_radius_m(result: dict) -> int | None:
+    """[AGGIUNTO 2026-08-01] Raggio di ricerca proporzionato alla DIMENSIONE
+    REALE della destinazione, letto dal `viewport` che Google allega a ogni
+    risultato di geocoding.
+
+    Perché serve. Fino a oggi il raggio era 3000 m fissi per qualunque
+    destinazione: lo stesso numero per Roma e per un paese di duemila
+    abitanti. Su una città grande 3 km dal centroide sono una bolla che taglia
+    fuori interi quartieri (il difetto 1 del collaudo reale); su un borgo sono
+    un raggio che pesca mezza provincia. Il viewport è il rettangolo che Google
+    stesso considera "questo luogo": è la misura giusta perché è la misura del
+    fornitore del dato, non una nostra stima.
+
+    Restituisce metà della diagonale del viewport, arrotondata, dentro i
+    limiti sopra. None se il viewport manca o è malformato — il chiamante
+    ricade sul default storico.
+    """
+    viewport = (result.get("geometry") or {}).get("viewport")
+    if not isinstance(viewport, dict):
+        return None
+    try:
+        ne = viewport["northeast"]
+        sw = viewport["southwest"]
+        ne_lat, ne_lng = float(ne["lat"]), float(ne["lng"])
+        sw_lat, sw_lng = float(sw["lat"]), float(sw["lng"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    mid_lat_rad = math.radians((ne_lat + sw_lat) / 2.0)
+    dlat_m = math.radians(ne_lat - sw_lat) * _EARTH_RADIUS_M
+    dlng_m = math.radians(ne_lng - sw_lng) * _EARTH_RADIUS_M * math.cos(mid_lat_rad)
+    half_diagonal = math.hypot(dlat_m, dlng_m) / 2.0
+    if half_diagonal <= 0:
+        return None
+    return int(max(_MIN_VIEWPORT_RADIUS_M, min(_MAX_VIEWPORT_RADIUS_M, round(half_diagonal))))
 
 
 def is_imprecise_match(location_type: str) -> bool:

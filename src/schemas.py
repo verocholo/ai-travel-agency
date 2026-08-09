@@ -125,6 +125,17 @@ class POI:
     energy_tag: str = "MEDIUM"  # LOW | MEDIUM | HIGH
     dietary_tags: list[str] = field(default_factory=list)
     open_days: list[str] = field(default_factory=list)  # Mon..Sun, canonico
+    # [AGGIUNTO 2026-08-03 — task #180, richiesta di Lorenzo: «tenendo conto
+    # degli orari di apertura delle strutture»] Gli ORARI, non solo i giorni:
+    # {"Mon": [["09:00", "19:00"]], ...}. Arrivano dallo stesso campo Google
+    # (`regularOpeningHours`) da cui gia' ricavavamo `open_days`, quindi non
+    # costano una chiamata in piu' ne' spostano la fascia di fatturazione: fino
+    # a oggi li scartavamo e basta. Senza di essi la richiesta di programmare
+    # la giornata "tenendo conto degli orari" non era una regola disattesa, era
+    # una regola che nessuno — ne' il modello ne' un controllo in Python —
+    # aveva i dati per rispettare. `None` = il fornitore non li ha dati, e in
+    # quel caso il documento lo dichiara invece di presumere "aperto".
+    open_hours: Optional[dict] = None
     affiliate_url: str = "[Da Verificare]"
     # [AGGIUNTO 2026-07-12 — richiesta di Lorenzo: "segnare ogni costo
     # (hotel, ristoranti)"] Google Places API (New) fornisce già questo
@@ -158,6 +169,54 @@ class POI:
     phone: Optional[str] = None
     address: Optional[str] = None
     google_maps_uri: Optional[str] = None
+    # [AGGIUNTI 2026-08-01 — collaudo PDF reale del 2026-08-01, difetti 1/2/3]
+    # `rating` era GIÀ nel field mask di places_client (quindi già pagato in
+    # ogni chiamata) ma non veniva mappato da nessuna parte: lo chiedevamo a
+    # Google e lo buttavamo via. Insieme a `user_rating_count` è il segnale che
+    # distingue un'attrazione vera da un risultato di scarto con lo stesso
+    # `primaryType` — la differenza fra "Colosseo, 4,7 con 380.000 recensioni" e
+    # un ufficio con la stessa etichetta e nessuna recensione. Serve sia per
+    # ordinare i POI per rilevanza, sia per scartare il rumore, sia per dare a
+    # Claude un motivo esplicito per preferire una tappa a un'altra.
+    # `name_language` è il `displayName.languageCode` che Google restituisce
+    # accanto al nome: senza di esso non c'era modo di ACCORGERSI che un nome
+    # era tornato in una lingua diversa da quella richiesta (difetto 3).
+    # Tutti Optional con default: `POI(**p)` in service.py resta
+    # retro-compatibile con i payload che non li contengono.
+    rating: Optional[float] = None
+    user_rating_count: Optional[int] = None
+    name_language: Optional[str] = None
+    # [AGGIUNTO 2026-08-01 — perché i "Piani B se piove" non potevano esistere]
+    # `type` qui sopra è il tipo NORMALIZZATO, e la normalizzazione collassa
+    # l'intera tassonomia di Google in quattro sole etichette: restaurant,
+    # museum, shopping, activity. Un parco, una spiaggia, un belvedere, uno
+    # stadio e un centro congressi diventano tutti, indistintamente,
+    # "activity". Il che significa che qualunque logica basata sull'ESSERE
+    # ALL'APERTO — e il piano B per la pioggia è esattamente quella — stava
+    # interrogando un dato che era già stato distrutto a monte: la lista dei
+    # tipi "outdoor" in tips_generator.py aveva intersezione VUOTA con i valori
+    # realmente possibili, quindi `days_needing_rain_plan()` restituiva sempre
+    # [] e la sezione non poteva comparire in nessun PDF, mai.
+    # Conserviamo quindi il `primaryType` grezzo di Google accanto a quello
+    # normalizzato: costa zero (è già nella risposta) e rende di nuovo
+    # possibile una domanda che l'itinerario ha bisogno di porre.
+    primary_type: Optional[str] = None
+    # [AGGIUNTI 2026-08-03 — task #181, richiesta di Lorenzo: «inserisci alcune
+    # immagini con senso» e «meno testo piu' immagini, non deve essere noioso»]
+    # `photo_ref` NON e' una foto: e' il nome-risorsa della foto dentro Google
+    # ("places/<id>/photos/<ref>"), che arriva gratis dentro la stessa risposta
+    # di ricerca dei POI. Scaricare l'immagine vera e' una chiamata SEPARATA e
+    # a pagamento (vedi `places_client.fetch_place_photo`), quindi il ref sta
+    # qui e la spesa la decide chi costruisce il documento, non chi cerca i
+    # luoghi.
+    # `photo_credit` e' l'attribuzione dell'autore che Google OBBLIGA a
+    # mostrare accanto alla foto. Sta accanto al ref e non altrove per una
+    # ragione pratica: se un giorno si perde per strada, la foto non viene
+    # stampata affatto (vedi `poi_pdf.build_guide_html`). Meglio una pagina
+    # senza foto che una foto altrui senza il nome di chi l'ha scattata su un
+    # documento che vendiamo.
+    photo_ref: Optional[str] = None
+    photo_credit: Optional[str] = None
 
     @property
     def coord(self) -> str:

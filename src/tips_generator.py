@@ -145,6 +145,32 @@ TIP_CATEGORIES: tuple[dict, ...] = (
         ),
     },
     {
+        # [AGGIUNTA 2026-08-01] Questa è la mia aggiunta più convinta, ed è
+        # nata rileggendo il PDF reale: l'itinerario comincia alle 10:00 del
+        # primo giorno e finisce alle 18:00 dell'ultimo, come se il cliente si
+        # materializzasse in albergo e svanisse alla fine. Le due ore peggiori
+        # di un viaggio — quelle in cui si è stanchi, carichi di valigie, in un
+        # posto sconosciuto e senza ancora una SIM che funzioni — sono proprio
+        # quelle che il documento non copriva. È anche il momento in cui si
+        # spende peggio (il taxi preso "perché non sapevo come altro fare").
+        "id": "arrivo_partenza",
+        "title": "Arrivo e partenza",
+        "brief": (
+            "Le due ore che il documento non racconta mai: dal punto di arrivo "
+            "(aeroporto, stazione, porto) fino alla porta dell'alloggio, e il "
+            "percorso inverso il giorno della partenza. Di' concretamente quali "
+            "sono le opzioni reali per QUESTA destinazione (navetta, treno, "
+            "metropolitana, taxi ufficiale), quanto tempo va messo in conto, e "
+            "quale conviene con l'orario e i bagagli previsti. Poi: cosa fare "
+            "se si arriva prima del check-in e cosa fare nelle ore fra il "
+            "check-out e la partenza, agganciandoti agli orari veri del primo e "
+            "dell'ultimo giorno dell'itinerario. Se non conosci con certezza "
+            "prezzi o frequenze, dillo e indica dove si verificano: mai un "
+            "numero inventato su un trasferimento, perché è quello su cui il "
+            "cliente rischia di perdere un aereo."
+        ),
+    },
+    {
         "id": "trasporti_locali",
         "title": "Muoversi in città",
         "brief": (
@@ -230,23 +256,128 @@ _NIGHTLIFE_SKIP_HINTS = (
     "mia figlia", "nipotin", "culla", "seggiolon",
 )
 
-# POI al chiuso: piove e devi entrare da qualche parte. La lista è dei TIPI
-# che il nostro stesso vocabolario (modules.py) può produrre — mai una
-# deduzione dal nome del luogo, che sarebbe indovinare.
-_INDOOR_TYPES = {
-    "museum", "art_gallery", "aquarium", "library", "shopping_mall",
-    "book_store", "movie_theater", "performing_arts_theater", "spa",
-    "cafe", "restaurant", "bar", "church", "synagogue", "mosque",
-    "hindu_temple", "tourist_attraction_indoor", "casino", "bowling_alley",
-    "internet_cafe", "coworking_space", "business_center",
+# ---------------------------------------------------------------------------
+# ESPOSIZIONE AL METEO
+# ---------------------------------------------------------------------------
+# [RISCRITTO 2026-08-01 — la sezione "Piani B se piove" non poteva esistere]
+#
+# La versione precedente confrontava questi insiemi con `POI.type`. Ma `type`
+# è il tipo NORMALIZZATO, e la normalizzazione (places_client._TYPE_NORMALIZE)
+# collassa tutta la tassonomia di Google in quattro etichette: restaurant,
+# museum, shopping, activity. Verificato eseguendo il codice, non leggendolo:
+# l'intersezione fra `_OUTDOOR_TYPES` e i valori realmente possibili di
+# `POI.type` era VUOTA. Non "raramente vuota": vuota per costruzione. Quindi
+# `days_needing_rain_plan()` restituiva `[]` in ogni esecuzione possibile, il
+# prompt riceveva zero giornate da coprire, e la sezione non è mai comparsa in
+# nessun PDF. Il cliente l'ha notata come una mancanza; era un bug muto.
+#
+# Ora si ragiona sul `primary_type` GREZZO di Google (conservato in POI da
+# oggi), con tre livelli di ripiego perché i payload vecchi — e quelli che
+# arrivano da Make — non hanno quel campo:
+#   1. `primary_type` grezzo, se c'è  → insiemi espliciti qui sotto;
+#   2. euristica sul SLUG del tipo (vocabolario controllato di Google, non il
+#      nome del luogo: dedurre da "botanical_garden" è leggere un'etichetta,
+#      non indovinare);
+#   3. tipo normalizzato: restaurant/museum/shopping ⇒ al chiuso,
+#      `activity` ⇒ ESPOSTO.
+#
+# Il punto 3 è una scelta asimmetrica deliberata. Un falso positivo costa al
+# cliente un paragrafo in più che non gli serviva. Un falso negativo lo lascia
+# sotto la pioggia in una città che non conosce, con in mano un documento che
+# gli aveva promesso di aver pensato a tutto. I due errori non hanno lo stesso
+# prezzo, quindi non hanno la stessa soglia.
+_INDOOR_RAW_TYPES = {
+    # cultura e spettacolo al coperto
+    "museum", "art_museum", "history_museum", "art_gallery", "art_studio",
+    "auditorium", "performing_arts_theater", "movie_theater", "opera_house",
+    "concert_hall", "planetarium", "aquarium", "library", "cultural_center",
+    "visitor_center", "philharmonic_hall",
+    # culto (quasi sempre visitabile al coperto)
+    "church", "synagogue", "mosque", "hindu_temple", "place_of_worship",
+    # ristorazione (il vocabolario completo è quello di places_client)
+    "restaurant", "cafe", "bar", "bakery", "pub",
+    # commercio al coperto
+    "shopping_mall", "department_store", "book_store", "clothing_store",
+    "cosmetics_store", "electronics_store", "furniture_store", "gift_shop",
+    "home_goods_store", "jewelry_store", "shoe_store", "sporting_goods_store",
+    "sportswear_store", "tea_store", "thrift_store", "toy_store",
+    "womens_clothing_store",
+    # benessere, lavoro, svago al coperto
+    "spa", "sauna", "wellness_center", "casino", "bowling_alley",
+    "internet_cafe", "coworking_space", "business_center", "conference_center",
+    "fitness_center", "gym", "indoor_playground", "amusement_center",
+    "ice_skating_rink", "banquet_hall", "night_club", "karaoke",
 }
-# Tipi esplicitamente all'aperto: servono a capire QUALI giornate hanno
-# bisogno di un piano B, non a costruirlo.
-_OUTDOOR_TYPES = {
-    "park", "beach", "hiking_area", "national_park", "garden", "zoo",
-    "campground", "marina", "plaza", "viewpoint", "amusement_park",
-    "sports_complex", "stadium", "golf_course", "swimming_pool",
+_OUTDOOR_RAW_TYPES = {
+    # verde e natura
+    "park", "national_park", "state_park", "dog_park", "garden",
+    "botanical_garden", "picnic_ground", "campground", "camping_cabin",
+    "hiking_area", "cycling_park", "off_roading_area", "skateboard_park",
+    "wildlife_park", "wildlife_refuge", "zoo", "farm", "beach",
+    # acqua e panorami
+    "marina", "harbor", "pier", "viewpoint", "observation_deck",
+    "water_park", "swimming_pool",
+    # piazze, monumenti e luoghi civici all'aperto
+    "plaza", "town_square", "monument", "fountain", "sculpture",
+    "historical_landmark", "cultural_landmark", "historical_place",
+    "cemetery", "bridge",
+    # sport e intrattenimento all'aperto
+    "stadium", "sports_complex", "athletic_field", "golf_course",
+    "tennis_court", "amusement_park", "ferris_wheel", "roller_coaster",
+    "go_karting_venue", "miniature_golf_course", "sports_activity_location",
+    # mercati
+    "market", "farmers_market", "flea_market",
+    # la categoria-ombrello: nella pratica è dominata da piazze, belvedere e
+    # monumenti. Esposta per default (vedi la nota sull'asimmetria sopra).
+    "tourist_attraction",
 }
+
+# Frammenti di slug usati SOLO quando il tipo grezzo non è in nessuno dei due
+# insiemi. L'ordine conta: si prova prima "al chiuso", perché un
+# "shopping_mall_park" non esiste ma un "park_cafe" sì.
+_INDOOR_SLUG_HINTS = (
+    "museum", "gallery", "restaurant", "cafe", "coffee", "bar", "pub",
+    "bakery", "store", "shop", "mall", "library", "theater", "theatre",
+    "cinema", "spa", "gym", "hall", "center", "centre", "club", "hotel",
+    "clinic", "school", "university",
+)
+_OUTDOOR_SLUG_HINTS = (
+    "park", "beach", "garden", "trail", "hiking", "campground", "camping",
+    "marina", "harbor", "plaza", "square", "viewpoint", "outdoor", "field",
+    "lake", "river", "mountain", "island", "forest", "landmark", "monument",
+    "stadium", "course", "court",
+)
+
+# Tipi normalizzati considerati al chiuso quando il tipo grezzo manca del tutto.
+_INDOOR_NORMALIZED_TYPES = {"restaurant", "museum", "shopping"}
+
+
+def weather_exposure(poi) -> str:
+    """`"indoor"` | `"outdoor"` per un POI. Non ritorna mai "non lo so": vedi
+    la nota sull'asimmetria — l'incertezza si risolve verso "esposto"."""
+    raw = getattr(poi, "primary_type", None)
+    if isinstance(raw, str) and raw.strip():
+        slug = raw.strip().lower()
+        if slug in _INDOOR_RAW_TYPES:
+            return "indoor"
+        if slug in _OUTDOOR_RAW_TYPES:
+            return "outdoor"
+        if any(hint in slug for hint in _INDOOR_SLUG_HINTS):
+            return "indoor"
+        if any(hint in slug for hint in _OUTDOOR_SLUG_HINTS):
+            return "outdoor"
+    normalized = getattr(poi, "type", None)
+    if normalized in _INDOOR_NORMALIZED_TYPES:
+        return "indoor"
+    return "outdoor"
+
+
+def is_indoor(poi) -> bool:
+    return weather_exposure(poi) == "indoor"
+
+
+def is_weather_exposed(poi) -> bool:
+    return weather_exposure(poi) == "outdoor"
 
 
 def select_categories(trip=None, module_id: str | None = None) -> list[dict]:
@@ -388,12 +519,18 @@ def build_indoor_candidates(pois, itinerary: dict | None = None, limit: int = 25
     for poi in pois or []:
         poi_id = getattr(poi, "id", None)
         poi_type = getattr(poi, "type", None)
-        if not isinstance(poi_id, str) or poi_type not in _INDOOR_TYPES:
+        # [AGGIORNATO 2026-08-01] la domanda "è al chiuso?" la pone
+        # `weather_exposure()`, che guarda il `primaryType` GREZZO di Google e
+        # solo in ultima istanza ricade sul tipo normalizzato. Confrontare qui
+        # `poi.type` con una lista di slug era la ragione per cui il paniere
+        # conteneva solo musei e ristoranti e mai un acquario, un teatro, una
+        # libreria o un centro termale.
+        if not isinstance(poi_id, str) or not is_indoor(poi):
             continue
         entry = {
             "poi_id": poi_id,
             "name": getattr(poi, "name", None) or poi_id,
-            "type": poi_type,
+            "type": getattr(poi, "primary_type", None) or poi_type,
             "price_level": getattr(poi, "price_level", None),
         }
         (already_used if poi_id in used else fresh).append(entry)
@@ -403,17 +540,25 @@ def build_indoor_candidates(pois, itinerary: dict | None = None, limit: int = 25
 def days_needing_rain_plan(itinerary: dict, pois) -> list[dict]:
     """Le giornate con almeno un blocco all'aperto — le uniche per cui un
     piano B ha senso. Il tipo del POI è un dato reale dell'API: non deduciamo
-    "è all'aperto" dal nome dell'attività, che sarebbe indovinare."""
-    poi_type_by_id = {
-        getattr(p, "id", None): getattr(p, "type", None) for p in pois or []
-    }
+    "è all'aperto" dal nome dell'attività, che sarebbe indovinare.
+
+    [AGGIORNATO 2026-08-01] la mappa porta il POI INTERO, non il suo tipo
+    normalizzato: `weather_exposure()` ha bisogno del `primary_type` grezzo, e
+    passargli solo `poi.type` era esattamente il motivo per cui questa funzione
+    restituiva `[]` in ogni esecuzione possibile."""
+    poi_by_id = {}
+    for p in pois or []:
+        pid = getattr(p, "id", None)
+        if isinstance(pid, str):
+            poi_by_id[pid] = p
     out = []
     for day in _iter_days(itinerary):
         outdoor = []
         for block in day.get("blocks") or []:
             if not isinstance(block, dict):
                 continue
-            if poi_type_by_id.get(block.get("poi_id")) in _OUTDOOR_TYPES:
+            poi = poi_by_id.get(block.get("poi_id"))
+            if poi is not None and is_weather_exposed(poi):
                 outdoor.append(block.get("activity") or block.get("location") or "")
         if outdoor:
             out.append({
@@ -587,14 +732,27 @@ def generate_architect_tips(
     cost_summary: dict | None = None,
     objective_function: str | None = None,
     module_id: str | None = None,
-    max_tokens: int = 6000,
+    max_tokens: int = 16000,
 ) -> dict:
     """Genera consigli e piani B. Ritorna la struttura di `normalize_tips()`.
 
-    `max_tokens` è alto di proposito: sono fino a tredici sezioni più i piani
-    B, ed è esattamente lo scenario in cui `guide_generator` si era già fatto
-    troncare a metà JSON con un default troppo ottimista (CHANGELOG, fix del
-    2026-07-12). Il troncamento è rilevato e sollevato esplicitamente.
+    `max_tokens` è alto di proposito: sono fino a quattordici sezioni più i
+    piani B, ed è esattamente lo scenario in cui `guide_generator` si era già
+    fatto troncare a metà JSON con un default troppo ottimista (CHANGELOG, fix
+    del 2026-07-12). Il troncamento è rilevato e sollevato esplicitamente.
+
+    [ALZATO DA 6000 A 16000 IL 2026-08-01 — e questo è il difetto, non il
+    numero.] Nel PDF realmente venduto la sezione "Consigli dell'Architetto"
+    conteneva tre righe generiche. Non perché il modello avesse poco da dire:
+    perché con 6000 token si faceva troncare a metà JSON, l'eccezione di
+    troncamento veniva sollevata correttamente qui — e poi INGHIOTTITA da un
+    `except Exception` in `pdf_extras.py`, che ricadeva in silenzio sui tre
+    bullet legacy dell'itinerario. Il cliente ha visto tre righe e ha concluso
+    che il prodotto è povero; noi non abbiamo visto niente. Il costo del
+    tetto più alto è zero finché non si usa (si paga l'output generato, non il
+    massimo consentito); il costo di quello basso era l'intera sezione.
+    Quattordici sezioni × ~250 token di media più i piani B stanno attorno ai
+    5-7k reali: 16000 è margine, non spesa.
     """
     import anthropic  # import locale: stessa convenzione degli altri moduli Claude
 

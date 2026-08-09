@@ -121,8 +121,15 @@ def check_poi_freshness(poi: POI, google_maps_key: str, radius_m: int = 200) -> 
         # water_park, ...) risultava SEMPRE "non trovato" = falso allarme
         # garantito. `[]` ora è il segnale esplicito "nessun filtro / tutti i
         # tipi" (vedi fetch_nearby_raw), così il POI può davvero essere ritrovato.
+        # [AGGIORNATO 2026-08-01] `rank_preference="DISTANCE"` esplicito. Il
+        # default della ricerca è passato a "POPULARITY" (vedi places_client),
+        # scelta giusta per COMPORRE un itinerario e sbagliata qui: in un
+        # cerchio di 200 m attorno a un POI noto non stiamo cercando il posto
+        # più famoso, stiamo cercando QUEL posto, e l'ordinamento per distanza
+        # è l'unico che garantisce di vederlo entro i primi risultati.
         fresh_pois = search_nearby(
-            poi.lat, poi.lng, google_maps_key, radius_m=radius_m, max_results=20, included_types=[]
+            poi.lat, poi.lng, google_maps_key, radius_m=radius_m, max_results=20,
+            included_types=[], rank_preference="DISTANCE",
         )
     except Exception as e:  # stesso principio di places_client.py: non inghiottire, ma non serve un tipo specifico qui
         return FreshnessItemResult(

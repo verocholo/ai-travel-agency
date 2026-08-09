@@ -66,7 +66,7 @@ def render_markdown(
         f"Budget: {budget_str}*"
     )
     lines.append("")
-    lines.append("## Executive Summary")
+    lines.append("## Il viaggio in breve")  # [TRADOTTO 2026-08-02] vedi pdf_renderer
     lines.append("")
     lines.append(itinerary.get("executive_summary", "[mancante]"))
     lines.append("")

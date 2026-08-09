@@ -12,6 +12,12 @@ import json
 import re
 from dataclasses import dataclass, field
 
+# [AGGIUNTO 2026-08-02 — task #166] Tabella delle durate tipiche e soglie di
+# ritmo: sono le stesse che il renderer usa per scrivere il margine al
+# cliente. Una sola copia, così il warning all'operatore e la frase nel PDF
+# non possono raccontare due storie diverse.
+from . import pacing
+
 
 class ParseError(Exception):
     pass
@@ -535,7 +541,9 @@ _DENSITY_MIN_BLOCKS_FULL_DAY = 5
 
 
 def check_day_density(
-    itinerary: dict, objective_function: str | None = None
+    itinerary: dict,
+    objective_function: str | None = None,
+    poi_by_id: dict | None = None,
 ) -> list[str]:
     """
     Termometro strutturale della regola [HARD_CONSTRAINTS] punto 9
@@ -573,6 +581,28 @@ def check_day_density(
     sono informativi, e ENERGY_PACING/WORK_CONNECTIVITY hanno comunque il
     diritto di produrre blocchi lunghi purché siano blocchi ESPLICITI
     (recupero, lavoro), cosa che l'operatore vede leggendo il warning.
+
+    [AGGIORNATO 2026-08-02 — task #166, "valuta tu caso per caso ma stacci
+    molto attento"] La soglia sui blocchi gonfiati non è più un 180 uguale
+    per tutti QUANDO si sa che luogo sia il blocco. Il difetto che Lorenzo
+    ha riletto in un PDF generato DOPO l'introduzione di questo controllo
+    era proprio un caso che il 180 non poteva vedere: una visita da 40
+    minuti a cui erano state assegnate due ore e mezza. 150 < 180, nessun
+    warning, difetto in chiaro nel documento del cliente.
+
+    Con `poi_by_id` (mappa `place_id -> POI`, passata dalla pipeline che ce
+    l'ha già in mano) la soglia diventa la durata tipica di QUEL tipo di
+    luogo, dalla tabella eseguibile di `src/pacing.py`: si segnala quando
+    il tempo assegnato eccede il massimo tipico di oltre
+    `pacing.IDLE_WARNING_MINUTES`. Due ore in un grande museo passano; due
+    ore davanti a una fontana no.
+
+    Senza `poi_by_id` (chiamanti storici, e blocchi senza scheda Google:
+    "passeggiata in centro" non ha un place_id) resta il vecchio taglio
+    piatto a `_DENSITY_MAX_BLOCK_MINUTES`. Non è un ripiego pigro: senza
+    sapere che luogo sia, una soglia stretta produrrebbe warning su
+    itinerari legittimi, ed è esattamente il falso positivo sistematico che
+    insegna a ignorare i warning.
     """
     if objective_function == "EXCLUSIVITY_ZERO_FRICTION":
         return []
@@ -608,7 +638,21 @@ def check_day_density(
             # sarebbe solo rumore duplicato.
             if duration <= 0:
                 continue
-            if duration > _DENSITY_MAX_BLOCK_MINUTES:
+            poi = None
+            if poi_by_id:
+                poi = poi_by_id.get(pacing._poi_id_of(block))
+            if poi is not None:
+                # Soglia su misura del luogo.
+                typical = pacing.typical_minutes_for(poi, start)
+                excess = duration - typical[1]
+                if excess > pacing.IDLE_WARNING_MINUTES:
+                    warnings.append(
+                        f"giorno {day_label}: blocco '{block.get('activity')}' delle "
+                        f"{block.get('time')} occupa {duration / 60:.1f}h implicite ma la "
+                        f"sosta dura di norma {pacing.describe_typical(typical)} — "
+                        f"{pacing.describe_duration(excess)} di vuoto non programmato"
+                    )
+            elif duration > _DENSITY_MAX_BLOCK_MINUTES:
                 hours = duration / 60
                 warnings.append(
                     f"giorno {day_label}: blocco '{block.get('activity')}' delle "
@@ -628,6 +672,7 @@ def validate_itinerary(
     budget_mode: str | None = None,
     budget_eur: float | None = None,
     min_cost_estimate: float | None = None,
+    poi_by_id: dict | None = None,
 ) -> ValidationReport:
     """
     [AGGIORNATO 2026-07-12 — audit di potenziamento massimo] nuovo parametro
@@ -671,7 +716,11 @@ def validate_itinerary(
     # [AGGIUNTO 2026-07-31 — regola anti-noia, punto 9 di [HARD_CONSTRAINTS]]
     # Non tocca `report.passed` (vedi docstring di check_day_density): è un
     # termometro, non un filtro.
-    report.day_density_warnings = check_day_density(itinerary, objective_function)
+    # [AGGIORNATO 2026-08-02 — task #166] `poi_by_id` è opzionale: quando c'è,
+    # la soglia dei blocchi gonfiati diventa specifica del tipo di luogo.
+    report.day_density_warnings = check_day_density(
+        itinerary, objective_function, poi_by_id
+    )
     return report
 
 
