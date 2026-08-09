@@ -87,6 +87,58 @@ class TestLodging(unittest.TestCase):
         result = estimate_costs(itinerary, _trip(), [HOTEL], [MUSEO])
         self.assertEqual(sum(1 for l in result["lines"] if l["category"] == "lodging"), 1)
 
+    def test_la_seconda_struttura_e_un_alternativa_e_non_si_somma(self):
+        """[AGGIUNTO 2026-08-02 — difetto visto rigenerando il campione, non
+        dedotto a tavolino] Prima ogni struttura in elenco diventava una voce e
+        tutte finivano nel totale: nel campione uscivano 420 € + 354 € = 774 €
+        per tre notti dormite in un letto solo, e il verdetto sul budget
+        passava a "over" per una spesa che non esiste. Le strutture in elenco
+        sono ALTERNATIVE (un solo hotel-àncora per viaggio) e la copertina ne
+        stampa infatti una sola, sotto "BASE"."""
+        seconda = Hotel(id="H9", name="Hotel Alternativo", lat=43.77, lng=11.25,
+                        price_night_eur=118.0)
+        result = estimate_costs(_itinerary([]), _trip(), [HOTEL, seconda], [])
+        lodging = [l for l in result["lines"] if l["category"] == "lodging"]
+        self.assertEqual(len(lodging), 1)
+        self.assertEqual(lodging[0]["label"], "Hotel Duomo")
+        self.assertEqual(result["total_max_eur"], 360.0)
+        self.assertNotIn("Hotel Alternativo", str(result["lines"]))
+
+    def test_l_esclusione_delle_alternative_e_dichiarata_non_silenziosa(self):
+        """Omettere in silenzio è l'altra metà dello stesso errore: il cliente
+        vede due strutture in copertina e una sola riga di costo, e deve
+        leggere PERCHÉ senza doverlo dedurre."""
+        seconda = Hotel(id="H9", name="Hotel Alternativo", lat=43.77, lng=11.25,
+                        price_night_eur=118.0)
+        detail = estimate_costs(_itinerary([]), _trip(), [HOTEL, seconda], [])["lines"][0]["detail"]
+        self.assertIn("alternativa", detail)
+        # Al singolare la frase deve essere italiano, non un template riempito:
+        # nel campione usciva "le altre 1 strutture in elenco sono alternative".
+        self.assertNotIn("1 strutture", detail)
+        self.assertIn("l'altra struttura", detail)
+        # con una sola struttura la nota non deve comparire: non c'è nulla da
+        # spiegare e una frase in più è rumore.
+        solo = estimate_costs(_itinerary([]), _trip(), [HOTEL], [])["lines"][0]["detail"]
+        self.assertNotIn("alternativ", solo)
+
+    def test_al_plurale_la_nota_resta_corretta(self):
+        extra = [
+            Hotel(id=f"H{i}", name=f"Hotel {i}", lat=43.77, lng=11.25, price_night_eur=100.0)
+            for i in range(2, 5)
+        ]
+        detail = estimate_costs(_itinerary([]), _trip(), [HOTEL] + extra, [])["lines"][0]["detail"]
+        self.assertIn("le altre 3 strutture", detail)
+        self.assertIn("non si sommano", detail)
+
+    def test_la_nota_sulle_alternative_compare_anche_senza_prezzo(self):
+        senza_prezzo = Hotel(id="H8", name="Hotel Senza Prezzo", lat=43.0, lng=11.0)
+        seconda = Hotel(id="H9", name="Hotel Alternativo", lat=43.77, lng=11.25,
+                        price_night_eur=118.0)
+        result = estimate_costs(_itinerary([]), _trip(), [senza_prezzo, seconda], [])
+        self.assertEqual(len(result["lines"]), 1)
+        self.assertFalse(result["lines"][0]["known"])
+        self.assertIn("alternativa", result["lines"][0]["detail"])
+
 
 class TestMealsAndActivities(unittest.TestCase):
     def test_fascia_di_prezzo_diventa_un_intervallo_non_un_numero(self):

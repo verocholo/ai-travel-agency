@@ -231,7 +231,17 @@ class TestRenderHtml(unittest.TestCase):
             ]}],
         }
         out = render_html(itinerary, TRIP)
-        cover = out.split("class='cover'", 1)[1].split("class='toc'", 1)[0]
+        # La copertina finisce dove comincia la fascia d'intestazione del
+        # documento. Prima si tagliava su `class='toc'`, cioè sull'indice a
+        # pagina intera: da quando l'indice vive DENTRO la copertina (task
+        # #168) quel marcatore non esiste più, e il taglio restituiva
+        # silenziosamente l'intero documento — l'asserzione continuava a
+        # passare senza più verificare niente sulla copertina.
+        # Il marcatore è aperto di proposito (`class='cover` senza apice di
+        # chiusura): la copertina porta anche una classe di densità
+        # (`cover-airy`/`cover-roomy`) scelta in base a quanto è lungo
+        # l'indice, e un marcatore chiuso tornerebbe a non trovare niente.
+        cover = out.split("class='cover", 1)[1].split("class='header'", 1)[0]
         self.assertIn("Cosa troverai dentro", cover)
         self.assertIn("Il programma, giorno per giorno", cover)
         # Nessun costo/consiglio/guida è stato passato al renderer: quelle
@@ -239,13 +249,93 @@ class TestRenderHtml(unittest.TestCase):
         self.assertNotIn("Stima dei costi", cover)
         self.assertNotIn("Guide turistiche tascabili", cover)
 
+    def _cover_of(self, out):
+        return out.split("class='cover", 1)[1].split("class='header'", 1)[0]
+
+    def _days(self, n):
+        return [{"day": i, "title": f"Giorno lungo numero {i}",
+                 "blocks": [{"time": "09:00", "activity": "Tappa", "location": "Roma"}]}
+                for i in range(1, n + 1)]
+
+    def test_cover_density_adapts_to_how_long_the_index_is(self):
+        # La copertina deve arrivare in fondo al foglio SENZA passare alla
+        # pagina dopo, e la sua altezza dipende dai giorni di viaggio: ogni
+        # giornata e' una riga annidata nell'indice. Una spaziatura sola non
+        # puo' funzionare per entrambi gli estremi — larga riempie il weekend
+        # ma fa sbordare le due settimane, stretta non sborda mai ma lascia un
+        # terzo di pagina bianco sui viaggi corti, che sono la maggioranza.
+        # Le tre classi sono verificate qui perche' e' l'unico punto in cui il
+        # difetto e' visibile PRIMA di stampare il PDF.
+        corto = self._cover_of(render_html(
+            {"destination": "Roma", "executive_summary": "x", "days": self._days(2)}, TRIP))
+        self.assertIn("cover-airy", corto)
+        self.assertNotIn("cover-roomy", corto)
+
+        lungo = self._cover_of(render_html(
+            {"destination": "Roma", "executive_summary": "x", "days": self._days(20)}, TRIP))
+        self.assertNotIn("cover-airy", lungo)
+        self.assertNotIn("cover-roomy", lungo)
+
+    def test_cover_facts_do_not_repeat_the_dates_already_in_the_hero(self):
+        # Le date e la durata stanno in grande nella fascia scura. Ripeterle
+        # nei riquadri subito sotto era lo stesso difetto che aveva gia'
+        # costretto a fondere copertina e indice: due elenchi contigui che
+        # dicono la stessa cosa. Il test conta le occorrenze, non la presenza:
+        # una sola, quella della fascia.
+        out = render_html(
+            {"destination": "Roma", "executive_summary": "x", "days": self._days(2)}, TRIP)
+        cover = self._cover_of(out)
+        # [AGGIORNATO 2026-08-05 — task #195] Le date in copertina non sono
+        # piu' in forma tecnica ma scritte come le scriverebbe una persona
+        # («14 → 16 settembre 2026»). Quello che il controllo protegge non e'
+        # cambiato: devono comparire UNA volta sola.
+        from src.pdf_renderer import _periodo_leggibile
+
+        periodo = _periodo_leggibile(TRIP["date_start"], TRIP["date_end"])
+        self.assertIn(periodo, cover,
+                      "il periodo non compare: il controllo sarebbe vacuo")
+        self.assertEqual(1, cover.count(periodo))
+        self.assertNotIn(f"{TRIP['date_start']} \u2192 {TRIP['date_end']}", cover,
+                         "la data in forma tecnica e' tornata in copertina")
+
+    def test_cover_fact_grid_has_no_empty_filler_cells(self):
+        # Una cella vuota accanto a due riquadri non si legge come "riga
+        # incompleta": si legge come un riquadro che non e' stato stampato.
+        # Meglio riquadri piu' larghi che chiudono la riga.
+        cover = self._cover_of(render_html(
+            {"destination": "Roma", "executive_summary": "x", "days": self._days(2)}, TRIP))
+        griglia = cover.split("class='cover-facts'", 1)[1].split("</table>", 1)[0]
+        self.assertNotIn("<td></td>", griglia)
+
+    def test_cover_explains_how_to_read_the_document(self):
+        # Tre cose che il cliente non scoprirebbe da solo: che il PDF e'
+        # cliccabile, che ogni giornata ha la sua cartina, e che i dati
+        # mancanti sono marcati invece che inventati. Riempiono la copertina
+        # con qualcosa che serve — la differenza fra una pagina piena e una
+        # pagina gonfiata.
+        cover = self._cover_of(render_html(
+            {"destination": "Roma", "executive_summary": "x", "days": self._days(2)}, TRIP))
+        self.assertIn("Come si legge", cover)
+        self.assertIn("cliccabile", cover)
+        self.assertIn("cartina", cover)
+
     def test_cover_strip_omitted_when_there_is_almost_nothing_to_list(self):
         # Con una sola sezione la striscia a due colonne sarebbe sbilanciata
         # e peggiorerebbe l'impaginazione invece di migliorarla: meglio non
         # stamparla. (Un itinerario senza giorni produce il solo "colpo
         # d'occhio".)
         out = render_html({"destination": "Roma", "executive_summary": "x", "days": []}, TRIP)
-        cover = out.split("class='cover'", 1)[1].split("class='toc'", 1)[0]
+        # La copertina finisce dove comincia la fascia d'intestazione del
+        # documento. Prima si tagliava su `class='toc'`, cioè sull'indice a
+        # pagina intera: da quando l'indice vive DENTRO la copertina (task
+        # #168) quel marcatore non esiste più, e il taglio restituiva
+        # silenziosamente l'intero documento — l'asserzione continuava a
+        # passare senza più verificare niente sulla copertina.
+        # Il marcatore è aperto di proposito (`class='cover` senza apice di
+        # chiusura): la copertina porta anche una classe di densità
+        # (`cover-airy`/`cover-roomy`) scelta in base a quanto è lungo
+        # l'indice, e un marcatore chiuso tornerebbe a non trovare niente.
+        cover = out.split("class='cover", 1)[1].split("class='header'", 1)[0]
         self.assertNotIn("Cosa troverai dentro", cover)
 
     def test_no_duplicate_google_maps_link_when_place_card_exists(self):
@@ -345,26 +435,80 @@ class TestAtAGlanceHotelPriceCuratedSectionsAndMap(unittest.TestCase):
         base.update(overrides)
         return base
 
-    def test_at_a_glance_page_present_with_stat_tiles(self):
+    def _glance(self, out):
+        """La fetta di documento del capitolo "a colpo d'occhio", e solo quella.
+
+        [AGGIUNTO 2026-08-02 (ter) — task #168] I test di questo capitolo
+        cercavano le proprie stringhe nel documento INTERO. È una debolezza
+        già costata cara due volte in questo progetto: una verifica non
+        delimitata continua a passare anche quando la cosa che dovrebbe
+        proteggere è sparita, perché quella stringa esiste da qualche altra
+        parte — qui la copertina, che nomina destinazione, date e durata una
+        pagina prima. Delimitare la fetta è ciò che rende la verifica capace
+        di fallire."""
+        return out.split("class='at-a-glance-page'", 1)[1].split("Il viaggio in breve", 1)[0]
+
+    def test_at_a_glance_page_present(self):
         out = render_html(self._itinerary(), TRIP)
         self.assertIn("colpo d'occhio", out.lower())
-        self.assertIn("at-a-glance-page", out)
-        self.assertIn("Destinazione", out)
-        self.assertIn("Roma", out)
-        self.assertIn("3 giorni", out)
+        self.assertIn("class='at-a-glance-page'", out)
 
-    def test_at_a_glance_day_strip_lists_every_day_title_only(self):
-        out = render_html(self._itinerary(), TRIP)
-        self.assertIn("Giorno 1", out)
-        self.assertIn("Arrivo", out)
-        self.assertIn("Giorno 2", out)
-        self.assertIn("Museo", out)
-
-    def test_at_a_glance_shows_first_hotel_name_when_provided(self):
+    def test_at_a_glance_does_not_repeat_what_the_cover_already_says(self):
+        """[AGGIUNTO 2026-08-02 (ter) — difetto visto sul PDF vero] Il capitolo
+        stampava riquadri con destinazione, date, durata, budget e alloggio:
+        cinque dati che la copertina, una pagina prima, aveva appena dato. Due
+        elenchi contigui che dicono la stessa cosa — lo stesso difetto che
+        aveva già imposto la fusione di copertina e indice."""
         hotels = [{"name": "Hotel Bello", "property_type": "Hotels", "price_night_eur": 120.0}]
-        out = render_html(self._itinerary(), TRIP, hotels=hotels)
-        self.assertIn("Alloggio", out)
-        self.assertIn("Hotel Bello", out)
+        glance = self._glance(render_html(self._itinerary(), TRIP, hotels=hotels))
+        self.assertNotIn("Destinazione", glance)
+        self.assertNotIn("Durata", glance)
+        self.assertNotIn("Budget", glance)
+        self.assertNotIn("Hotel Bello", glance)
+        self.assertNotIn(f"{TRIP['date_start']} &rarr; {TRIP['date_end']}", glance)
+
+    def test_at_a_glance_gives_each_day_its_real_calendar_date(self):
+        """Il quadro delle giornate deve dire qualcosa che l'indice di
+        copertina non dice già: la data vera, con il giorno della settimana.
+        Il 1 settembre 2026 è un martedì; il giorno 2 cade il 2 settembre —
+        stessa convenzione senza "+1" di `triage._date_difference_days()`."""
+        glance = self._glance(render_html(self._itinerary(), TRIP))
+        self.assertIn("mar 1 set", glance)
+        self.assertIn("mer 2 set", glance)
+
+    def test_at_a_glance_shows_the_time_window_and_the_number_of_stops(self):
+        itinerary = self._itinerary(days=[
+            {"day": 1, "title": "Arrivo", "blocks": [
+                {"time": "09:00", "activity": "Check-in", "location": "Hotel"},
+                {"time": "15:30", "activity": "Passeggiata", "location": "Centro"},
+                {"time": "20:00", "activity": "Cena", "location": "Trastevere"},
+            ]},
+            {"day": 2, "title": "Museo", "blocks": [
+                {"time": "10:00", "activity": "Museo del Vino", "location": "Museo"},
+            ]},
+        ])
+        glance = self._glance(render_html(itinerary, TRIP))
+        self.assertIn("3 tappe", glance)
+        self.assertIn("1 tappa", glance)
+        # La finestra oraria va dal primo all'ultimo orario stampato, non
+        # dal primo blocco all'ultimo nell'ordine della lista: se l'elenco
+        # arrivasse disordinato, un "09:00-15:30" sarebbe una bugia.
+        self.assertIn("09:00\u201320:00", glance)
+
+    def test_at_a_glance_day_strip_lists_every_day_title(self):
+        glance = self._glance(render_html(self._itinerary(), TRIP))
+        self.assertIn("Giorno 1", glance)
+        self.assertIn("Arrivo", glance)
+        self.assertIn("Giorno 2", glance)
+        self.assertIn("Museo", glance)
+
+    def test_at_a_glance_disappears_from_document_and_index_when_it_has_nothing_to_say(self):
+        """Senza giornate e senza cartina al capitolo non resta nulla. Un
+        titolo con sotto il vuoto è peggio del capitolo assente, e una voce
+        d'indice che porta a quel vuoto è peggio ancora."""
+        out = render_html({"destination": "Roma", "executive_summary": "x", "days": []}, TRIP)
+        self.assertNotIn("class='at-a-glance-page'", out)
+        self.assertNotIn("Il tuo viaggio, a colpo d'occhio", out)
 
     def test_full_day_by_day_detail_still_present_after_at_a_glance(self):
         # La pagina di sintesi si AGGIUNGE, non sostituisce il dettaglio
@@ -384,6 +528,34 @@ class TestAtAGlanceHotelPriceCuratedSectionsAndMap(unittest.TestCase):
         out = render_html(self._itinerary(), TRIP, hotels=hotels)
         self.assertIn("Hotel Senza Prezzo", out)
         self.assertNotIn("None€/notte", out)
+
+    def test_second_hotel_is_labelled_an_alternative_not_a_second_booking(self):
+        """[AGGIUNTO 2026-08-02 — difetto visto rigenerando il campione] Due
+        strutture stampate una sotto l'altra, identiche nel peso grafico e
+        senza una parola sul rapporto fra loro: il cliente non può sapere se
+        deve prenotarle entrambe. La copertina ne indica una sotto "BASE",
+        l'itinerario è costruito attorno a quella e la stima dei costi conta
+        solo quella — il documento deve dirlo dove le mostra."""
+        hotels = [
+            {"name": "Palazzo Ravizza", "property_type": "hotel", "price_night_eur": 140.0},
+            {"name": "Hotel Athena", "property_type": "hotel", "price_night_eur": 118.0},
+        ]
+        out = render_html(self._itinerary(), TRIP, hotels=hotels)
+        alloggio = out.split("id='alloggio'")[1].split("platforms-box")[0]
+        self.assertIn("base del viaggio", alloggio)
+        self.assertIn("alternativa", alloggio)
+        self.assertLess(alloggio.index("base del viaggio"), alloggio.index("alternativa"))
+
+    def test_single_hotel_gets_no_role_caption(self):
+        """Con una struttura sola non c'è nessuna ambiguità da sciogliere, e
+        una didascalia in più è solo rumore."""
+        hotels = [{"name": "Palazzo Ravizza", "property_type": "hotel", "price_night_eur": 140.0}]
+        out = render_html(self._itinerary(), TRIP, hotels=hotels)
+        # (la regola CSS esiste sempre nel foglio di stile: qui conta che non
+        # venga usata nella sezione)
+        alloggio = out.split("id='alloggio'")[1].split("platforms-box")[0]
+        self.assertNotIn("hotel-role", alloggio)
+        self.assertNotIn("base del viaggio", alloggio)
 
     def test_curated_restaurant_section_rendered_with_price_badge(self):
         poi = [{"id": "POI1", "type": "restaurant", "name": "Trattoria Toscana", "price_level": "MODERATE"}]
@@ -446,11 +618,17 @@ class TestAtAGlanceHotelPriceCuratedSectionsAndMap(unittest.TestCase):
     def test_map_embedded_as_base64_when_bytes_provided(self):
         out = render_html(self._itinerary(), TRIP, map_png_bytes=b"FAKE_PNG_BYTES")
         self.assertIn("data:image/png;base64,", out)
-        self.assertIn("La tua mappa", out)
+        # [AGGIORNATO 2026-08-02 (ter) — task #168] Il titoletto "La tua mappa"
+        # non c'è più: la cartina apre il capitolo "a colpo d'occhio" e il
+        # titolo del capitolo la copre già. Un titolo di sezione seguito
+        # immediatamente da un altro titolo di sezione era una riga di
+        # inchiostro che non aggiungeva niente. Il marcatore giusto da
+        # cercare è il contenitore dell'immagine.
+        self.assertIn("class='map-image'", out)
 
     def test_no_map_section_when_bytes_absent(self):
         out = render_html(self._itinerary(), TRIP)
-        self.assertNotIn("La tua mappa", out)
+        self.assertNotIn("class='map-image'", out)
         self.assertNotIn("data:image/png;base64,", out)
 
     def test_map_disclaimer_present_when_map_shown(self):
@@ -458,7 +636,48 @@ class TestAtAGlanceHotelPriceCuratedSectionsAndMap(unittest.TestCase):
         # guida — deve essere dichiarato nel documento, non lasciato
         # implicito.
         out = render_html(self._itinerary(), TRIP, map_png_bytes=b"FAKE_PNG_BYTES")
-        self.assertIn("non un percorso di guida calcolato", out)
+        self.assertIn("non sono un percorso di navigazione", out)
+
+    def test_la_cartina_dinsieme_arriva_anche_dal_piano(self):
+        """[AGGIUNTO 2026-08-03 — «risolvi il problema delle cartine che non
+        si vedono»] La cartina d'insieme non deve più dipendere dal fatto che
+        Google risponda: se il piano porta un'immagine disegnata in casa, il
+        capitolo la stampa lo stesso."""
+        piano = {"png": b"SCHEMA_PNG", "map_source": "schema", "stops": []}
+        out = render_html(self._itinerary(), TRIP, overview_map=piano)
+        self.assertIn("class='at-a-glance-page'", out)
+        self.assertIn("data:image/png;base64", out)
+
+    def test_la_didascalia_dice_se_la_cartina_e_disegnata_in_casa(self):
+        """Chi scambia lo schema per una mappa stradale e prova a seguirlo si
+        perde: la differenza va scritta, non lasciata intuire."""
+        schema = render_html(
+            self._itinerary(), TRIP,
+            overview_map={"png": b"X", "map_source": "schema", "stops": []},
+        )
+        self.assertIn("le strade no", schema)
+        self.assertNotIn("Cartina stradale di tutto il viaggio", schema)
+
+        strada = render_html(
+            self._itinerary(), TRIP,
+            overview_map={"png": b"X", "map_source": "google", "stops": []},
+        )
+        self.assertIn("Cartina stradale di tutto il viaggio", strada)
+        self.assertNotIn("le strade no", strada)
+
+    def test_il_piano_ha_la_precedenza_sui_byte_vecchi(self):
+        """I due ingressi non devono produrre due cartine: il piano è quello
+        nuovo e vince, i byte restano solo come strada di compatibilità."""
+        out = render_html(
+            self._itinerary(), TRIP,
+            map_png_bytes=b"VECCHI_BYTE",
+            overview_map={"png": b"NUOVO_PIANO", "map_source": "schema", "stops": []},
+        )
+        import base64 as _b64
+        nuovo = _b64.b64encode(b"NUOVO_PIANO").decode("ascii")
+        vecchio = _b64.b64encode(b"VECCHI_BYTE").decode("ascii")
+        self.assertIn(nuovo, out)
+        self.assertNotIn(vecchio, out)
 
 
 class TestBuildPoiEnergyLookup(unittest.TestCase):
@@ -717,12 +936,23 @@ class TestGuideAndFeedbackSections(unittest.TestCase):
         self.assertIn("2-3 ore", out)
         self.assertIn("Perfetto per una pausa rigenerante", out)
         self.assertIn("Orari e accesso possono variare", out)
-        # [AGGIORNATO 2026-07-31] La guida ora ha una sua classe grafica
-        # (`guide-card`) e continua ad applicare la regola condivisa
-        # `page-break` — che dal 2026-07-13 significa "non spezzare a metà",
-        # non "vai a pagina nuova". È quest'ultima la proprietà che conta:
-        # una guida tagliata in due è inutilizzabile davanti al monumento.
-        self.assertIn("class='guide-card page-break'", out)
+        # [AGGIORNATO 2026-08-02] La scheda NON porta più `page-break`.
+        # "Non spezzare a metà" era la regola giusta finché una scheda era un
+        # riquadro corto; con la scheda completa (nove blocchi, quasi mezza
+        # pagina) obbligava il motore a rimandare alla pagina successiva tutto
+        # quello che non entrava, e il capitolo usciva a una scheda per pagina
+        # con il 40% del foglio bianco — misurato sul campione. Ora la scheda
+        # scorre, e il taglio cade dentro un elenco: si legge a cavallo di due
+        # pagine come in qualsiasi libro.
+        #
+        # Quello che deve restare intero è la TESTA — occhiello, nome del
+        # luogo e primo paragrafo — dentro il guscio `_keep_together()`
+        # (`<table class='keep'>`). Senza, il cliente troverebbe il nome del
+        # monumento in fondo a una pagina e la guida sulla successiva.
+        self.assertIn("<div class='guide-card'>", out)
+        self.assertNotIn("class='guide-card page-break'", out)
+        testa = out.split("<div class='guide-card'>", 1)[1][:120]
+        self.assertIn("class='keep'", testa)
 
     def test_guide_falls_back_to_poi_name_when_title_missing(self):
         guide = dict(self.GUIDE)
@@ -739,11 +969,25 @@ class TestGuideAndFeedbackSections(unittest.TestCase):
         guide2 = dict(self.GUIDE, poi_name="Colosseo", title="Il Colosseo")
         out = render_html(self._base_itinerary(), TRIP, guides=[self.GUIDE, guide2])
         self.assertEqual(out.count("<div class='guide-eyebrow'>Guida turistica tascabile</div>"), 2)
-        self.assertEqual(out.count("class='guide-card page-break'"), 2)
+        # [AGGIORNATO 2026-08-02] Due schede restano due riquadri distinti
+        # (`guide-card`) con ciascuno la propria testa protetta; quello che è
+        # cambiato è solo che la scheda può proseguire sulla pagina dopo
+        # invece di trascinarcisi tutta. Vedi la nota estesa in
+        # `test_guide_section_rendered_with_all_fields`.
+        self.assertEqual(out.count("<div class='guide-card'>"), 2)
         self.assertIn("Il Colosseo", out)
 
+    # [AGGIORNATO 2026-08-03] Da oggi il capitolo della recensione esce solo
+    # se c'è una URL a cui rispondere: fare domande senza offrire un posto in
+    # cui scriverle è una promessa rotta stampata su un documento pagato.
+    # Questi controlli riguardano il CONTENUTO del capitolo, quindi passano
+    # il link; l'assenza del link ha i suoi controlli dedicati in
+    # test_link_recensione_2026_08_03.py.
+    LINK = {"ref": "abc1234567", "url": "https://tally.so/r/wA5b2Q?ref=abc1234567"}
+
     def test_feedback_section_rendered_with_all_fields(self):
-        out = render_html(self._base_itinerary(), TRIP, feedback=self.FEEDBACK)
+        out = render_html(self._base_itinerary(), TRIP, feedback=self.FEEDBACK,
+                          feedback_link=self.LINK)
         self.assertIn("Che piacere risentirvi!", out)
         self.assertIn("Come è andata la sessione termale del Giorno 1?", out)
         self.assertIn("Il ritmo energetico proposto ha funzionato per voi?", out)
@@ -751,19 +995,21 @@ class TestGuideAndFeedbackSections(unittest.TestCase):
         self.assertIn("Grazie ancora per averci scelto.", out)
 
     def test_guides_and_feedback_together_both_present(self):
-        out = render_html(self._base_itinerary(), TRIP, guides=[self.GUIDE], feedback=self.FEEDBACK)
+        out = render_html(self._base_itinerary(), TRIP, guides=[self.GUIDE],
+                          feedback=self.FEEDBACK, feedback_link=self.LINK)
         self.assertIn("Le cascate bianche", out)
         self.assertIn("Che piacere risentirvi!", out)
         # Entrambe le sezioni devono comparire DOPO la struttura principale
         # dell'itinerario (executive summary), non prima.
-        self.assertLess(out.index("executive_summary".replace("_", "-")) if False else out.index("Executive Summary"),
+        self.assertLess(out.index("executive_summary".replace("_", "-")) if False else out.index("Il viaggio in breve"),
                          out.index("Le cascate bianche"))
         self.assertLess(out.index("Le cascate bianche"), out.index("Che piacere risentirvi!"))
 
     def test_guide_and_feedback_text_is_escaped(self):
         guide = dict(self.GUIDE, history_summary="<script>alert(1)</script>")
         feedback = dict(self.FEEDBACK, intro_message="<b>ciao</b>")
-        out = render_html(self._base_itinerary(), TRIP, guides=[guide], feedback=feedback)
+        out = render_html(self._base_itinerary(), TRIP, guides=[guide], feedback=feedback,
+                          feedback_link=self.LINK)
         self.assertNotIn("<script>", out)
         self.assertNotIn("<b>ciao</b>", out)
 
@@ -790,6 +1036,10 @@ class TestNewSections2026_07_31(unittest.TestCase):
         "day": 1,
         "title": "Arrivo",
         "hotel_name": "Hotel Test",
+        # [2026-08-02] `hotel_point` serve perché la riga «H» compaia in
+        # legenda: da oggi la si stampa solo se sulla figura c'è davvero un
+        # pallino H da spiegare.
+        "hotel_point": (41.8902, 12.4922),
         "png": None,
         "stops": [
             {"label": "1", "time": "09:00", "activity": "Visita", "location": "Colosseo",
@@ -798,15 +1048,26 @@ class TestNewSections2026_07_31(unittest.TestCase):
              "poi_id": "P2", "type": "restaurant", "type_label": "Dove mangiare", "color": "green"},
         ],
     }
+    # [AGGIORNATO 2026-08-03 — task #179] Aggiunti `from_poi_id`/`to_poi_id`
+    # (che `build_day_legs()` ha sempre prodotto e questo fixture non
+    # copiava) e i metri. Non e' un dettaglio cosmetico: da oggi ogni
+    # spostamento viene stampato DENTRO la tappa a cui porta, e la tappa la si
+    # ritrova per `to_poi_id`. Senza quel campo il fixture avrebbe continuato
+    # a passare per un'altra strada — il riquadro di coda "Rientro" — cioe'
+    # avrebbe provato un comportamento che in produzione non capita mai.
     DIRECTIONS = [{
         "day": 1, "title": "Arrivo",
         "legs": [
-            {"from_label": "H", "from_name": "Hotel Test", "to_label": "1", "to_name": "Colosseo",
+            {"from_label": "H", "from_name": "Hotel Test", "from_poi_id": "H1",
+             "to_label": "1", "to_name": "Colosseo", "to_poi_id": "P1",
              "arrival_time": "09:00", "minutes": 12, "mode": "walking", "mode_label": "a piedi",
+             "metres": 900, "metres_estimated": False, "distance_text": "900 m",
              "url": "https://www.google.com/maps/dir/?api=1&origin=41.9,12.5"
                     "&destination=41.89,12.49&travelmode=walking"},
-            {"from_label": "1", "from_name": "Colosseo", "to_label": "2", "to_name": "Da Mario",
+            {"from_label": "1", "from_name": "Colosseo", "from_poi_id": "P1",
+             "to_label": "2", "to_name": "Da Mario", "to_poi_id": "P2",
              "arrival_time": "13:00", "minutes": None, "mode": "walking", "mode_label": "a piedi",
+             "metres": 1200, "metres_estimated": True, "distance_text": "1,2 km",
              "url": "https://www.google.com/maps/dir/?api=1&origin=41.89,12.49"
                     "&destination=41.895,12.48&travelmode=walking"},
         ],
@@ -875,6 +1136,95 @@ class TestNewSections2026_07_31(unittest.TestCase):
         # marker "H" resta senza spiegazione, che è il difetto originale.
         self.assertIn("Punto di partenza e rientro", out)
 
+    def test_la_legenda_non_promette_un_simbolo_che_sulla_figura_non_c_e(self):
+        """[AGGIUNTO 2026-08-02] Se l'alloggio non è geolocalizzato la cartina
+        non ha nessun pallino «H», ma la legenda lo spiegava lo stesso. Il
+        cliente lo cerca, non lo trova, e da lì in poi non si fida più nemmeno
+        dei numeri — che invece sono giusti."""
+        senza_hotel = {k: v for k, v in self.DAY_MAP.items() if k != "hotel_point"}
+        out = render_html(self._itinerary(), TRIP, day_maps=[senza_hotel])
+        self.assertNotIn("Punto di partenza e rientro", out)
+        # Le tappe restano: si perde il perno, non la legenda.
+        self.assertIn("Colosseo", out)
+
+    def test_la_didascalia_dice_che_lo_schema_non_ha_le_strade(self):
+        """[AGGIUNTO 2026-08-02] Quando la figura è lo schema disegnato in casa
+        e non la mappa stradale di Google, tacerlo è una bugia per omissione:
+        chi prova a seguirla come una mappa si perde."""
+        schema = dict(self.DAY_MAP, png=b"\x89PNG\r\n\x1a\nfinto", map_source="schema")
+        out = render_html(self._itinerary(), TRIP, day_maps=[schema])
+        self.assertIn("map-caption", out)
+        self.assertIn("le strade no", out)
+        # Con la cartina vera di Google la didascalia NON deve comparire:
+        # sarebbe falsa, quella le strade ce le ha.
+        google = dict(self.DAY_MAP, png=b"\x89PNG\r\n\x1a\nfinto", map_source="google")
+        self.assertNotIn("le strade no", render_html(self._itinerary(), TRIP, day_maps=[google]))
+
+    def test_legend_shows_the_place_name_not_the_street_address(self):
+        """[AGGIUNTO 2026-08-02 — difetto visto rigenerando il campione con un
+        payload completo] In legenda si stampava `location`, che nei blocchi
+        veri è un indirizzo (o, peggio, il nome nudo della città): usciva
+        «1 Siena» e «3 Via Giovanni Duprè 132». La legenda risponde a una sola
+        domanda — "il puntino 1 cos'è?" — e un indirizzo non le risponde."""
+        day_map = {
+            "day": 1, "title": "Arrivo", "png": None,
+            "stops": [
+                {"label": "1", "time": "10:30", "activity": "Piazza del Campo",
+                 "location": "Siena", "poi_id": "P1", "type": "activity",
+                 "type_label": "Attività", "color": "orange"},
+                {"label": "2", "time": "12:30", "activity": "Pranzo alla Taverna di San Giuseppe",
+                 "location": "Via Giovanni Duprè 132", "poi_id": "P2", "type": "restaurant",
+                 "type_label": "Dove mangiare", "color": "green"},
+            ],
+        }
+        itinerary = {
+            "destination": "Siena", "executive_summary": "Tre giorni.",
+            "days": [{"day": 1, "title": "Arrivo", "blocks": [
+                {"time": "10:30", "activity": "Piazza del Campo", "location": "Siena", "poi_id": "P1"},
+                {"time": "12:30", "activity": "Pranzo alla Taverna di San Giuseppe",
+                 "location": "Via Giovanni Duprè 132", "poi_id": "P2"},
+            ]}],
+        }
+        out = render_html(itinerary, TRIP, day_maps=[day_map])
+        legend = out.split("class='map-legend'")[1].split("</div></div>")[0]
+        self.assertIn("<strong>Piazza del Campo</strong>", legend)
+        self.assertIn("<strong>Pranzo alla Taverna di San Giuseppe</strong>", legend)
+        # Il nome nudo della città accanto a un puntino non è un'informazione.
+        self.assertNotIn("<strong>Siena</strong>", legend)
+        self.assertNotIn("<strong>Via Giovanni Duprè 132</strong>", legend)
+
+    def test_legend_prefers_the_proper_name_over_the_sentence(self):
+        """[AGGIUNTO 2026-08-02, poche ore dopo il test qui sopra] `activity` è
+        una FRASE: «2 Pranzo alla Taverna di San Giuseppe — 12:30 · Dove
+        mangiare» ripete due volte che si mangia e non è quello che il cliente
+        legge sull'insegna. `stop["name"]`, aggiunto in
+        `maps_static.build_day_map_plans()`, è il nome proprio del posto: la
+        legenda deve preferirlo."""
+        day_map = {
+            "day": 1, "title": "Arrivo", "png": None,
+            "stops": [
+                {"label": "1", "time": "12:30", "name": "Taverna di San Giuseppe",
+                 "activity": "Pranzo alla Taverna di San Giuseppe",
+                 "location": "Via Giovanni Duprè 132", "poi_id": "P1",
+                 "type": "restaurant", "type_label": "Dove mangiare", "color": "green"},
+            ],
+        }
+        out = render_html(self._itinerary(), TRIP, day_maps=[day_map])
+        legend = out.split("class='map-legend'")[1].split("</div></div>")[0]
+        self.assertIn("<strong>Taverna di San Giuseppe</strong>", legend)
+        self.assertNotIn("<strong>Pranzo alla Taverna di San Giuseppe</strong>", legend)
+
+    def test_legend_falls_back_to_location_when_the_activity_is_missing(self):
+        """Il ripiego resta: meglio un indirizzo che un puntino senza nome."""
+        day_map = {
+            "day": 1, "title": "Arrivo", "png": None,
+            "stops": [{"label": "1", "time": "10:30", "activity": "",
+                       "location": "Piazza del Duomo 8", "poi_id": "P1",
+                       "type": "museum", "type_label": "Museo / cultura", "color": "orange"}],
+        }
+        out = render_html(self._itinerary(), TRIP, day_maps=[day_map])
+        self.assertIn("<strong>Piazza del Duomo 8</strong>", out)
+
     def test_legend_survives_a_missing_map_image(self):
         # La quota Google si esaurisce, la rete cade. In quel caso il cliente
         # perde la figura ma NON deve perdere l'informazione: la legenda è la
@@ -903,23 +1253,104 @@ class TestNewSections2026_07_31(unittest.TestCase):
         self.assertEqual(out.count("class='day-open'"), 1)
         self.assertIn("<div class='day-title'>Giorno 2 — Centro</div>", out)
 
-    # --- Come arrivare ----------------------------------------------------
-    def test_directions_render_each_leg_with_ready_to_open_route(self):
+    # --- Spostamenti dentro il programma del giorno -----------------------
+    # [RISCRITTO 2026-08-03 — task #179, richiesta di Lorenzo: «la parte del
+    # "come arrivare" appare ridondante, uniscila al programma del giorno»]
+    def test_ogni_spostamento_sta_attaccato_alla_tappa_a_cui_porta(self):
         out = render_html(self._itinerary(), TRIP, directions=self.DIRECTIONS)
-        self.assertIn("Come arrivare — giorno 1", out)
-        self.assertIn("H → 1", out)
-        self.assertIn("1 → 2", out)
+        # Il riquadro separato non deve piu' esistere: era la meta' ridondante.
+        self.assertNotIn("Come arrivare — giorno 1", out)
+        self.assertNotIn("class='leg-row'", out)
+        # Due spostamenti, due righe: nessuno e' finito nel dimenticatoio.
+        self.assertEqual(out.count("class='leg-inline'"), 2)
+        # Il contenuto utile e' rimasto tutto: durata, distanza, link pronto.
         self.assertIn("circa 12 min a piedi", out)
-        self.assertIn("arrivo previsto 09:00", out)
-        self.assertIn("apri il percorso", out)
+        self.assertIn("900 m", out)
         self.assertIn("travelmode=walking", out)
+        self.assertIn(">percorso</a>", out)
+        # E la riga precede la tappa: si legge un attimo prima di alzarsi,
+        # non due pagine dopo. Se un giorno finisse sotto, il PDF sarebbe
+        # ancora "corretto" e completamente inutile — per questo l'ordine e'
+        # verificato e non lasciato all'occhio.
+        self.assertLess(out.index("class='leg-inline'"), out.index("Colosseo"))
+
+    def test_nessuno_spostamento_resta_orfano_quando_manca_la_tappa(self):
+        # Il tragitto verso "P9" non ha nessun blocco corrispondente nel
+        # programma (capita quando l'ultima tappa e' il rientro in hotel).
+        # Non deve sparire: finisce nel riquadro di coda.
+        directions = [dict(self.DIRECTIONS[0], legs=list(self.DIRECTIONS[0]["legs"]) + [
+            {"from_label": "2", "from_name": "Da Mario", "from_poi_id": "P2",
+             "to_label": "H", "to_name": "Hotel Test", "to_poi_id": "P9",
+             "minutes": 9, "mode": "walking", "mode_label": "a piedi",
+             "metres": 700, "metres_estimated": False, "distance_text": "700 m",
+             "url": "https://www.google.com/maps/dir/?api=1&travelmode=walking"},
+        ])]
+        out = render_html(self._itinerary(), TRIP, directions=directions)
+        self.assertIn("Rientro", out)
+        self.assertIn("verso Hotel Test", out)
+        self.assertEqual(out.count("class='leg-inline'"), 3)
 
     def test_unknown_travel_time_is_declared_not_invented(self):
         # La seconda tratta ha `minutes: None` (nessuna misura reale dalla
         # Distance Matrix). Il documento deve DIRLO. Stampare una stima
         # plausibile qui significherebbe far perdere un treno a qualcuno.
         out = render_html(self._itinerary(), TRIP, directions=self.DIRECTIONS)
-        self.assertIn("tempo di percorrenza da verificare sul momento", out)
+        self.assertIn("tempo da verificare sul momento", out)
+
+    # --- Chilometri e percorrenze a piedi ---------------------------------
+    # [AGGIUNTO 2026-08-03 — task #179, richiesta di Lorenzo: «inserire nel
+    # programma del giorno il totale di chilometri/percorrenze a piedi»]
+    def test_il_titolo_del_giorno_porta_il_totale_dei_chilometri(self):
+        out = render_html(self._itinerary(), TRIP, directions=self.DIRECTIONS)
+        self.assertIn("class='day-total'", out)
+        # 900 m + 1200 m, tutti a piedi.
+        self.assertIn("In movimento: circa 2,1 km, di cui 2,1 km a piedi", out)
+        self.assertIn("min di cammino", out)
+
+    def test_il_circa_compare_solo_quando_i_metri_sono_una_nostra_stima(self):
+        # Stessa giornata, ma con entrambe le distanze misurate da Google:
+        # sparisce il "circa". E' l'unico modo che ha il cliente per sapere
+        # se il numero e' una misura o un calcolo nostro in linea d'aria.
+        legs = [dict(l, metres_estimated=False) for l in self.DIRECTIONS[0]["legs"]]
+        out = render_html(self._itinerary(), TRIP,
+                          directions=[dict(self.DIRECTIONS[0], legs=legs)])
+        self.assertIn("In movimento: 2,1 km", out)
+        self.assertNotIn("In movimento: circa", out)
+
+    def test_una_giornata_ferma_non_stampa_una_riga_di_chilometri(self):
+        # Museo la mattina, ristorante di fianco: 250 m in tutto. Una riga
+        # "In movimento: 250 m" non serve a nessuno, e una riga "0 m" sarebbe
+        # falsa. La riga semplicemente non c'e'.
+        legs = [dict(self.DIRECTIONS[0]["legs"][0], metres=250, distance_text="250 m")]
+        out = render_html(self._itinerary(), TRIP,
+                          directions=[dict(self.DIRECTIONS[0], legs=legs)])
+        self.assertNotIn("class='day-total'", out)
+        self.assertNotIn("In movimento", out)
+
+    def test_i_chilometri_restano_anche_se_la_cartina_non_ce_la_fa(self):
+        # Difetto vero, trovato scrivendo queste prove: il totale veniva
+        # appeso al titolo del giorno, e il titolo del giorno viene stampato
+        # SOLO insieme alla cartina. Bastava una chiamata a Google Static Maps
+        # andata storta — il guasto piu' frequente di questo progetto — per
+        # perdere in silenzio anche i chilometri, che con la cartina non
+        # c'entrano nulla. Le due cose vanno provate separate.
+        senza = render_html(self._itinerary(), TRIP, directions=self.DIRECTIONS)
+        con = render_html(self._itinerary(), TRIP, directions=self.DIRECTIONS,
+                          day_maps=[self.DAY_MAP])
+        self.assertIn("class='day-total'", senza)
+        self.assertIn("class='day-total'", con)
+        # E una volta sola: con la cartina presente ci sono due punti che
+        # potrebbero stamparlo, e stamparlo due volte sarebbe altrettanto
+        # sbagliato che non stamparlo.
+        self.assertEqual(con.count("class='day-total'"), 1)
+        self.assertEqual(senza.count("class='day-total'"), 1)
+
+    def test_senza_metri_conosciuti_niente_totale_inventato(self):
+        legs = [{k: v for k, v in l.items() if k not in ("metres", "distance_text")}
+                for l in self.DIRECTIONS[0]["legs"]]
+        out = render_html(self._itinerary(), TRIP,
+                          directions=[dict(self.DIRECTIONS[0], legs=legs)])
+        self.assertNotIn("class='day-total'", out)
 
     def test_directions_numbers_are_the_same_numbers_drawn_on_the_map(self):
         # Il patto implicito fra le due sezioni: se la cartina dice "2" e la
@@ -940,11 +1371,28 @@ class TestNewSections2026_07_31(unittest.TestCase):
         # spesa) ma marcata, e il totale resta quello delle sole voci note.
         self.assertIn("[Da Verificare]", out)
         self.assertIn("Totale stimato", out)
-        # Maiuscolo voluto nel documento ("NON incluse"): è l'unico punto in cui
-        # il PDF ammette di non conoscere un prezzo, e deve saltare all'occhio.
-        # L'asserzione lo verifica alla lettera proprio per questo.
-        self.assertIn("NON incluse nel totale", out)
+        # Maiuscolo voluto nel documento ("NON inclusa"/"NON incluse"): è l'unico
+        # punto in cui il PDF ammette di non conoscere un prezzo, e deve saltare
+        # all'occhio. L'asserzione lo verifica alla lettera proprio per questo.
+        # La fixture ha UNA sola voce senza prezzo, quindi qui la frase è al
+        # singolare: il plurale con la barra ("voce/i") era un difetto vero,
+        # da modulo prestampato, e il test lo blocca in entrambe le direzioni.
+        self.assertIn("NON inclusa nel totale", out)
+        self.assertNotIn("voce/i", out)
+        self.assertNotIn("NON incluse nel totale", out)
         self.assertIn("Sopra il budget indicato", out)
+
+    def test_cost_table_uses_the_plural_when_more_than_one_price_is_missing(self):
+        # Il compagno del test qui sopra: la stessa frase, ma con due voci
+        # ignote. Serve a tenere coperto il ramo plurale, altrimenti una
+        # correzione futura potrebbe stampare "2 voce è senza" senza che
+        # nessun test se ne accorga.
+        summary = dict(self.COST_SUMMARY)
+        summary["unknown_count"] = 2
+        out = render_html(self._itinerary(), TRIP, cost_summary=summary)
+        self.assertIn("2 voci sono senza", out)
+        self.assertIn("NON incluse nel totale", out)
+        self.assertNotIn("NON inclusa nel totale", out)
 
     def test_cost_section_absent_when_there_is_nothing_to_estimate(self):
         # Nessuna riga = nessuna sezione e nessuna voce di indice: un indice
@@ -1028,7 +1476,7 @@ class TestNewSections2026_07_31(unittest.TestCase):
     # --- Copertina e indice -----------------------------------------------
     def test_cover_page_is_present_and_states_the_no_invented_data_promise(self):
         out = render_html(self._itinerary(), TRIP)
-        self.assertIn("class='cover'", out)
+        self.assertIn("class='cover", out)
         self.assertIn("Itinerario su misura", out)
         self.assertIn("mai sostituito da una stima inventata", out)
 
@@ -1178,6 +1626,41 @@ class TestRenderPdf(unittest.TestCase):
         with open(path, "rb") as f:
             header = f.read(5)
         self.assertEqual(header, b"%PDF-")
+
+
+class TestComeArrivareNonTornaDueVolte(unittest.TestCase):
+    """[AGGIUNTO 2026-08-03 — task #179]
+
+    Il riquadro "Come arrivare — giorno N" e la funzione che lo produceva
+    (`_render_directions`) sono stati tolti: ripetevano, in un secondo
+    elenco, gli stessi spostamenti gia' presenti nel programma del giorno.
+
+    Questa prova non verifica il documento: verifica il CODICE. La differenza
+    conta. Le prove sull'output qui sopra si accorgono che oggi il doppione
+    non c'e'; non si accorgerebbero del passo che lo fa tornare, cioe' un
+    domani in cui qualcuno ritrova la vecchia funzione, la vede definita, la
+    crede viva e la ricollega. E' esattamente il modo in cui e' gia' tornato
+    un doppione in questo progetto.
+    """
+
+    RADICE = Path(__file__).resolve().parent.parent
+
+    def _sorgente(self):
+        return (self.RADICE / "src" / "pdf_renderer.py").read_text(encoding="utf-8")
+
+    def test_la_funzione_del_doppione_non_esiste_piu(self):
+        self.assertNotIn("def _render_directions(", self._sorgente())
+
+    def test_esiste_una_sola_funzione_che_stampa_uno_spostamento(self):
+        sorgente = self._sorgente()
+        self.assertEqual(sorgente.count("def _render_leg_inline("), 1)
+
+    def test_il_titolo_del_riquadro_separato_non_e_piu_stampabile(self):
+        # La stringa sopravvive solo dentro i commenti che spiegano perche'
+        # e' stata tolta; quello che non deve tornare e' il pezzo di HTML che
+        # la stampava.
+        self.assertNotIn("Come arrivare &#8212; giorno", self._sorgente())
+        self.assertNotIn("class='leg-row'", self._sorgente())
 
 
 if __name__ == "__main__":

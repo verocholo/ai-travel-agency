@@ -37,6 +37,35 @@ class TestResolveCountry(unittest.TestCase):
         self.assertEqual(resolve_country("Lisbon, Portugal"), "portogallo")
         self.assertEqual(resolve_country("Londra / Regno Unito"), "regno unito")
 
+    def test_solo_il_nome_della_citta(self):
+        """[AGGIUNTO 2026-08-01 — difetto reale trovato rigenerando il PDF di
+        esempio] `destinazione: "Siena"` non risolveva nulla e la scheda del
+        paese spariva. È la forma in cui la destinazione arriva davvero dal
+        form: quasi nessuno scrive "Firenze, Italia"."""
+        for text, expected in (
+            ("Siena", "italia"), ("Firenze", "italia"), ("Parigi", "francia"),
+            ("Barcellona", "spagna"), ("Praga", "repubblica ceca"),
+            ("Londra", "regno unito"), ("Amsterdam", "paesi bassi"),
+            ("Zurigo", "svizzera"), ("Lubiana", "slovenia"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(resolve_country(text), expected)
+
+    def test_citta_piu_regione_senza_paese(self):
+        self.assertEqual(resolve_country("Siena, Toscana"), "italia")
+
+    def test_il_paese_esplicito_vince_sulla_citta(self):
+        """Se le due tabelle si contraddicono, il paese scritto per esteso è
+        l'intenzione più esplicita delle due."""
+        self.assertEqual(resolve_country("Cortina, Austria"), "austria")
+
+    def test_citta_ambigua_resta_senza_paese(self):
+        """Valencia (Spagna/Venezuela), Cambridge (UK/Massachusetts): meglio
+        nessuna scheda che il numero di emergenza di un altro continente."""
+        for ambigua in ("Valencia", "Cambridge", "Toledo", "Monaco", "Santiago"):
+            with self.subTest(ambigua=ambigua):
+                self.assertIsNone(resolve_country(ambigua))
+
     def test_paese_sconosciuto_non_inventa_nulla(self):
         for text in ("Nepal", "Kathmandu, Nepal", "Marte", ""):
             with self.subTest(text=text):
@@ -80,6 +109,25 @@ class TestCountryPracticalInfo(unittest.TestCase):
         for alias, target in _ALIASES.items():
             with self.subTest(alias=alias):
                 self.assertIn(target, _COUNTRY_INFO)
+
+    def test_ogni_citta_punta_a_un_paese_esistente(self):
+        from src.local_info import _CITY_TO_COUNTRY, _COUNTRY_INFO
+        for city, target in _CITY_TO_COUNTRY.items():
+            with self.subTest(city=city):
+                self.assertIn(target, _COUNTRY_INFO)
+
+    def test_nessuna_citta_ambigua_in_tabella(self):
+        """[AGGIUNTO 2026-08-01] La regola di ammissione della tabella città
+        scritta come test e non solo come commento: da qui dipende un numero di
+        emergenza, e un omonimo su un altro continente è peggio del silenzio.
+        Se un giorno qualcuno aggiungerà "valencia" per comodità, questo test
+        glielo impedirà."""
+        from src.local_info import _CITY_TO_COUNTRY
+        for ambigua in ("valencia", "cordoba", "córdoba", "toledo", "cambridge",
+                        "birmingham", "santiago", "monaco", "san jose",
+                        "alessandria", "vittoria", "las vegas", "atlanta"):
+            with self.subTest(ambigua=ambigua):
+                self.assertNotIn(ambigua, _CITY_TO_COUNTRY)
 
     def test_copertura_minima_europa(self):
         countries = known_countries()

@@ -517,9 +517,28 @@ class TestGeneratePdf(ServiceTestCase):
              patch("src.pdf_extras.feedback_generator") as mock_feedback_gen, \
              patch("src.pdf_extras.maps_static") as mock_maps_static, \
              patch("service.pdf_renderer.render_pdf", side_effect=self._fake_render_pdf):
+            # [AGGIUNTO 2026-08-02 — task #165] Vedi `wire_guide_module()` in
+            # tests/test_main.py per il ragionamento completo: la regola di
+            # copertura (`select_guide_targets`) vive nel modulo mockato ed
+            # è logica pura senza I/O, quindi qui la si lascia girare per
+            # davvero — mockarla con una lista finta renderebbe questo test
+            # verde qualunque cosa faccia la regola vera.
+            from tests.test_main import wire_guide_module
+            wire_guide_module(mock_guide_gen)
             mock_guide_gen.generate_poi_guide.return_value = {"title": "Guida", "poi_name": "Colosseo"}
             mock_feedback_gen.generate_post_trip_feedback.return_value = {"intro_message": "ciao"}
             mock_maps_static.build_map_for_itinerary.return_value = b"fake-png-bytes"
+            # [AGGIUNTO 2026-08-03] La cartina d'insieme non arriva più da
+            # `build_map_for_itinerary()` ma da `build_overview_map()`, che
+            # restituisce un piano completo (figura + provenienza + tappe) e
+            # non dei byte nudi. Senza questo mock il test resterebbe verde
+            # per il motivo sbagliato: nessuna rete nel sandbox, quindi
+            # nessuna cartina, quindi nessun controllo.
+            mock_maps_static.build_overview_map.return_value = {
+                "day": None, "title": "Il viaggio a colpo d'occhio",
+                "stops": [], "hotel_point": None, "hotel_name": None,
+                "hotel_id": None, "png": b"fake-png-bytes", "base_map": None,
+            }
 
             resp = self._post({
                 "trip": self.TRIP_DICT,
@@ -631,8 +650,14 @@ class TestGeneratePdfNewSections(TestGeneratePdf):
         # Senza ANTHROPIC_API_KEY i consigli estesi non si generano: il campo
         # deve dirlo, non tacerlo.
         self.assertFalse(data["tips_included"])
-        # Senza GOOGLE_MAPS_KEY nessuna cartina: idem.
-        self.assertEqual(data["day_maps_included"], 0)
+        # [CAMBIATO 2026-08-02] Prima qui si asseriva 0 — "senza GOOGLE_MAPS_KEY
+        # nessuna cartina". Quello era il DIFETTO, non il contratto: il cliente
+        # riceveva il documento con un buco al posto della figura, ed è successo
+        # davvero. Ora, anche senza chiave, la cartina viene disegnata in locale
+        # dalle coordinate già presenti nel payload (`src/map_render.py`), quindi
+        # il contatore deve essere > 0: la cartina è una proprietà garantita del
+        # documento, non l'esito fortunato di una chiamata di rete.
+        self.assertGreater(data["day_maps_included"], 0)
 
     def test_single_section_can_be_switched_off_without_touching_the_others(self):
         # I flag servono a spegnere una sezione in produzione se dà problemi,

@@ -71,11 +71,25 @@ class TestRunLiveModuleSelection(unittest.TestCase):
             self.assertTrue(mock_search_nearby.called)
             return result, mock_search_nearby
 
+    @staticmethod
+    def _requested_types(mock_search_nearby) -> list[str]:
+        """[AGGIORNATO 2026-08-01] Da oggi la pipeline interroga Places in DUE
+        passate (visite dal centroide della destinazione, ristoranti attorno
+        all'hotel-ancora — vedi src/poi_discovery.py), quindi le categorie del
+        modulo attivo sono divise fra due chiamate. Il contratto che questi
+        test difendono è invariato — "run_live deve chiedere a Places le
+        categorie del modulo corretto" — ma va verificato sull'UNIONE delle
+        chiamate, non sull'ultima."""
+        requested: list[str] = []
+        for call in mock_search_nearby.call_args_list:
+            included = call.kwargs.get("included_types") or []
+            requested.extend(included)
+        return requested
+
     def test_sport_fixture_requests_sport_categories(self):
         # trip_happy_path.json -> scopo "Torneo di tennis amatoriale" -> ENERGY_PACING
         _, mock_search_nearby = self._run_live_with_mocks("fixtures/trip_happy_path.json")
-        _, kwargs = mock_search_nearby.call_args
-        included = kwargs["included_types"]
+        included = self._requested_types(mock_search_nearby)
         self.assertIn("tennis_court", included)
         self.assertIn("sports_complex", included)
         self.assertNotIn("coworking_space", included)
@@ -84,8 +98,7 @@ class TestRunLiveModuleSelection(unittest.TestCase):
     def test_family_fixture_requests_family_categories(self):
         # trip_test_friction_safety_famiglia.json -> FRICTION_SAFETY
         _, mock_search_nearby = self._run_live_with_mocks("fixtures/trip_test_friction_safety_famiglia.json")
-        _, kwargs = mock_search_nearby.call_args
-        included = kwargs["included_types"]
+        included = self._requested_types(mock_search_nearby)
         self.assertIn("zoo", included)
         self.assertIn("water_park", included)
         self.assertNotIn("tennis_court", included)
@@ -94,8 +107,7 @@ class TestRunLiveModuleSelection(unittest.TestCase):
     def test_work_fixture_requests_work_categories(self):
         # trip_test_work_connectivity_nomade.json -> WORK_CONNECTIVITY
         _, mock_search_nearby = self._run_live_with_mocks("fixtures/trip_test_work_connectivity_nomade.json")
-        _, kwargs = mock_search_nearby.call_args
-        included = kwargs["included_types"]
+        included = self._requested_types(mock_search_nearby)
         self.assertIn("coworking_space", included)
         self.assertIn("business_center", included)
         self.assertNotIn("tennis_court", included)
@@ -110,8 +122,7 @@ class TestRunLiveModuleSelection(unittest.TestCase):
             "fixtures/trip_test_work_connectivity_nomade.json",
         ):
             _, mock_search_nearby = self._run_live_with_mocks(fixture)
-            _, kwargs = mock_search_nearby.call_args
-            included = kwargs["included_types"]
+            included = self._requested_types(mock_search_nearby)
             for base in ("restaurant", "tourist_attraction", "museum", "park"):
                 self.assertIn(base, included, f"'{base}' mancante per {fixture}")
 
@@ -292,7 +303,16 @@ class TestRunLiveDistanceMatrixWiring(unittest.TestCase):
     (`get_distance_matrix`) mockata — così verifichiamo che compaiano
     entrambe le modalità "driving" e "walking" nel risultato finale."""
 
-    _FAKE_POI = POI(id="P1", type="restaurant", name="Ristorante Test", lat=38.12, lng=15.67)
+    # [AGGIORNATO 2026-08-01] Il POI finto è ora a ~30 km dall'hotel-ancora
+    # (era a ~1,4 km). Non è un dettaglio di comodo: da oggi
+    # `distance_matrix.plan_matrix()` interroga la SOLA modalità pedonale
+    # quando tutti i punti stanno dentro un raggio percorribile a piedi (vedi
+    # la nota estesa in src/distance_matrix.py — è la correzione del difetto
+    # "circa 0 min in auto" trovato nel PDF reale). Con due punti a 1,4 km
+    # questo test misurerebbe quindi il ramo compatto, non il cablaggio
+    # multi-modalità che dichiara di difendere. Il ramo compatto ha il suo
+    # test dedicato in test_distance_matrix.py.
+    _FAKE_POI = POI(id="P1", type="restaurant", name="Ristorante Test", lat=38.40, lng=15.90)
 
     def test_run_live_uses_multi_mode_distance_matrix_with_two_or_more_points(self):
         calls = []

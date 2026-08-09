@@ -18,8 +18,43 @@ from unittest.mock import MagicMock, patch
 import main
 from src.mock_rag_data import SCENARIOS
 from src.schemas import ApiPayload, POI, Trip
-from src.guide_generator import GuideGeneratorError
+from src.guide_generator import (
+    GuideGeneratorError,
+    GuideSkipped,
+    select_guide_targets,
+)
 from src.feedback_generator import FeedbackGeneratorError
+
+
+def wire_guide_module(mock_guide_gen):
+    """
+    [AGGIUNTO 2026-08-02 — task #165, "una guida per ogni cosa che lo
+    richieda"] Questi test sostituiscono l'INTERO modulo `guide_generator`
+    con un Mock. Finché `pdf_extras` chiamava solo `generate_poi_guide()`
+    bastava configurare quel singolo attributo; ora la REGOLA DI COPERTURA
+    (quali tappe meritano una guida) vive in `select_guide_targets()`, che
+    è nello stesso modulo mockato — e un Mock ritorna un altro Mock, non
+    una lista, quindi il ciclo sui target non girerebbe mai e nessuna
+    guida verrebbe chiesta.
+
+    La correzione giusta NON è mockare anche quella ritornando una lista
+    finta: sarebbe un test che si autoconferma, verde qualunque cosa
+    faccia la regola vera. Qui il doppio serve solo a non chiamare Claude
+    via rete; la selezione dei target è logica pura, deterministica e
+    senza I/O, quindi la si lascia girare per davvero (`side_effect` che
+    delega all'implementazione reale). Così questi test continuano a
+    verificare l'orchestrazione, e se un domani la regola di copertura
+    cambiasse in modo incompatibile con l'orchestrazione, se ne
+    accorgerebbero.
+
+    `GuideSkipped` va ribindato alla classe vera perché `pdf_extras` la
+    usa in una clausola `except`: un attributo Mock non è una classe di
+    eccezione e Python solleverebbe `TypeError` al primo errore.
+    """
+    mock_guide_gen.GuideGeneratorError = GuideGeneratorError
+    mock_guide_gen.GuideSkipped = GuideSkipped
+    mock_guide_gen.select_guide_targets.side_effect = select_guide_targets
+    return mock_guide_gen
 
 
 class TestScenarioCheckWiringConsistency(unittest.TestCase):
@@ -200,7 +235,7 @@ class TestBuildPdfExtras(unittest.TestCase):
     @patch("src.pdf_extras.guide_generator")
     def test_generates_one_guide_per_used_poi_and_one_feedback(self, mock_guide_gen, mock_feedback_gen):
         mock_guide_gen.generate_poi_guide.return_value = {"title": "Guida", "poi_name": "x"}
-        mock_guide_gen.GuideGeneratorError = GuideGeneratorError
+        wire_guide_module(mock_guide_gen)
         mock_feedback_gen.generate_post_trip_feedback.return_value = {"intro_message": "ciao"}
         mock_feedback_gen.FeedbackGeneratorError = FeedbackGeneratorError
 
@@ -223,7 +258,7 @@ class TestBuildPdfExtras(unittest.TestCase):
         # di freshness_check.run_freshness_check(): verificare solo ciò che
         # è EFFETTIVAMENTE USATO, non l'intero DATI_API_FORNITI).
         mock_guide_gen.generate_poi_guide.return_value = {"title": "Guida"}
-        mock_guide_gen.GuideGeneratorError = GuideGeneratorError
+        wire_guide_module(mock_guide_gen)
         mock_feedback_gen.generate_post_trip_feedback.return_value = {"intro_message": "ciao"}
         mock_feedback_gen.FeedbackGeneratorError = FeedbackGeneratorError
 
@@ -235,6 +270,14 @@ class TestBuildPdfExtras(unittest.TestCase):
         mock_guide_gen.generate_poi_guide.assert_called_once_with(
             "Terme di San Filippo", "Val d'Orcia", api_key="fake-key",
             objective_function="ENERGY_PACING", module_id=mock_guide_gen.generate_poi_guide.call_args.kwargs["module_id"],
+            # [AGGIUNTO 2026-08-02 — task #165] `kind` dice al generatore se
+            # il nome ricevuto è una scheda Google Places ("poi") o una riga
+            # di programma in linguaggio naturale ("blocco"): nel secondo
+            # caso il prompt autorizza esplicitamente la risposta
+            # {"skip": true}. Qui il blocco ha un `poi_id` risolto, quindi
+            # deve arrivare "poi" — se arrivasse "blocco" il modello
+            # potrebbe legittimamente saltare una guida dovuta.
+            kind="poi",
         )
 
     @patch("src.pdf_extras.feedback_generator")
@@ -244,7 +287,7 @@ class TestBuildPdfExtras(unittest.TestCase):
         # altrove nel prototipo] Una singola guida che fallisce (rete,
         # parsing, campo mancante) non deve far saltare le altre guide né
         # il feedback né l'intera generazione del PDF.
-        mock_guide_gen.GuideGeneratorError = GuideGeneratorError
+        wire_guide_module(mock_guide_gen)
         mock_guide_gen.generate_poi_guide.side_effect = [
             GuideGeneratorError("boom"), {"title": "Guida OK"},
         ]
@@ -274,7 +317,7 @@ class TestBuildPdfExtras(unittest.TestCase):
     @patch("src.pdf_extras.feedback_generator")
     @patch("src.pdf_extras.guide_generator")
     def test_failing_feedback_returns_none_but_does_not_raise(self, mock_guide_gen, mock_feedback_gen):
-        mock_guide_gen.GuideGeneratorError = GuideGeneratorError
+        wire_guide_module(mock_guide_gen)
         mock_guide_gen.generate_poi_guide.return_value = {"title": "Guida"}
         mock_feedback_gen.FeedbackGeneratorError = FeedbackGeneratorError
         mock_feedback_gen.generate_post_trip_feedback.side_effect = FeedbackGeneratorError("boom")
@@ -291,7 +334,7 @@ class TestBuildPdfExtras(unittest.TestCase):
     @patch("src.pdf_extras.feedback_generator")
     @patch("src.pdf_extras.guide_generator")
     def test_no_poi_ids_in_itinerary_produces_no_guides(self, mock_guide_gen, mock_feedback_gen):
-        mock_guide_gen.GuideGeneratorError = GuideGeneratorError
+        wire_guide_module(mock_guide_gen)
         mock_feedback_gen.FeedbackGeneratorError = FeedbackGeneratorError
         mock_feedback_gen.generate_post_trip_feedback.return_value = {"intro_message": "ciao"}
 
@@ -314,7 +357,7 @@ class TestBuildPdfExtras(unittest.TestCase):
         # (vedi `if not api_key: return None` in maps_static.py) — stesso
         # principio "degrada senza rompere il resto" già verificato per
         # guida/feedback, ora esteso alla cartina.
-        mock_guide_gen.GuideGeneratorError = GuideGeneratorError
+        wire_guide_module(mock_guide_gen)
         mock_guide_gen.generate_poi_guide.return_value = {"title": "Guida"}
         mock_feedback_gen.FeedbackGeneratorError = FeedbackGeneratorError
         mock_feedback_gen.generate_post_trip_feedback.return_value = {"intro_message": "ciao"}
@@ -329,17 +372,23 @@ class TestBuildPdfExtras(unittest.TestCase):
     @patch("src.pdf_extras.maps_static")
     @patch("src.pdf_extras.feedback_generator")
     @patch("src.pdf_extras.guide_generator")
-    def test_google_maps_key_provided_calls_build_map_for_itinerary(
+    def test_la_cartina_dinsieme_non_si_chiede_due_volte(
         self, mock_guide_gen, mock_feedback_gen, mock_maps_static
     ):
-        # [AGGIUNTO 2026-07-12 — "cartina + percorsi"] Quando la chiave è
-        # configurata, `_build_pdf_extras()` deve effettivamente invocare
-        # `maps_static.build_map_for_itinerary()` con i dati reali
-        # (hotels/poi di api_payload, l'itinerario, la chiave) e propagare
-        # il PNG risultante — mockato qui (nessuna chiamata di rete reale
-        # a Google, coerente con test_maps_static.py che copre la funzione
-        # in isolamento).
-        mock_guide_gen.GuideGeneratorError = GuideGeneratorError
+        # [RISCRITTO 2026-08-03 — «risolvi il problema delle cartine che non si
+        # vedono»] Questo test verificava l'opposto: che `_build_pdf_extras()`
+        # chiamasse `build_map_for_itinerary()`. Da oggi la cartina d'insieme
+        # nasce insieme a quelle delle singole giornate, in
+        # `build_pdf_sections()`, perché solo lì ha la rete di sicurezza
+        # disegnata in casa (Google irraggiungibile = figura lo stesso) e la
+        # posizione dei pallini (necessaria per renderli cliccabili).
+        #
+        # Il test resta, girato di 180 gradi, perché il rischio è reale e
+        # costa: se qualcuno riaccendesse questa strada senza spegnere
+        # l'altra, Google verrebbe pagato due volte per la stessa figura a
+        # ogni vendita, e nessuno se ne accorgerebbe guardando il documento —
+        # che verrebbe fuori identico.
+        wire_guide_module(mock_guide_gen)
         mock_guide_gen.generate_poi_guide.return_value = {"title": "Guida"}
         mock_feedback_gen.FeedbackGeneratorError = FeedbackGeneratorError
         mock_feedback_gen.generate_post_trip_feedback.return_value = {"intro_message": "ciao"}
@@ -351,10 +400,8 @@ class TestBuildPdfExtras(unittest.TestCase):
             itinerary, self._trip(), api_payload, "fake-key", google_maps_key="fake-maps-key",
         )
 
-        mock_maps_static.build_map_for_itinerary.assert_called_once_with(
-            api_payload.hotels, api_payload.poi, itinerary, "fake-maps-key",
-        )
-        self.assertEqual(map_png_bytes, b"fake-png-bytes")
+        mock_maps_static.build_map_for_itinerary.assert_not_called()
+        self.assertIsNone(map_png_bytes)
 
     @patch("src.pdf_extras.maps_static")
     @patch("src.pdf_extras.feedback_generator")
@@ -366,7 +413,7 @@ class TestBuildPdfExtras(unittest.TestCase):
         # `maps_static` ritornasse `None` (fallimento interno già gestito
         # lì, mai un'eccezione verso questo chiamante), guide e feedback
         # non devono risentirne.
-        mock_guide_gen.GuideGeneratorError = GuideGeneratorError
+        wire_guide_module(mock_guide_gen)
         mock_guide_gen.generate_poi_guide.return_value = {"title": "Guida"}
         mock_feedback_gen.FeedbackGeneratorError = FeedbackGeneratorError
         mock_feedback_gen.generate_post_trip_feedback.return_value = {"intro_message": "ciao"}

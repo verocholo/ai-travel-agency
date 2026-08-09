@@ -12,8 +12,9 @@ import unittest
 from urllib.parse import parse_qs, urlparse
 
 from src.directions import (
+    ALTERNATIVE_MODE_MIN_MINUTES, DEPARTURE_BUFFER_MINUTES,
     build_directions_by_day, build_directions_url, build_day_legs,
-    build_travel_time_lookup, travel_mode_label,
+    build_travel_time_lookup, compute_departure_time, travel_mode_label,
 )
 from src.maps_static import build_day_map_plans
 from src.schemas import POI, Hotel, TravelTime
@@ -112,6 +113,42 @@ class TestDayLegs(unittest.TestCase):
             self.assertNotIn("H1", leg["from_name"])
         self.assertEqual(legs[0]["from_name"], "Hotel Duomo")
 
+    def test_le_tratte_nominano_i_posti_non_gli_indirizzi(self):
+        """[AGGIUNTO 2026-08-02 — difetto visto rigenerando il campione con un
+        payload completo] Il nome della tappa veniva letto da `location`, che
+        nei blocchi veri è l'indirizzo o — peggio — il nome nudo della città:
+        uscivano «1 → 2  Siena → Piazza del Campo 1» e «2 → 3  Piazza del Duomo
+        1 → Siena», dove lo stesso posto compare una volta col nome e una volta
+        con la via, e la città fa da tappa. Una riga "come arrivare" risponde a
+        una domanda sola — da DOVE a DOVE — e servono due nomi propri."""
+        itinerary = {"days": [{"day": 1, "title": "Centro", "blocks": [
+            {"time": "09:00", "activity": "Colazione in hotel", "poi_id": "H1"},
+            {"time": "10:00", "activity": "Visita agli Uffizi",
+             "location": "Piazzale degli Uffizi 6", "poi_id": "P1"},
+            {"time": "13:00", "activity": "Pranzo", "location": "Firenze", "poi_id": "P2"},
+        ]}]}
+        plan = build_day_map_plans([HOTEL], [MUSEO, RISTORANTE], itinerary)[0]
+        legs = build_day_legs(plan, {})
+        coppie = [(leg["from_name"], leg["to_name"]) for leg in legs]
+        self.assertEqual(coppie, [
+            ("Hotel Duomo", "Uffizi"),
+            ("Uffizi", "Trattoria"),
+            ("Trattoria", "Hotel Duomo"),
+        ])
+        # Né l'indirizzo né il nome della città possono comparire come tappa.
+        piatto = " ".join(n for coppia in coppie for n in coppia)
+        self.assertNotIn("Piazzale degli Uffizi", piatto)
+        self.assertNotIn("Firenze", piatto)
+
+    def test_senza_nome_le_tratte_ripiegano_invece_di_restare_mute(self):
+        """Il ripiego resta, nell'ordine giusto: meglio una frase di un
+        indirizzo, meglio un indirizzo di una freccia senza capo né coda."""
+        plan = _plan()
+        plan["stops"][0].pop("name")
+        self.assertEqual(build_day_legs(plan, {})[0]["to_name"], "Visita agli Uffizi")
+        plan["stops"][0]["activity"] = ""
+        self.assertEqual(build_day_legs(plan, {})[0]["to_name"], "Uffizi")
+
     def test_minuti_mai_inventati(self):
         # senza misure, `minutes` è None — non una stima plausibile.
         legs = build_day_legs(_plan(), {})
@@ -161,6 +198,70 @@ class TestDirectionsByDay(unittest.TestCase):
     def test_input_malformati_non_sollevano(self):
         self.assertEqual(build_directions_by_day(None), [])
         self.assertEqual(build_directions_by_day([None, "x"]), [])
+
+
+class TestOraDiPartenza(unittest.TestCase):
+    """[AGGIUNTO 2026-08-01 — "semplificargli la vita e togliergli piu' lavoro
+    possibile"] Il PDF sapeva gia' che l'attivita' comincia alle 11:00 e che il
+    tragitto dura 18 minuti. La sottrazione la faceva il cliente, in strada.
+    Ora la facciamo noi: nessun dato nuovo, nessuna chiamata, zero costo."""
+
+    def test_sottrae_durata_e_margine(self):
+        self.assertEqual(compute_departure_time("11:00", 18), "10:37")
+
+    def test_il_margine_esiste_e_non_e_zero(self):
+        """Senza margine l'ora sarebbe sistematicamente ottimistica: la
+        Distance Matrix misura porta-a-porta, non il tempo di finire il caffe'
+        e capire da che parte girare."""
+        self.assertGreaterEqual(DEPARTURE_BUFFER_MINUTES, 1)
+        self.assertEqual(
+            compute_departure_time("11:00", 18, buffer_minutes=0), "10:42"
+        )
+
+    def test_accetta_un_intervallo_orario_e_usa_linizio(self):
+        self.assertEqual(compute_departure_time("11:00-13:00", 10), "10:45")
+
+    def test_senza_misura_reale_nessun_orario_inventato(self):
+        self.assertIsNone(compute_departure_time("11:00", None))
+        self.assertIsNone(compute_departure_time("11:00", "dieci"))
+        self.assertIsNone(compute_departure_time("11:00", True))
+
+    def test_senza_orario_di_arrivo_nessun_orario_inventato(self):
+        self.assertIsNone(compute_departure_time("", 10))
+        self.assertIsNone(compute_departure_time("mattina", 10))
+        self.assertIsNone(compute_departure_time("25:00", 10))
+
+    def test_scavalcare_la_mezzanotte_non_produce_un_orario_confuso(self):
+        self.assertIsNone(compute_departure_time("00:10", 30))
+
+
+class TestAlternativaColMezzo(unittest.TestCase):
+    """Sopra la soglia il cliente merita di sapere in un tap se due fermate di
+    metro gli risparmiano quaranta minuti a piedi."""
+
+    def test_tragitto_lungo_offre_lalternativa_coi_mezzi(self):
+        plan = _plan()
+        lungo = [TravelTime(origin_id="H1", dest_id="P1",
+                            minutes=ALTERNATIVE_MODE_MIN_MINUTES + 5, mode="walking")]
+        leg = build_day_legs(plan, build_travel_time_lookup(lungo))[0]
+        self.assertEqual(leg["alt_mode"], "transit")
+        self.assertIn("travelmode=transit", leg["alt_url"])
+        self.assertIn("mezzi", leg["alt_mode_label"])
+
+    def test_tragitto_breve_non_aggiunge_rumore(self):
+        leg = build_day_legs(_plan(), build_travel_time_lookup(TRAVEL_TIMES))[0]
+        self.assertIsNone(leg["alt_mode"])
+        self.assertIsNone(leg["alt_url"])
+
+    def test_senza_misura_nessuna_alternativa_arbitraria(self):
+        leg = build_day_legs(_plan(), {})[0]
+        self.assertIsNone(leg["minutes"])
+        self.assertIsNone(leg["alt_url"])
+
+    def test_lora_di_partenza_finisce_nel_leg(self):
+        legs = build_day_legs(_plan(), build_travel_time_lookup(TRAVEL_TIMES))
+        museo = [l for l in legs if l["to_name"] == "Uffizi"][0]
+        self.assertEqual(museo["depart_by"], "09:51")
 
 
 if __name__ == "__main__":

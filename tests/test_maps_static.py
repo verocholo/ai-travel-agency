@@ -509,6 +509,31 @@ class TestBuildDayMapPlans(unittest.TestCase):
         self.assertEqual(plan["hotel_name"], "Locanda del Borgo")
         self.assertEqual(plan["hotel_id"], "BH")
 
+    def test_ogni_tappa_porta_il_nome_proprio_del_posto(self):
+        """[AGGIUNTO 2026-08-02 — difetto visto rigenerando il campione con un
+        payload completo] Lo stop portava solo `activity` (una frase: "Pranzo
+        alla Taverna di San Giuseppe") e `location` (nei blocchi veri un
+        indirizzo, o il nome nudo della città). Chi doveva stampare un NOME —
+        la legenda della cartina, le tratte di "come arrivare" — non ne aveva
+        uno: uscivano «3 Via Giovanni Duprè 132» e «2 → 3 Piazza del Duomo 1 →
+        Siena». Il nome del POI è quello che il cliente legge sull'insegna."""
+        plan = build_day_map_plans(
+            [BORGO_HOTEL], [BORGO_P1, BORGO_P2],
+            {"days": [_day(1, ["B1", "B2"])]},
+        )[0]
+        self.assertEqual([s["name"] for s in plan["stops"]], ["Museo civico", "Osteria"])
+        # I due campi storici restano: il programma della giornata stampa la
+        # frase e l'indirizzo, e non devono cambiare sotto i piedi di nessuno.
+        self.assertEqual(plan["stops"][0]["activity"], "Tappa 1")
+        self.assertEqual(plan["stops"][0]["location"], "Luogo 1")
+
+    def test_senza_nome_del_poi_il_nome_ricade_sulla_frase_del_blocco(self):
+        anonimo = POI(id="B4", type="museum", name="", lat=43.081, lng=11.601)
+        plan = build_day_map_plans(
+            [BORGO_HOTEL], [anonimo], {"days": [_day(1, ["B4"])]},
+        )[0]
+        self.assertEqual(plan["stops"][0]["name"], "Tappa 1")
+
     def test_poi_ripetuto_nello_stesso_giorno_occupa_un_solo_marker(self):
         plan = build_day_map_plans(
             [BORGO_HOTEL], [BORGO_P1, BORGO_P2],
@@ -655,11 +680,33 @@ class TestBuildDayMapsForItinerary(unittest.TestCase):
         self.assertIsNone(result[1]["png"])
         self.assertEqual(mock_fetch.call_count, 1)
 
-    def test_senza_chiave_api_lista_vuota_senza_sollevare(self):
+    @patch("src.maps_static.fetch_static_map_png")
+    def test_senza_chiave_api_i_piani_restano_senza_toccare_la_rete(self, mock_fetch):
+        # [CAMBIATO 2026-08-02] Prima si asseriva la lista VUOTA. Sbagliato:
+        # senza chiave sparivano non solo le immagini ma anche la legenda
+        # numerata, che è testo puro e non costa niente — e il PDF di esempio è
+        # arrivato al cliente proprio così, senza cartine. Il contratto giusto è
+        # "niente rete, ma i piani sì": le tappe numerate ci sono comunque e a
+        # valle `map_render.attach_local_maps()` può disegnarci sopra lo schema.
         for key in (None, ""):
             with self.subTest(key=key):
-                self.assertEqual(
-                    build_day_maps_for_itinerary([BORGO_HOTEL], [BORGO_P1], self.ITIN, key), [])
+                result = build_day_maps_for_itinerary(
+                    [BORGO_HOTEL], [BORGO_P1], self.ITIN, key)
+                self.assertEqual([r["day"] for r in result], [1, 2])
+                self.assertTrue(result[0]["stops"], "la legenda non deve sparire")
+                self.assertIsNone(result[0]["png"], "senza chiave niente immagine di Google")
+        self.assertEqual(mock_fetch.call_count, 0, "nessuna chiamata di rete senza chiave")
+
+    @patch("src.maps_static.fetch_static_map_png")
+    def test_il_piano_porta_con_se_l_albergo(self, mock_fetch):
+        # `hotel_point` serve al disegno locale: il percorso della giornata
+        # parte e torna lì. Prima veniva scartato in uscita e lo schema avrebbe
+        # avuto le tappe ma non il perno.
+        mock_fetch.return_value = b"PNG"
+        result = build_day_maps_for_itinerary(
+            [BORGO_HOTEL], [BORGO_P1, BORGO_P2], self.ITIN, "fake-key")
+        self.assertIsNotNone(result[0]["hotel_point"])
+        self.assertEqual(len(result[0]["hotel_point"]), 2)
 
     @patch("src.maps_static.fetch_static_map_png", side_effect=MapsStaticError("quota esaurita"))
     def test_errore_di_rete_non_fa_cadere_il_pdf(self, _mock):

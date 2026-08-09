@@ -95,6 +95,34 @@ class TestCostTelemetryConti(unittest.TestCase):
             cost_telemetry.record_api_call("google_distance_matrix", units=1)
         self.assertAlmostEqual(ledger.api_usd(), singola.api_usd() * 25, places=9)
 
+    def test_distance_matrix_con_traffico_costa_il_doppio(self):
+        # [AGGIUNTO 2026-08-01] Google ha due SKU per la Distance Matrix:
+        # "Essentials" a 5 $/1000 elementi e "Advanced" a 10 $/1000, e la
+        # seconda si attiva da sola appena la richiesta contiene
+        # `departure_time`. Finché la telemetria aveva una voce sola, ogni
+        # richiesta con traffico veniva contata a metà del suo prezzo vero:
+        # sulla prima misura in produzione erano ~0,46 € nascosti per
+        # itinerario, su un prezzo di vendita di 4,90 €. Questo test esiste
+        # perché quel disallineamento non possa tornare in silenzio.
+        with cost_telemetry.measure() as base:
+            cost_telemetry.record_api_call("google_distance_matrix", units=100)
+        with cost_telemetry.measure() as advanced:
+            cost_telemetry.record_api_call("google_distance_matrix_advanced", units=100)
+        self.assertAlmostEqual(advanced.api_usd(), base.api_usd() * 2, places=9)
+
+    def test_distance_matrix_spegne_il_traffico_per_default(self):
+        # Il viaggio del cliente parte fra settimane: il traffico di ADESSO
+        # non lo descrive. Pagarlo il doppio per averlo è il peggiore dei due
+        # mondi. Default spento, riaccendibile senza toccare il codice.
+        from src import distance_matrix
+        env = {k: v for k, v in os.environ.items() if k != "DISTANCE_MATRIX_TRAFFIC"}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertFalse(distance_matrix.traffic_enabled())
+        with patch.dict(os.environ, {"DISTANCE_MATRIX_TRAFFIC": "true"}):
+            self.assertTrue(distance_matrix.traffic_enabled())
+        with patch.dict(os.environ, {"DISTANCE_MATRIX_TRAFFIC": "false"}):
+            self.assertFalse(distance_matrix.traffic_enabled())
+
     def test_fornitore_sconosciuto_resta_visibile_a_costo_zero(self):
         with cost_telemetry.measure() as ledger:
             cost_telemetry.record_api_call("fornitore_mai_visto", units=3)
@@ -339,9 +367,15 @@ class TestSezioneRecensioneNelPdf(unittest.TestCase):
             # ogni domanda che contiene un apostrofo.
             self.assertIn(html_escape(question["text"].split("?")[0][:30]), html)
 
-    def test_senza_link_la_sezione_resta_quella_di_prima(self):
+    def test_senza_link_il_capitolo_non_esce_affatto(self):
+        # [CAMBIATO 2026-08-03] Questo test asseriva l'opposto: che senza
+        # link la sezione uscisse "come prima". Uscire come prima voleva
+        # dire stampare il titolo e due domande personalizzate e nessun
+        # posto dove rispondere. Per il cliente è indistinguibile da un
+        # collegamento rotto — che è esattamente la lamentela da cui è
+        # partito questo giro di lavoro. Ora tace.
         html = self._html(_FEEDBACK, None)
-        self.assertIn("Facci sapere com'è andata", html)
+        self.assertNotIn("Facci sapere com'è andata", html)
         self.assertNotIn("Rispondi qui", html)
 
     def test_la_sezione_esce_anche_se_il_messaggio_personalizzato_e_fallito(self):
