@@ -33,6 +33,10 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget ca-certificates fontconfig libfontconfig1 libjpeg62-turbo libxrender1 \
     xfonts-75dpi xfonts-base \
+    `# [2026-08-02] fonts-dejavu-core serve a src/map_render.py: python:3.11-slim` \
+    `# non ha NESSUN font TrueType, e senza Pillow ripiega sul bitmap 6x11 di` \
+    `# default — i nomi delle tappe uscirebbero illeggibili sulla cartina.` \
+    fonts-dejavu-core \
     && wget -q -O /tmp/wkhtmltox.deb \
        "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.bookworm_amd64.deb" \
     && apt-get install -y --no-install-recommends /tmp/wkhtmltox.deb \

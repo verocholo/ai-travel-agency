@@ -111,8 +111,175 @@ TUOI, non li scrivo né li vedo mai):
 | `ANTHROPIC_API_KEY` | la tua chiave Claude reale |
 | `GOOGLE_MAPS_KEY` | la tua chiave Google Maps reale (solo se userai `mode="live"`) |
 | `LITEAPI_KEY` | la tua chiave LiteAPI reale (solo se userai `mode="live"`) |
+| `FEEDBACK_FORM_URL` | la URL del tuo modulo di recensione (vedi 3-bis) |
+| `FEEDBACK_REF_SECRET` | una seconda stringa casuale, inventata da te (vedi 3-bis) |
+| `FEEDBACK_REF_PARAM` | **solo** se il campo nascosto del modulo non si chiama `ref` (vedi 3-bis) |
 
 Salva -> Render fa il deploy automaticamente.
+
+## 3-bis. Il modulo della recensione (le tre cose che vanno insieme)
+
+[AGGIUNTO 2026-08-03 — segnalazione del cliente: «il link di tally non
+funziona ancora».]
+
+L'ultimo capitolo del PDF, "Facci sapere com'è andata", chiede al cliente
+com'è andato il viaggio. Perché quelle domande servano a qualcosa devono
+tornare indietro, e per tornare indietro servono tre cose messe insieme.
+
+Se manca la URL (punto 3) il capitolo **non esce affatto**: un capitolo che
+fa domande senza offrire un posto dove rispondere, per il cliente, è
+indistinguibile da un link rotto — e lui il documento l'ha pagato. Se
+mancano le altre due il capitolo esce, ma le risposte ti arrivano
+inutilizzabili: non sai di quale viaggio parlino.
+
+**1. Il modulo deve avere un campo nascosto che si chiama esattamente
+`ref`.**
+Su Tally: apri il modulo -> "Add question" -> "Hidden fields" -> aggiungi
+un campo e chiamalo `ref` (minuscolo, senza spazi). Serve a una cosa sola:
+il link stampato nel PDF porta con sé un codice breve, diverso per ogni
+viaggio, e quel codice finisce dentro il campo nascosto. Senza il campo, il
+link si apre lo stesso e il cliente risponde lo stesso — ma la risposta ti
+arriva senza nessuna indicazione di quale viaggio parli. Con dieci clienti
+lo indovini, con cento no. Se per qualsiasi motivo il campo nascosto deve
+chiamarsi diversamente, scrivi quel nome in `FEEDBACK_REF_PARAM`; se si
+chiama `ref` lascia perdere quella variabile.
+
+**2. `FEEDBACK_REF_SECRET` va impostata, e poi non va più cambiata.**
+È una stringa casuale che ti inventi tu, come `SERVICE_API_KEY` (stesso
+comando del passo 0). È quella che rende il codice del viaggio SEMPRE LO
+STESSO per lo stesso cliente: se manca, il codice viene generato a caso
+ogni volta, e basta rigenerare il PDF di un cliente (per una correzione,
+per un affinamento) perché la risposta che ha già mandato non si riattacchi
+più al suo viaggio. Cambiarla in seguito ha lo stesso effetto su tutte le
+risposte già raccolte: impostala una volta e conservala.
+
+**3. La URL deve cominciare con `https://`.**
+Va incollata intera, come appare nella barra del browser quando il modulo è
+aperto: `https://tally.so/r/...`. Non `tally.so/r/...` (senza `https://` il
+link nel PDF non porta da nessuna parte: il lettore PDF prova ad aprirlo
+come un file sul computer del cliente), non `http://` (il documento
+contiene il nome e le date di viaggio di una persona), e soprattutto non un
+indirizzo di esempio con un pezzo ancora da sostituire. Il codice controlla
+tutti e tre i casi e, quando la URL non può funzionare, preferisce non
+stampare nessun link piuttosto che stamparne uno morto: se hai impostato la
+variabile e il riquadro "Rispondi qui" continua a non comparire nel PDF, è
+questo controllo che ha scartato la URL — riguardala.
+
+Per vedere subito se ha funzionato, genera un PDF di prova e clicca il
+riquadro "Rispondi qui" in fondo: si deve aprire il tuo modulo, e nella
+risposta che ti arriva ci deve essere il campo `ref` valorizzato.
+
+## 3-ter. Le guide per attrazione ospitate (disco e due variabili)
+
+[AGGIUNTO 2026-08-03 — richiesta del cliente: «migliorare la guida
+turistica linkando un pdf per attrazione da te generato ad hoc».]
+
+Le guide delle singole attrazioni non stanno dentro il documento
+principale: sono PDF a sé. Il servizio li scrive su un disco e poi li serve
+a chi clicca il link stampato nell'itinerario. Questo richiede due cose sul
+pannello di Render, e nessuna delle due è una chiave segreta di terzi: le
+imposti tu e basta.
+
+**1. Il disco.**
+`render.yaml` dichiara un disco da 1 GB montato su `/var/dati/pubblici`.
+Se stai aggiornando un servizio che esiste già, Render **non** aggiunge il
+disco da solo: vai su Settings -> Disks -> Add Disk, nome
+`documenti-pubblici`, mount path `/var/dati/pubblici`, 1 GB. Il disco
+richiede il piano a pagamento (siamo già su `starter`, quindi non cambia
+nulla in bolletta). Aggiungere un disco fa riavviare il servizio.
+
+**2. `PUBLIC_BASE_URL`.**
+È l'indirizzo pubblico del servizio, per intero e senza barra finale:
+`https://ai-travel-agency-service.onrender.com`. È la parte che finisce
+stampata dentro i PDF dei clienti, quindi se la sbagli i link non si
+rompono a metà: nascono già rotti, dentro documenti già spediti. Deve
+cominciare con `https://`.
+
+`PUBLIC_FILES_DIR` è già scritta in `render.yaml` e deve restare uguale al
+mount path del disco. `PUBLIC_FILES_RETENTION_DAYS` puoi lasciarla vuota:
+vuol dire 90 giorni.
+
+**Se non imposti niente, non si rompe niente.** Il codice controlla prima
+di promettere: senza disco o senza `PUBLIC_BASE_URL` non stampa nessun
+link a documenti esterni e le guide restano dentro il PDF principale, come
+prima. È l'unico comportamento accettabile — un link stampato su un
+documento spedito per email non si può più correggere.
+
+**Come funzionano i link (e il compromesso che comportano).**
+Ogni consegna riceve una cartella con un nome casuale e un gettone casuale
+lungo, generati con un generatore crittografico: l'indirizzo somiglia a
+`https://…/f/a1b2c3d4e5f6a7b8/xK9…/duomo-di-siena.pdf`. Chi ha
+l'indirizzo apre il file; chi non ce l'ha non lo indovina (le combinazioni
+sono più di quante se ne possano provare). Non c'è una password davanti,
+e non può esserci: il link lo clicca il **cliente** dal PDF che ha
+ricevuto per email, e mettere una password vorrebbe dire stampare la
+password dentro quel PDF — cioè non avere nessuna password. Le risposte
+"non trovato" sono identiche in tutti i casi (cartella inesistente,
+gettone sbagliato, file scaduto) apposta per non far capire a chi tenta
+quanto ci è andato vicino, e le pagine chiedono ai motori di ricerca di
+non indicizzarle.
+
+**Questo va detto chiaramente, e va portato all'avvocato.** Le guide delle
+attrazioni descrivono un monumento, non una persona: dentro non c'è niente
+del cliente, e lì l'esposizione è quasi nulla. L'itinerario principale, se
+un giorno lo ospitiamo qui per far funzionare il pulsante "torna
+all'itinerario", contiene invece nome, date e destinazione di una persona
+reale, raggiungibili da chiunque abbia il link — e un link viaggia: si
+inoltra, si incolla in una chat, resta nella cronologia di un browser
+condiviso. Che questo sia sufficiente ai fini del GDPR **non lo so, e non
+sono un avvocato**: è un punto da mettere nero su bianco nella lista delle
+domande per il legale (vedi `claude/legal/05-brief-per-avvocato.md`), non
+una conformità da dare per acquisita. Nel frattempo la scadenza a 90
+giorni è lì per limitare la finestra, non per risolvere il problema.
+
+**La pulizia.**
+I documenti scaduti non spariscono da soli: qualcuno deve chiamare
+`POST /v1/manutenzione/pulizia` (questa sì con l'header
+`X-Service-Key`). Il modo più semplice è uno scenario Make schedulato una
+volta al giorno. Finché non c'è, il disco cresce: 1 GB regge comunque
+diverse migliaia di guide, quindi non è urgente — ma è una cosa che va
+fatta, non una che si sistema da sé.
+
+## 3-quater. Vedere cosa è acceso, senza pagare per scoprirlo
+
+[AGGIUNTO 2026-08-03 — nato dalla segnalazione «il link di tally non
+funziona ancora», che non era un difetto del codice ma una variabile
+vuota.]
+
+Tutte le variabili delle due sezioni qui sopra sono **facoltative**, e
+questo è comodo e pericoloso insieme: se ne dimentichi una, il servizio
+non si lamenta, il PDF esce lo stesso, e il cliente riceve un documento
+più povero di quello che credevi di vendergli. È già successo con il
+modulo della recensione, e l'unico modo che avevamo per accorgercene era
+generare un itinerario vero: un euro e mezzo e quattro minuti per scoprire
+un campo vuoto.
+
+Ora c'è una rotta che lo dice in un secondo e gratis:
+
+```bash
+curl https://IL-TUO-SERVIZIO.onrender.com/v1/diagnostica \
+  -H "X-Service-Key: LA-TUA-SERVICE_API_KEY"
+```
+
+Risponde con il conto dei pezzi accesi (`"pezzi_attivi": "4/6"`),
+l'elenco dei **nomi** delle variabili che mancano, e per ogni pezzo spento
+due frasi: cosa perde il cliente e cosa devi digitare per accenderlo. I
+**valori** non escono mai — metà di quelle variabili sono segreti, e una
+diagnosi che stampa il proprio segreto lo regala al primo screenshot
+condiviso. Per lo stesso motivo la rotta vuole `X-Service-Key`: è la mappa
+di dove il servizio è scoperto, non una pagina pubblica.
+
+Sul modulo della recensione distingue tre stati invece di due, perché i
+difetti che puoi avere sono tre e si riparano in modi diversi: `attivo`,
+`non configurato` (non l'hai messa) e `valore presente ma NON utilizzabile`
+(l'hai messa ma è scritta in un modo che non può funzionare — manca
+`https://`, oppure è rimasto dentro un pezzo di indirizzo di esempio).
+Senza questa distinzione, chi ha appena incollato qualcosa va a cercare il
+guasto esattamente nel posto sbagliato.
+
+**Guardala dopo ogni modifica alle variabili su Render**, prima di
+generare qualsiasi cosa. È il controllo più economico di tutto il
+progetto.
 
 ## 4. Verifica che sia vivo
 

@@ -1,6 +1,6 @@
 # [AGGIUNTO 2026-07-12 — deploy del microservizio service.py su Render.com]
 # Blueprint Render.com — vedi DEPLOY.md per la procedura passo-passo
-# completa (incluso come impostare le 4 variabili d'ambiente segrete, che
+# completa (incluso come impostare le variabili d'ambiente segrete, che
 # Render richiede di inserire a mano nella dashboard: `sync: false` sotto
 # significa "non sincronizzata da qui, la imposti tu manualmente", non
 # "non necessaria").
@@ -31,3 +31,49 @@ services:
         sync: false
       - key: LITEAPI_KEY
         sync: false
+      # [AGGIUNTO 2026-08-03 — segnalazione del cliente: «il link di tally
+      # non funziona ancora»] Queste tre non erano dichiarate da nessuna
+      # parte, quindi in produzione non erano impostate: il capitolo "Facci
+      # sapere com'è andata" faceva le domande e non offriva nessun posto
+      # dove rispondere. Vedi il passo 3 di DEPLOY.md — la URL deve essere
+      # `https://` e il modulo deve avere un campo nascosto `ref`.
+      - key: FEEDBACK_FORM_URL
+        sync: false
+      - key: FEEDBACK_REF_SECRET
+        sync: false
+      # Nome del parametro con cui il codice del viaggio viaggia nella URL.
+      # Da impostare SOLO se il campo nascosto del modulo si chiama diverso
+      # da `ref`: lasciarla vuota è la scelta giusta nel caso normale.
+      - key: FEEDBACK_REF_PARAM
+        sync: false
+      # [AGGIUNTO 2026-08-03 — guide per attrazione come PDF separati]
+      # Le guide delle singole attrazioni non stanno più dentro il PDF
+      # principale: sono file a sé, che il servizio scrive su disco e poi
+      # serve a chi clicca il link dal documento. Perché il file sopravviva
+      # al riavvio del servizio serve un disco vero: senza, Render riparte
+      # da una cartella vuota e ogni link stampato sui PDF già spediti
+      # diventa un 404 — cioè esattamente il difetto che stiamo togliendo.
+      #
+      # `PUBLIC_FILES_DIR` deve coincidere con `mountPath` qui sotto.
+      # `PUBLIC_BASE_URL` è l'indirizzo pubblico del servizio (https://…,
+      # senza barra finale): è la parte che finisce stampata dentro i PDF.
+      # Se una delle due manca, il codice NON stampa link rotti: torna al
+      # comportamento di prima (contenuto dentro il documento principale).
+      - key: PUBLIC_FILES_DIR
+        value: /var/dati/pubblici
+      - key: PUBLIC_BASE_URL
+        sync: false
+      # Per quanti giorni i documenti restano raggiungibili. Vuota = 90.
+      # Tenerli in eterno non serve a nessuno e allunga la finestra in cui
+      # un link finito nelle mani sbagliate funziona ancora.
+      - key: PUBLIC_FILES_RETENTION_DAYS
+        sync: false
+    # Il disco persistente è la ragione per cui il piano deve restare a
+    # pagamento: sul piano gratuito Render non lo permette. 1 GB è
+    # abbondante — un PDF di guida pesa qualche centinaio di kB e la
+    # pulizia automatica (POST /v1/manutenzione/pulizia) cancella le
+    # consegne scadute.
+    disk:
+      name: documenti-pubblici
+      mountPath: /var/dati/pubblici
+      sizeGB: 1

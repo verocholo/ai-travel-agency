@@ -34,6 +34,24 @@ Endpoint:
   POST /v1/refine      — secondo turno: affina un itinerario già generato
                           in base a una richiesta del cliente in linguaggio
                           naturale (stessa logica di --refine nel CLI)
+  GET  /f/<consegna>/<token>/<nome>
+                        — [AGGIUNTO 2026-08-03] serve i documenti ospitati
+                          (l'itinerario e le guide per attrazione). NON
+                          autenticata di proposito: a chiamarla è il
+                          CLIENTE dal suo PDF, non Make. La credenziale è
+                          il token nella URL. Vedi src/hosting.py.
+  GET  /v1/diagnostica  — [AGGIUNTO 2026-08-03] dice quali pezzi opzionali
+                          del prodotto sono configurati sul server e cosa
+                          perde il cliente per ognuno che manca. Autenticata.
+  GET  /v1/diagnostica/immagini
+                        — [AGGIUNTO 2026-08-03 (ter)] chiama davvero Google
+                          e Wikimedia, una volta ciascuno, e dice se le
+                          cartine e le fotografie vere funzionano. Costa
+                          circa quattro centesimi invece dei ~1,50 € di un
+                          itinerario intero. Autenticata.
+  POST /v1/manutenzione/pulizia
+                        — cancella i documenti ospitati scaduti.
+                          Autenticata come tutto il resto.
 
 Autenticazione: header `X-Service-Key` confrontato con la variabile
 d'ambiente SERVICE_API_KEY (impostata SOLO sulla piattaforma di deploy,
@@ -58,7 +76,7 @@ import tempfile
 import unittest as _unittest
 from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, make_response, request
 from werkzeug.exceptions import HTTPException
 
 from src.config import SETTINGS
@@ -67,14 +85,30 @@ from src.payload_builder import assemble_payload
 from src.schemas import ApiPayload, Hotel, POI, Trip, TravelTime
 from src.triage import normalize_raw_input
 from src import refinement
+from src import foto
 from src import pdf_renderer
-from src.pdf_extras import build_pdf_extras, build_pdf_sections
+from src.pdf_extras import (
+    build_pdf_extras,
+    build_pdf_sections,
+    aggiungi_ritorno_al_foglio_valigia,
+    publish_hosted_guides,
+    prepara_fascicolo,
+    allega_foglio_valigia,
+    split_render_kwargs,
+)
 # [AGGIUNTI 2026-08-01 — punti 2 e 5 del feedback "da investitore"]
 # cost_telemetry: misura il costo REALE di ogni generazione (finora mai
 # misurato, quindi ogni ragionamento su prezzo e margine era un'opinione).
 # alerting: rende rumoroso un fallimento che finora era silenzioso.
 from src import alerting
 from src import cost_telemetry
+# [AGGIUNTO 2026-08-03 - task #185] Serve a /v1/diagnostica per dire non
+# solo se la variabile del modulo Tally c'e', ma se il suo valore puo'
+# davvero funzionare: e' la differenza fra i due difetti che Lorenzo ha
+# visto, "manca" e "c'e' ma porta al 404".
+from src import feedback_link
+from src import hosting
+from src import diagnostica_immagini
 
 app = Flask(__name__)
 
@@ -550,11 +584,17 @@ def generate_pdf():
     include_costs = body.get("include_costs", True)
     include_tips = body.get("include_tips", True)
     include_place_links = body.get("include_place_links", True)
+    include_predeparture = body.get("include_predeparture", True)
+    include_vademecum = body.get("include_vademecum", True)
+    include_checklist_sheet = body.get("include_checklist_sheet", True)
     _flags = {
         "include_guides": include_guides, "include_feedback": include_feedback,
         "include_map": include_map, "include_day_maps": include_day_maps,
         "include_directions": include_directions, "include_costs": include_costs,
         "include_tips": include_tips, "include_place_links": include_place_links,
+        "include_predeparture": include_predeparture,
+        "include_vademecum": include_vademecum,
+        "include_checklist_sheet": include_checklist_sheet,
     }
     _bad_flags = sorted(k for k, v in _flags.items() if not isinstance(v, bool))
     if _bad_flags:
@@ -600,10 +640,22 @@ def generate_pdf():
     carryover_eur = body.get("cost_carryover_eur", 0.0)
 
     with cost_telemetry.measure("pdf") as ledger:
+        # [MODIFICATO 2026-08-03 — «risolvi il problema delle cartine che non
+        # si vedono»] `include_map=False` qui NON significa "niente cartina
+        # d'insieme": significa che non la fa piu' questa funzione. La fa
+        # `build_pdf_sections()` due righe sotto, con la stessa macchina delle
+        # cartine per giornata — quindi con la rete di sicurezza disegnata in
+        # casa quando Google non risponde, e con la posizione dei pallini, che
+        # serve per renderli cliccabili. Il flag che arriva da Make continua a
+        # comandare la stessa cosa di prima: viene solo inoltrato all'altra
+        # porta (`include_overview_map`). Se lo lasciassimo acceso in tutte e
+        # due, Google verrebbe pagato due volte per la stessa figura e il
+        # documento resterebbe piu' a lungo sotto il tetto dei 300 secondi.
         guides, feedback, used_pois, map_png_bytes = build_pdf_extras(
             itinerary, trip, api_payload, SETTINGS.anthropic_api_key,
             google_maps_key=SETTINGS.google_maps_key,
-            include_guides=include_guides, include_feedback=include_feedback, include_map=include_map,
+            include_guides=include_guides, include_feedback=include_feedback,
+            include_map=False,
         )
 
         # Ogni sezione qui dentro è best-effort e indipendente dalle altre: una
@@ -611,10 +663,118 @@ def generate_pdf():
         sections = build_pdf_sections(
             itinerary, trip, api_payload, SETTINGS.anthropic_api_key,
             google_maps_key=SETTINGS.google_maps_key, travellers=travellers,
+            include_overview_map=include_map,
             include_day_maps=include_day_maps, include_directions=include_directions,
             include_costs=include_costs, include_tips=include_tips,
             include_place_links=include_place_links,
+            include_predeparture=include_predeparture,
+            include_vademecum=include_vademecum,
+            include_checklist_sheet=include_checklist_sheet,
         )
+        # [AGGIUNTO 2026-08-03 — task #178, richiesta di Lorenzo: «zoom out dal
+        # macro al micro»] Qui ogni attrazione diventa un documento a se',
+        # stampato e messo online, e il documento principale dimagrisce di
+        # altrettanto. Va fatto ADESSO, prima di `split_render_kwargs()`, per
+        # due motivi indipendenti: (a) scrive `sections["guide_urls"]`, che e'
+        # una chiave del renderer e quindi deve esistere prima del filtro,
+        # altrimenti nasce e viene buttata nella riga successiva; (b) prenota
+        # il posto del documento principale (`itinerary_url`) PRIMA che il
+        # documento principale esista — le guide devono poter stampare il
+        # bottone "Torna all'itinerario" con dentro una URL che al momento
+        # della stampa non punta ancora a niente. E' il motivo per cui piu'
+        # sotto, appena il PDF esiste davvero, va salvato in quel posto: se
+        # quella riga sparisce, tutti i bottoni di ritorno diventano 404 e
+        # nessun test del renderer se ne accorge.
+        # Se l'ospitalita' non e' configurata (PUBLIC_BASE_URL assente) la
+        # funzione torna vuota, `guide_urls` resta {} e il prodotto e'
+        # esattamente quello di ieri: un PDF solo, con le guide dentro.
+        # [AGGIUNTO 2026-08-03 — task #181, richiesta di Lorenzo: «inserisci
+        # alcune immagini con senso», «meno testo piu' immagini, non deve
+        # essere noioso», e sua scelta esplicita "Foto vere ovunque + grafica
+        # interna"] Le immagini si raccolgono UNA volta e servono a DUE
+        # documenti: la fotografia vera va sia in apertura della giornata nel
+        # documento principale sia in cima alla guida di quell'attrazione.
+        # Scaricarle due volte significherebbe pagare due volte la stessa
+        # foto.
+        # Il tetto e' dentro `foto.raccogli_foto` (MAX_FOTO): la spesa di
+        # questa riga non puo' crescere con la lunghezza del viaggio senza
+        # che qualcuno lo decida.
+        # [AGGIUNTO 2026-08-03 — task #189] `citta` non e' un dettaglio: su
+        # Commons «Duomo» da solo restituisce il duomo sbagliato, «Duomo
+        # Siena» quello giusto. Senza questa riga la fonte gratuita
+        # troverebbe fotografie vere di posti veri che non sono il posto.
+        immagini = foto.raccogli_foto(
+            guides, used_pois, api_key=SETTINGS.google_maps_key,
+            citta=getattr(trip, "destination", "") or "",
+        )
+        # [AGGIUNTO 2026-08-05 — task #190] Prima di tutto il resto: le
+        # guide diventano capitoli staccati cuciti dentro questo stesso file.
+        # Va PRIMA della pubblicazione perche' quella si fa da parte per le
+        # guide gia' diventate capitoli — stamparle due volte costerebbe
+        # mezzo secondo a guida su un'esecuzione che ha gia' sfiorato il tetto
+        # dei 300 secondi.
+        _fascicolo = prepara_fascicolo(
+            guides, sections, itinerary=itinerary, trip=trip, poi=used_pois,
+            photos=immagini,
+        )
+        if _fascicolo.get("capitoli"):
+            app.logger.info(
+                "fascicolo: %s guide cucite come capitoli dentro il PDF",
+                _fascicolo["capitoli"],
+            )
+        pubblicazione = publish_hosted_guides(
+            # [AGGIUNTO 2026-08-03 — task #180] `used_pois` sono gli stessi
+            # POI che finiscono nel documento principale: passarli qui e' cio'
+            # che permette alla guida della singola attrazione di stampare i
+            # suoi orari veri.
+            guides, sections, trip=trip, poi=used_pois,
+            # Alle guide vanno TUTTE le immagini, grafica interna compresa:
+            # una guida senza figura in cima e' una pagina di testo, ed e'
+            # esattamente cio' che Lorenzo ha chiesto di non consegnare piu'.
+            photos=immagini,
+        )
+        # [AGGIUNTO 2026-08-03 — task #184, richiesta di Lorenzo: «un pulsante
+        # sul foglio di calcolo che ti fa ritornare al pdf originario»] Il
+        # foglio della valigia si rifa' ADESSO, e non prima, perche' solo
+        # adesso l'indirizzo del documento principale esiste: e' la
+        # prenotazione appena fatta qui sopra. Senza ospitalita' configurata
+        # `itinerary_url` e' None, la funzione non fa niente e il foglio resta
+        # quello di prima — completo, solo senza la strada di ritorno.
+        if aggiungi_ritorno_al_foglio_valigia(
+            sections, pubblicazione.get("itinerary_url"),
+            trip=trip, itinerary=itinerary, travellers=travellers,
+        ):
+            app.logger.info("foglio valigia: bottone di ritorno all'itinerario incluso")
+        # [SPOSTATO 2026-08-03 — task #184] Il foglio della valigia si prende
+        # QUI: dopo la riga che ci mette dentro il bottone di ritorno, e
+        # ancora PRIMA di `split_render_kwargs()`, che filtra per lista bianca
+        # e butterebbe l'allegato perche' non e' un argomento del renderer.
+        # Prenderlo prima significava allegare alla mail la versione senza
+        # bottone: lo stesso file, e proprio senza la cosa che era stata
+        # chiesta.
+        # [AGGIUNTO 2026-08-05 — task #192] Il foglio entra anche DENTRO il
+        # PDF, come allegato vero. Qui e non prima: la riga qui sopra l'ha
+        # appena rifatto per metterci il bottone di ritorno.
+        if allega_foglio_valigia(sections):
+            app.logger.info("fascicolo: foglio valigia allegato dentro il PDF")
+        checklist_file = sections.get("checklist_xlsx") or {}
+        # [CAMBIATO 2026-08-03, stesso giorno] Al renderer vanno TUTTE le
+        # immagini, non piu' le sole fotografie vere. Non e' un
+        # ripensamento sulla regola — in cima a una giornata continua a
+        # comparire solo una fotografia vera — e' uno spostamento del
+        # controllo: la selezione ora la fa il renderer, che e' l'unico posto
+        # che sa in quale parte del documento sta stampando. Serve perche' il
+        # capitolo interno delle guide (quello che resta quando la guida non
+        # e' stata pubblicata come documento a se') deve poter mostrare anche
+        # la copertina disegnata in casa, altrimenti proprio le guide di
+        # riserva sarebbero le uniche pagine di solo testo.
+        sections["photos"] = immagini
+        # [AGGIUNTO 2026-08-01] `section_errors` NON va a `render_pdf()`: è la
+        # diagnostica che il 2026-08-01 mancava del tutto. Finisce nei
+        # contatori della risposta (quindi visibile in Make.com) e nei log.
+        sections, section_errors = split_render_kwargs(sections)
+        for _name, _detail in sorted(section_errors.items()):
+            app.logger.warning("sezione PDF '%s' non generata: %s", _name, _detail)
 
         tmp_pdf_path = None
         try:
@@ -627,6 +787,24 @@ def generate_pdf():
                 **sections,
             )
             pdf_bytes = Path(tmp_pdf_path).read_bytes()
+            # [AGGIUNTO 2026-08-03 — task #178] La meta' mancante della
+            # prenotazione fatta sopra: le guide hanno gia' stampato dentro
+            # di se' l'indirizzo di questo file, quindi il file deve
+            # arrivarci. Fallire qui non deve pero' far fallire la vendita —
+            # il cliente il PDF ce l'ha via email comunque — percio' e'
+            # best-effort come ogni altra sezione, ma rumoroso nei log.
+            if pubblicazione.get("consegna"):
+                # `store()` non solleva: torna None. Quindi il controllo va
+                # fatto sul valore, non con un try/except — un except qui
+                # sembrerebbe una rete di sicurezza e non prenderebbe niente.
+                if not hosting.store(
+                    pubblicazione["consegna"], "itinerario", pdf_bytes
+                ):
+                    app.logger.warning(
+                        "itinerario non pubblicato: i bottoni di ritorno "
+                        "dentro le guide porteranno a una pagina inesistente "
+                        "(consegna %s)", pubblicazione["consegna"],
+                    )
         except pdf_renderer.PdfRendererError as e:
             # Stesso principio di missing_env sopra: un problema di
             # configurazione/dipendenza del SERVER (wkhtmltopdf assente,
@@ -649,7 +827,15 @@ def generate_pdf():
         "guides_requested": len(used_pois) if include_guides else 0,
         "guides_generated": len(guides),
         "feedback_included": feedback is not None,
-        "map_included": map_png_bytes is not None,
+        # [CORRETTO 2026-08-03] Da oggi la cartina d'insieme arriva dalle
+        # sezioni, non dai byte: leggere solo `map_png_bytes` avrebbe
+        # riportato a Make "cartina assente" per ogni documento che la
+        # contiene — un allarme falso ripetuto una volta per vendita e
+        # quindi, dopo poco, un allarme che nessuno guarda piu'.
+        "map_included": (
+            map_png_bytes is not None
+            or bool((sections.get("overview_map") or {}).get("png"))
+        ),
         # [AGGIUNTI 2026-07-31] Contatori per sezione. Non sono decorativi:
         # ogni sezione degrada in silenzio (best-effort), quindi senza questi
         # campi un PDF a cui mancano tutte le cartine è indistinguibile da uno
@@ -660,6 +846,24 @@ def generate_pdf():
         "costs_included": sections["cost_summary"] is not None,
         "tips_included": sections["tips"] is not None,
         "place_cards_included": len(sections["place_cards"]),
+        # [AGGIUNTO 2026-08-01] Non un booleano ma il NUMERO di voci: la
+        # sezione "Prima di partire" e' costruita solo da dati reali, quindi
+        # una lista corta e' il sintomo di un payload povero (nessun hotel,
+        # nessun museo, paese fuori tabella) — informazione che un booleano
+        # "presente/assente" nasconderebbe.
+        "predeparture_items": len((sections.get("predeparture") or {}).get("checklist") or []),
+        # [AGGIUNTO 2026-08-01] Il PERCHÉ, non solo il quanto. `tips_included:
+        # false` dice che manca; `section_errors: {"tips": "TipsGeneratorError:
+        # troncato..."}` dice cosa riparare. È la differenza fra accorgersi di
+        # un problema e poterlo risolvere senza riprodurlo.
+        # [AGGIUNTO 2026-08-02 — task #173] Quante righe ha il foglio della
+        # valigia allegato. Zero non e' un errore (una destinazione fuori
+        # tabella climatica produce meno voci), ma e' il numero che dice se
+        # l'allegato vale la pena di essere spedito — e Make puo' decidere da
+        # solo se allegarlo, senza aprire il file.
+        "checklist_rows": (sections.get("checklist_sheet") or {}).get("rows", 0),
+        "checklist_filename": checklist_file.get("filename"),
+        "section_errors": section_errors,
     }
 
     # [AGGIUNTO 2026-08-01] Il PDF esce comunque, ma se gli mancano delle
@@ -678,6 +882,14 @@ def generate_pdf():
 
     return jsonify({
         "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+        # Il foglio della valigia, nello stesso formato del PDF, cosi' che
+        # Make lo alleghi alla STESSA mail senza una seconda chiamata. Assente
+        # (`None`) quando non c'e' niente da spuntare: meglio nessun allegato
+        # di un foglio vuoto.
+        "checklist_xlsx_base64": (
+            base64.b64encode(checklist_file["content"]).decode("ascii")
+            if checklist_file.get("content") else None
+        ),
         **counters,
         "feedback_ref": _feedback_link.get("ref"),
         "feedback_url": _feedback_link.get("url"),
@@ -685,6 +897,258 @@ def generate_pdf():
         # quello dell'itinerario: è il numero che dice se 4,90 € sono un
         # prezzo o una perdita. Vedi src/cost_telemetry.py.
         "cost_estimate": ledger.to_dict(carryover_eur=carryover_eur),
+    })
+
+
+# ---------------------------------------------------------------------------
+# I documenti ospitati
+# ---------------------------------------------------------------------------
+# [AGGIUNTO 2026-08-03 — richiesta di Lorenzo: "migliorare la guida turistica
+# linkando un pdf per attrazione da te generato ad hoc ... con bottone di
+# torna all'itinerario alla parte giusta", e sua scelta esplicita fra le
+# alternative proposte: "PDF separati, ospitati su Render"]
+#
+# ATTENZIONE, la cosa più importante di questo blocco: la rotta di lettura
+# NON chiama `_check_auth()`, e non è una dimenticanza. A cliccare quel link
+# è il cliente dal PDF che ha in mano, non Make: se richiedesse
+# `X-Service-Key` non si aprirebbe mai, e l'unico modo di farla funzionare
+# sarebbe mettere la chiave del servizio dentro un documento che gira per
+# posta. La credenziale è il token dentro la URL, generato da
+# `src/hosting.py` con 256 bit di casualità e confrontato in tempo costante.
+#
+# In questo file l'autenticazione è per-rotta (`_check_auth()` chiamata
+# dentro ogni handler) e non un `before_request`: significa che una rotta
+# nuova nasce PUBBLICA. È il motivo per cui la rotta di manutenzione qui
+# sotto ha il suo controllo esplicito, e per cui esistono due test dedicati
+# — uno per verso — in tests/test_hosting_2026_08_03.py.
+
+@app.route("/f/<consegna>/<token>/<nome>", methods=["GET"])
+def serve_documento_ospitato(consegna, token, nome):
+    esito = hosting.resolve(consegna, token, nome)
+    if esito is None:
+        # Un 404 asciutto e IDENTICO in ogni caso di fallimento: consegna
+        # inesistente, token sbagliato, documento scaduto o nome malformato
+        # devono essere indistinguibili, altrimenti il servizio risponde
+        # alla domanda "questo codice è mai esistito?" a chiunque la faccia.
+        return jsonify({"error": "non trovato"}), 404
+    blob, content_type = esito
+    risposta = make_response(blob)
+    risposta.headers["Content-Type"] = content_type
+    risposta.headers["Content-Disposition"] = "inline"
+    # Fuori dai motori di ricerca: una URL a capacità che finisce indicizzata
+    # non è più una URL a capacità. Nessun crawler dovrebbe mai vedere questi
+    # link (stanno solo dentro PDF privati), ma la riga costa niente e il
+    # giorno in cui uno di questi indirizzi finisce incollato in un forum è
+    # l'unica cosa che impedisce che diventi pubblico per sempre.
+    risposta.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    risposta.headers["Cache-Control"] = "private, max-age=3600"
+    risposta.headers["X-Content-Type-Options"] = "nosniff"
+    return risposta
+
+
+def _stato_configurazione() -> list[dict]:
+    """Lo stato di ogni pezzo OPZIONALE del prodotto, in italiano.
+
+    [AGGIUNTO 2026-08-03 — task #185, segnalazione di Lorenzo: «il link di
+    tally non funziona ancora»]
+
+    Perche' questa funzione esiste. Il collegamento al modulo di recensione
+    era rotto in produzione per un motivo banale: la variabile non era
+    impostata. Il codice era giusto, i controlli erano verdi, il documento
+    usciva — semplicemente senza quel pezzo. E non c'era nessun modo di
+    accorgersene se non generando un itinerario vero, cioe' spendendo un euro
+    e mezzo e aspettando quattro minuti.
+
+    E' la forma di difetto che questo progetto produce di piu', perche' ogni
+    sezione e' best-effort per scelta: un pezzo che manca non fa rumore, il
+    documento esce lo stesso, e nessuno se ne accorge fino al reclamo. Ci
+    sono SEI variabili opzionali, quindi sei modi di consegnare in silenzio un
+    prodotto piu' povero di quello che si crede di aver messo online.
+
+    Questa risposta li rende visibili tutti insieme, senza spendere niente.
+    Ogni voce dice tre cose e non una: com'e' messa, cosa perde IL CLIENTE se
+    manca, e cosa si fa per sistemarla. "false" da solo non aiuta chi legge:
+    Lorenzo non e' uno sviluppatore e la variabile la deve digitare lui.
+
+    I VALORI non escono mai da qui — solo se ci sono e se sono utilizzabili.
+    Meta' di queste variabili sono segreti (`FEEDBACK_REF_SECRET` deriva i
+    codici delle recensioni, `ALERT_WEBHOOK_URL` e' a sua volta una
+    credenziale), e una rotta che restituisce il proprio segreto e' una rotta
+    che lo regala al primo log condiviso per sbaglio.
+    """
+    def _presente(nome: str) -> bool:
+        return bool((os.getenv(nome) or "").strip())
+
+    modulo_recensione = feedback_link.form_url()
+    modulo_grezzo = (os.getenv("FEEDBACK_FORM_URL") or "").strip()
+
+    return [
+        {
+            "voce": "modulo di recensione (Tally)",
+            "variabili": ["FEEDBACK_FORM_URL"],
+            "attivo": bool(modulo_recensione),
+            # Il caso peggiore e il motivo per cui non basta un booleano: la
+            # variabile c'e' ma il valore non puo' funzionare (segnaposto mai
+            # sostituito, `http://`, indirizzo senza schema). Un "manca" e un
+            # "c'e' ma e' sbagliato" si sistemano in due modi diversi, e chi
+            # ha appena incollato qualcosa nel pannello di Render ha bisogno
+            # di sapere quale dei due gli e' capitato.
+            "stato": (
+                "attivo" if modulo_recensione
+                else "valore presente ma NON utilizzabile" if modulo_grezzo
+                else "non configurato"
+            ),
+            "senza_questo": "il capitolo delle recensioni non esce: nessuna "
+                            "risposta torna indietro, e l'unico segnale sulla "
+                            "qualita' resta l'assenza di rimborsi chiesti",
+            "come_si_sistema": "incolla su Render la URL https:// del modulo "
+                               "Tally vero (non quella di esempio)",
+        },
+        {
+            "voce": "codice stabile delle recensioni",
+            "variabili": ["FEEDBACK_REF_SECRET"],
+            "attivo": _presente("FEEDBACK_REF_SECRET"),
+            "senza_questo": "le risposte arrivano lo stesso, ma rigenerare un "
+                            "PDF cambia il codice e si perde il collegamento "
+                            "con il viaggio",
+            "come_si_sistema": "una frase lunga a caso, scritta una volta sola "
+                               "e mai piu' cambiata",
+        },
+        {
+            "voce": "documenti ospitati (guide per attrazione)",
+            # DUE variabili, non una: l'indirizzo pubblico da stampare nei
+            # documenti e la cartella su disco dove i file vengono scritti.
+            # Impostarne una sola non accende niente, e finche' questa riga
+            # ne nominava una sola la diagnostica avrebbe mandato a cercare
+            # il guasto nel posto sbagliato — lo stesso difetto che sta
+            # riparando.
+            "variabili": ["PUBLIC_BASE_URL", "PUBLIC_FILES_DIR"],
+            "attivo": hosting.is_configured(),
+            "senza_questo": "le guide per attrazione e il bottone di ritorno "
+                            "sul foglio della valigia non compaiono: resta "
+                            "solo il documento principale",
+            "come_si_sistema": "PUBLIC_BASE_URL e' l'indirizzo pubblico del "
+                               "servizio (https://, senza barra finale); "
+                               "PUBLIC_FILES_DIR e' il percorso del disco "
+                               "montato su Render. Servono tutte e due",
+        },
+        {
+            "voce": "allarme sui fallimenti",
+            "variabili": ["ALERT_WEBHOOK_URL"],
+            "attivo": _presente("ALERT_WEBHOOK_URL"),
+            "senza_questo": "un documento consegnato con pezzi mancanti resta "
+                            "solo nei log: lo scopre il cliente, non noi",
+            "come_si_sistema": "un webhook che accetta un POST JSON (Slack, "
+                               "oppure un modulo 'Custom webhook' di Make)",
+        },
+        {
+            "voce": "foglio della valigia su Fogli Google",
+            "variabili": ["CHECKLIST_SHEET_TEMPLATE_URL"],
+            "attivo": _presente("CHECKLIST_SHEET_TEMPLATE_URL"),
+            "senza_questo": "il foglio arriva solo come allegato .xlsx: si "
+                            "apre, ma non si spunta dal telefono in due tocchi",
+            "come_si_sistema": "la URL di un foglio Google in sola lettura, "
+                               "che il cliente si copia",
+        },
+        {
+            "voce": "cartine stradali e fotografie vere",
+            "variabili": ["GOOGLE_MAPS_KEY"],
+            "attivo": _presente("GOOGLE_MAPS_KEY"),
+            "senza_questo": "cartine schematiche disegnate in casa e copertine "
+                            "illustrate al posto delle fotografie: la rete di "
+                            "sicurezza, non il risultato normale",
+            "come_si_sistema": "la chiave Google, che resta solo su Render",
+        },
+    ]
+
+
+@app.route("/v1/diagnostica", methods=["GET"])
+def diagnostica():
+    """Cosa e' acceso e cosa no, senza generare (e pagare) un itinerario.
+
+    [AGGIUNTO 2026-08-03 — task #185] Autenticata come tutto il resto: dice
+    quali pezzi del prodotto sono configurati, ed e' esattamente la mappa che
+    servirebbe a un estraneo per sapere dove il servizio e' scoperto. Il
+    controllo va DENTRO la funzione — in questo file l'autenticazione non e'
+    globale, quindi una rotta nuova nasce pubblica.
+    """
+    auth_error = _check_auth()
+    if auth_error:
+        return jsonify({"error": auth_error}), 401
+    voci = _stato_configurazione()
+    # Di un pezzo spento si elencano le variabili che MANCANO davvero, non
+    # tutte quelle che gli servono: chi ha gia' messo `PUBLIC_BASE_URL` e ha
+    # dimenticato `PUBLIC_FILES_DIR` deve leggere il nome che gli manca, non
+    # rimettere anche quello che c'e' gia'.
+    mancanti = [
+        nome
+        for v in voci if not v["attivo"]
+        for nome in v["variabili"]
+        if not (os.getenv(nome) or "").strip()
+    ]
+    # I due elenchi NON sono nella stessa unita' di misura: `voci` conta
+    # PEZZI del prodotto, `mancanti` conta VARIABILI, e un pezzo solo puo'
+    # averne piu' di una (l'ospitalita' ne vuole due). Sottrarre l'uno
+    # dall'altro dava numeri impossibili — con niente configurato usciva
+    # "-1/6" — cioe' proprio il tipo di riga che fa perdere fiducia a una
+    # diagnosi nel momento in cui la si sta leggendo per capire un guasto.
+    # Gli accesi si contano sugli accesi.
+    attivi = sum(1 for v in voci if v["attivo"])
+    return jsonify({
+        "status": "ok",
+        "test_suite": TEST_SUITE_STATUS,
+        # Il numero prima dell'elenco: e' la riga che si legge davvero.
+        "pezzi_attivi": f"{attivi}/{len(voci)}",
+        "variabili_mancanti": mancanti,
+        "dettaglio": voci,
+    })
+
+
+@app.route("/v1/diagnostica/immagini", methods=["GET"])
+def diagnostica_delle_immagini():
+    """Le cartine e le fotografie vere funzionano davvero? Quattro centesimi.
+
+    [AGGIUNTO 2026-08-03 (ter) — task #188] `/v1/diagnostica` dice se la
+    chiave c'e'. Questa dice se la chiave FUNZIONA, che e' una domanda
+    diversa e l'unica che conti: una chiave valida non produce nessuna
+    cartina se la API non e' abilitata sul progetto, o se la chiave ha una
+    restrizione che la esclude, o se manca la fatturazione. Tutti e tre danno
+    lo stesso identico sintomo — la cartina disegnata in casa al posto di
+    quella vera — e nessuno dei tre si vede senza chiamare l'API.
+
+    Prima di questa rotta l'unico modo di distinguerli era generare un
+    itinerario vero: ~1,50 € e quattro minuti, per scoprire alla fine di
+    avere in mano un disegno.
+
+    `?solo=cartina` salta la prova delle fotografie, che costa quindici volte
+    tanto: chi sta sistemando le cartine la ricontrolla dieci volte di fila e
+    non c'e' motivo di fargliela pagare ogni volta.
+
+    L'autenticazione va DENTRO la funzione: qui non e' globale, quindi una
+    rotta nuova nasce pubblica — e una rotta pubblica che spende soldi veri a
+    ogni chiamata e' un rubinetto aperto sulla strada.
+    """
+    auth_error = _check_auth()
+    if auth_error:
+        return jsonify({"error": auth_error}), 401
+    esito = diagnostica_immagini.esegui(
+        os.getenv("GOOGLE_MAPS_KEY"),
+        solo=request.args.get("solo"),
+    )
+    if "errore" in esito:
+        return jsonify(esito), 400
+    return jsonify(esito)
+
+
+@app.route("/v1/manutenzione/pulizia", methods=["POST"])
+def pulizia_documenti_ospitati():
+    auth_error = _check_auth()
+    if auth_error:
+        return jsonify({"error": auth_error}), 401
+    return jsonify({
+        "configurato": hosting.is_configured(),
+        "consegne_cancellate": hosting.sweep(),
+        "retention_giorni": hosting.retention_days(),
     })
 
 

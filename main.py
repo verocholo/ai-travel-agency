@@ -31,6 +31,7 @@ from src import refinement
 from src import freshness_check
 from src import feedback_generator
 from src import pdf_extras
+from src import foto
 from src.triage import normalize_raw_input
 from src.modules import get_module_for_objective_function
 from src.payload_builder import assemble_payload
@@ -181,8 +182,13 @@ def _build_pdf_extras(
     used_poi_ids = extract_used_poi_ids(itinerary)
     poi_by_id = {p.id: p for p in api_payload.poi} if api_payload else {}
 
+    # [MODIFICATO 2026-08-03] Vedi la nota estesa in `service.py`: la cartina
+    # d'insieme non nasce piu' qui ma in `build_pdf_sections()`, insieme a
+    # quelle delle singole giornate. Chiederla in tutti e due i posti
+    # significherebbe pagare Google due volte per la stessa figura.
     guides, feedback, used_pois, map_png_bytes = pdf_extras.build_pdf_extras(
         itinerary, trip, api_payload, api_key, google_maps_key=google_maps_key,
+        include_map=False,
     )
 
     guided_names = {g.get("poi_name") for g in guides}
@@ -200,8 +206,6 @@ def _build_pdf_extras(
     else:
         print("⚠️  Messaggio di feedback saltato (per il PDF)")
 
-    if map_png_bytes:
-        print("🗺️  Cartina generata (per il PDF)")
 
     return guides, feedback, used_pois, map_png_bytes
 
@@ -209,6 +213,7 @@ def _build_pdf_extras(
 def _build_pdf_sections(
     itinerary: dict, trip, api_payload, api_key: str | None = None,
     google_maps_key: str | None = None, travellers: int = 1,
+    guides: list | None = None,
 ) -> dict:
     """
     [AGGIUNTO 2026-07-31 — richieste di Lorenzo del 2026-07-31] Wrapper CLI
@@ -227,6 +232,90 @@ def _build_pdf_sections(
         itinerary, trip, api_payload, api_key,
         google_maps_key=google_maps_key, travellers=travellers,
     )
+    # [AGGIUNTO 2026-08-03 — task #178] Stessa identica riga che sta in
+    # `service.py`, e sta qui per lo stesso motivo per cui esiste questo
+    # wrapper: se la riga vivesse solo nel servizio, il PDF prodotto dalla
+    # riga di comando sarebbe un documento DIVERSO da quello che riceve il
+    # cliente, e le prove fatte in locale non direbbero piu' niente su cio'
+    # che accade in produzione. Senza `PUBLIC_BASE_URL` non fa nulla e non
+    # stampa nulla: e' il caso normale quando si prova sul portatile.
+    # [AGGIUNTO 2026-08-03 — task #181] Stessa riga del servizio, stessa
+    # ragione: le immagini si raccolgono una volta e servono a due documenti.
+    # Senza chiave Google (il caso normale sul portatile) `raccogli_foto` non
+    # chiama nessuno e disegna comunque la grafica interna per ogni guida —
+    # cioe' la prova locale mostra il documento illustrato, semplicemente con
+    # i disegni al posto delle fotografie.
+    _immagini = foto.raccogli_foto(
+        guides or [], getattr(api_payload, "poi", None),
+        api_key=google_maps_key,
+        # Stessa riga del servizio: il nome della citta' disambigua la
+        # ricerca su Commons. Vedi la nota in `service.py`.
+        citta=getattr(trip, "destination", "") or "",
+    )
+    # [AGGIUNTO 2026-08-05 — task #190] Stessa riga del servizio, stesso
+    # ordine: i capitoli staccati si preparano PRIMA della pubblicazione,
+    # perche' quella si fa da parte per le guide gia' diventate capitoli.
+    _fascicolo = pdf_extras.prepara_fascicolo(
+        guides or [], sections, itinerary=itinerary, trip=trip,
+        poi=getattr(api_payload, "poi", None), photos=_immagini,
+    )
+    if _fascicolo.get("capitoli"):
+        print(f"\U0001f4ce Fascicolo: {_fascicolo['capitoli']} guide cucite "
+              "come capitoli dentro il PDF")
+    _pubblicazione = pdf_extras.publish_hosted_guides(
+        # [AGGIUNTO 2026-08-03 — task #180] Stessi POI del servizio, stessa
+        # riga: se qui mancassero, la guida provata sul portatile uscirebbe
+        # senza orari e quella del cliente con — cioe' la prova locale non
+        # direbbe piu' niente.
+        guides or [], sections, trip=trip, poi=getattr(api_payload, "poi", None),
+        photos=_immagini,
+    )
+    # [AGGIUNTO 2026-08-03 - task #184] Stessa riga del servizio, stessa
+    # ragione: solo adesso esiste l'indirizzo del documento principale, quindi
+    # solo adesso il foglio della valigia puo' contenere il bottone che ci
+    # riporta. Sul portatile, senza PUBLIC_BASE_URL, non succede niente.
+    if pdf_extras.aggiungi_ritorno_al_foglio_valigia(
+        sections, _pubblicazione.get("itinerary_url"),
+        trip=trip, itinerary=itinerary, travellers=travellers,
+    ):
+        print("\U0001f9f3 Foglio valigia: incluso il bottone di ritorno all'itinerario")
+    # [AGGIUNTO 2026-08-05 — task #192] Stessa riga del servizio: il foglio
+    # entra anche dentro il PDF come allegato, e solo adesso che ha il
+    # bottone.
+    if pdf_extras.allega_foglio_valigia(sections):
+        print("\U0001f4ce Foglio valigia: allegato dentro il PDF")
+    _pubblicate = _pubblicazione.get("guide_urls") or {}
+    # [CAMBIATO 2026-08-03, stesso giorno] Stessa riga del servizio, stessa
+    # ragione: il renderer riceve tutto e sceglie lui. Vedi `service.py`.
+    sections["photos"] = _immagini
+    _reali = len(foto.solo_reali(_immagini))
+    print(
+        f"🖼️  Immagini: {len(_immagini)} guide illustrate, di cui {_reali} "
+        f"con fotografia vera del luogo"
+    )
+    if _pubblicate:
+        print(f"🔗 Guide pubblicate come documenti a se': {len(_pubblicate)}")
+    # [AGGIUNTO 2026-08-01] `section_errors` è diagnostica, non un argomento
+    # del renderer: si separa qui, si stampa, e a `render_pdf()` arrivano solo
+    # le sezioni vere. Il MOTIVO per cui una sezione manca vale più del fatto
+    # che manchi: "Architect's Tips saltati" non dice se è scaduta una chiave o
+    # se il modello si è fatto troncare, e sono due riparazioni diverse.
+    sections, section_errors = pdf_extras.split_render_kwargs(sections)
+    for name, detail in sorted(section_errors.items()):
+        print(f"⚠️  Sezione '{name}' non generata → {detail}")
+
+    # [SPOSTATO qui 2026-08-03] Il messaggio sulla cartina d'insieme stava nel
+    # wrapper sopra, dove la cartina non nasce piu'. Dice anche DA DOVE viene:
+    # "schema" vuol dire che Google non ha risposto (o manca la chiave) e la
+    # figura e' quella disegnata in casa — informazione che serve prima di
+    # spedire il documento, non dopo.
+    _insieme = sections.get("overview_map") or {}
+    if _insieme.get("png"):
+        _fonte = ("stradale" if _insieme.get("map_source") != "schema"
+                  else "schema disegnato in casa, Google non raggiungibile")
+        print(f"🗺️  Cartina d'insieme generata ({_fonte})")
+    else:
+        print("⚠️  Cartina d'insieme non generata")
 
     n_maps = len(sections.get("day_maps") or [])
     print(f"🗺️  Cartine per giornata generate: {n_maps}" if n_maps
@@ -405,7 +494,7 @@ def _run_one(fixture: str, scenario: str, mode: str, run_suffix: str = "", gener
         )
         sections = _build_pdf_sections(
             result.itinerary, result.trip, result.api_payload, SETTINGS.anthropic_api_key,
-            google_maps_key=SETTINGS.google_maps_key,
+            google_maps_key=SETTINGS.google_maps_key, guides=guides,
         )
         try:
             out_pdf = OUTPUT_DIR / f"{scenario}{run_suffix}.pdf"
@@ -573,7 +662,7 @@ def _run_refine(fixture: str, scenario: str, customer_request: str, generate_pdf
         )
         sections = _build_pdf_sections(
             result.itinerary, base_result.trip, api_payload, SETTINGS.anthropic_api_key,
-            google_maps_key=SETTINGS.google_maps_key,
+            google_maps_key=SETTINGS.google_maps_key, guides=guides,
         )
         try:
             out_pdf = OUTPUT_DIR / f"{scenario}_affinato.pdf"

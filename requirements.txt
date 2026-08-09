@@ -9,3 +9,20 @@ pytest>=8.0.0
 # piattaforma di deploy reale (Render.com), che ha accesso internet pieno.
 flask>=3.1.0
 gunicorn>=22.0.0
+# [AGGIUNTO 2026-08-02 — cartine disegnate in locale, vedi src/map_render.py]
+# La cartina del giorno dipendeva da UNA chiamata di rete a Google Static Maps:
+# chiave assente, quota esaurita o URL troppo lungo e il cliente riceveva il
+# documento SENZA figura — è successo davvero, nel PDF di esempio. Pillow
+# disegna lo schema dalle coordinate che abbiamo già pagato, così la cartina
+# diventa una proprietà garantita del documento invece di una speranza.
+# Il codice degrada comunque se manca (`render_day_map_png()` ritorna None).
+Pillow>=10.0.0
+
+# [AGGIUNTO 2026-08-02 — serve SOLO ai test, vedi tests/test_standard_qualita.py]
+# Il cliente non clicca l'HTML, clicca il PDF: fra i due c'è wkhtmltopdf, che
+# i collegamenti interni li ricostruisce da capo e puo' perderli per strada.
+# E' successo davvero (il rimando alla guida e quello alla recensione erano
+# scritti bene e sulla carta non facevano niente). pypdf serve a guardare
+# dentro il PDF prodotto e contare i salti che funzionano davvero. Il prodotto
+# non lo importa da nessuna parte: se manca, quel controllo si salta.
+pypdf>=3.17
