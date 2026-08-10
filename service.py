@@ -73,6 +73,7 @@ import base64
 import hmac
 import os
 import tempfile
+import threading
 import unittest as _unittest
 from pathlib import Path
 
@@ -102,6 +103,7 @@ from src.pdf_extras import (
 # alerting: rende rumoroso un fallimento che finora era silenzioso.
 from src import alerting
 from src import cost_telemetry
+from src import lavori
 # [AGGIUNTO 2026-08-03 - task #185] Serve a /v1/diagnostica per dire non
 # solo se la variabile del modulo Tally c'e', ma se il suo valore puo'
 # davvero funzionare: e' la differenza fra i due difetti che Lorenzo ha
@@ -292,11 +294,51 @@ def health():
 
 @app.route("/v1/itinerary", methods=["POST"])
 def create_itinerary():
+    """La strada di sempre: si chiede, si aspetta, si riceve.
+
+    Resta invariata e continuera' a esistere: la usano i test, il CLI e
+    chiunque non abbia il problema del tetto di cinque minuti. Chi ce l'ha
+    — Make — usa `/v1/itinerary/avvia` qui sotto, che fa ESATTAMENTE lo
+    stesso lavoro chiamando questa stessa funzione.
+    """
     auth_error = _check_auth()
     if auth_error:
         return jsonify({"error": auth_error}), 401
+    corpo, codice = _normalizza_esito(_esegui_itinerario(request.get_json(silent=True)))
+    return jsonify(corpo), codice
 
-    body = request.get_json(silent=True)
+
+def _normalizza_esito(esito) -> tuple:
+    """`(corpo, codice)` sia che la funzione abbia dichiarato il codice o no."""
+    if isinstance(esito, tuple):
+        return esito[0], esito[1]
+    return esito, 200
+
+
+def _esegui_itinerario(body):
+    """Genera l'itinerario e ritorna `(dizionario, codice HTTP)`.
+
+    [ESTRATTO 2026-08-10] Era il corpo di `create_itinerary()`. E' stato
+    tirato fuori senza cambiare UNA VIRGOLA della logica, perche' adesso
+    serve a due chiamanti — la strada sincrona di sempre e quella presa in
+    carico — e due copie della stessa logica sono il modo con cui, fra sei
+    mesi, il documento generato in un modo diventa diverso da quello
+    generato nell'altro senza che nessuno sappia dire quando e' successo.
+    E' lo stesso principio gia' scritto in `_parse_trip_and_api_payload`.
+
+    Il travestimento di `jsonify` qui sotto merita una spiegazione, perche'
+    a prima vista sembra un trucco — e lo e', ma deliberato. Questo corpo
+    contiene una dozzina di `return jsonify({...}), 400`. Riscriverli tutti
+    a mano avrebbe voluto dire trascrivere novanta righe di codice che
+    funziona, con la probabilita' di sbagliarne una in silenzio. Dichiarando
+    qui dentro una funzione con lo stesso nome che restituisce il dizionario
+    invece della risposta HTTP, il corpo resta IDENTICO carattere per
+    carattere e produce naturalmente la coppia `(dizionario, codice)`.
+    Il `jsonify` vero lo applica il chiamante.
+    """
+    def jsonify(x):  # noqa: A001 — vedi la spiegazione nel docstring
+        return x
+
     if not isinstance(body, dict):
         return jsonify({"error": "body JSON mancante o non valido"}), 400
 
@@ -386,6 +428,114 @@ def create_itinerary():
         # configurabile da confermare (campo `prezzi_da_verificare`).
         "cost_estimate": ledger.to_dict(),
     })
+
+
+@app.route("/v1/itinerary/avvia", methods=["POST"])
+def avvia_itinerario():
+    """Prende in carico la generazione e risponde SUBITO con un numero d'ordine.
+
+    [AGGIUNTO 2026-08-10 — da un guasto vero, misurato otto volte.]
+
+    Il modulo HTTP di Make ha un tetto rigido di **300 secondi** che non si
+    alza su nessun piano a pagamento. La generazione di un itinerario ha
+    superato quel tetto — otto esecuzioni di produzione morte a 300,3 / 300,4
+    / 300,5 secondi — e ogni volta il cliente non ha ricevuto niente mentre la
+    generazione veniva pagata lo stesso, perche' il server continuava a
+    lavorare anche dopo che Make aveva chiuso la connessione.
+
+    Qui si smette di tenere qualcuno appeso: si risponde in un decimo di
+    secondo con un numero d'ordine, il lavoro prosegue per conto suo, e chi ha
+    chiesto ripassa a ritirare su `/v1/itinerary/esito/<numero>`.
+
+    **La qualita' non c'entra e non e' stata toccata.** Il modello riceve lo
+    stesso prompt di ieri e ci mette lo stesso tempo: cambia soltanto chi
+    aspetta. Le due alternative — accorciare il ragionamento o ridurre il
+    documento — avrebbero pagato il tempo con la qualita', ed erano proprio
+    cio' che non si voleva.
+
+    Risponde **202** (preso in carico), non 200: e' il codice che dice «ho
+    accettato, non ho ancora finito», ed e' cio' che rende leggibile la
+    differenza fra questa rotta e quella di sempre guardando solo i log.
+    """
+    auth_error = _check_auth()
+    if auth_error:
+        return jsonify({"error": auth_error}), 401
+
+    body = request.get_json(silent=True)
+    # Si controlla SOLO la forma del contenitore, non il contenuto. Tutto il
+    # resto della validazione resta dentro `_esegui_itinerario`, in un posto
+    # solo: se la ricopiassimo qui per rispondere 400 piu' in fretta, avremmo
+    # due validazioni destinate a divergere, che e' il difetto che questo
+    # progetto ha gia' pagato altrove. Un `trip` sbagliato produce quindi un
+    # numero d'ordine, e l'errore 400 si legge al ritiro — identico a quello
+    # che avrebbe dato la strada sincrona.
+    if not isinstance(body, dict):
+        return jsonify({"error": "body JSON mancante o non valido"}), 400
+
+    lavori.pulisci()
+    identificativo = lavori.nuovo()
+
+    def _lavora():
+        try:
+            with app.app_context():
+                corpo, codice = _normalizza_esito(_esegui_itinerario(body))
+            lavori.salva_esito(identificativo, corpo, codice)
+        except Exception as e:  # noqa: BLE001 — vedi sotto
+            # Qualunque eccezione qui NON ha piu' nessuno a cui risalire: siamo
+            # in un thread staccato, e senza questa rete il lavoro resterebbe
+            # «in corso» per sempre e Make ripasserebbe all'infinito. Meglio un
+            # errore scritto e leggibile al ritiro.
+            lavori.salva_guasto(identificativo, f"{type(e).__name__}: {e}")
+            alerting.notify("lavoro_itinerario_fallito", f"{type(e).__name__}: {e}")
+
+    threading.Thread(target=_lavora, daemon=True).start()
+
+    return jsonify({
+        "stato": "in_corso",
+        "job_id": identificativo,
+        "ritira_su": f"/v1/itinerary/esito/{identificativo}",
+        # Un'indicazione onesta a chi deve decidere ogni quanto ripassare. La
+        # generazione piu' lenta mai misurata e' stata di 356 secondi.
+        "riprova_fra_secondi": 45,
+    }), 202
+
+
+@app.route("/v1/itinerary/esito/<identificativo>", methods=["GET"])
+def esito_itinerario(identificativo):
+    """Ritira un itinerario preso in carico.
+
+    Tre risposte possibili, e sono pensate per essere distinguibili da un
+    modulo HTTP senza dover leggere il contenuto:
+
+      - **202** — non e' ancora pronto, ripassa;
+      - **200** — eccolo, ed e' esattamente il corpo che avrebbe restituito la
+        vecchia chiamata sincrona, senza una virgola di differenza;
+      - **404** — questo numero d'ordine non esiste (o e' scaduto).
+
+    Se la generazione e' fallita, qui esce lo stesso codice di errore che
+    sarebbe uscito aspettando (400, 502, 500...). E' deliberato: la strada
+    nuova e quella vecchia devono comportarsi allo stesso modo anche quando
+    vanno male, altrimenti la differenza si scopre dal cliente.
+    """
+    auth_error = _check_auth()
+    if auth_error:
+        return jsonify({"error": auth_error}), 401
+
+    dati = lavori.leggi(identificativo)
+    if dati is None:
+        return jsonify({
+            "error": "numero d'ordine sconosciuto: o non e' mai esistito, o il "
+                     "servizio e' stato riavviato, o e' passato troppo tempo",
+        }), 404
+
+    if dati.get("stato") == "in_corso":
+        return jsonify({"stato": "in_corso", "job_id": identificativo,
+                        "riprova_fra_secondi": 45}), 202
+
+    corpo = dati.get("corpo")
+    if not isinstance(corpo, dict):
+        corpo = {"error": "esito illeggibile"}
+    return jsonify({"stato": dati.get("stato"), **corpo}), int(dati.get("codice") or 200)
 
 
 def _parse_trip_and_api_payload(body: dict) -> tuple:
