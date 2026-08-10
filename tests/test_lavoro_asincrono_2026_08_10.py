@@ -38,7 +38,14 @@ class _BaseServizio(unittest.TestCase):
 
     def setUp(self):
         os.environ["SERVICE_API_KEY"] = "chiave-di-prova-non-vera"
-        self._cartella = tempfile.TemporaryDirectory()
+        # `ignore_cleanup_errors` non e' pigrizia: queste prove lasciano
+        # dietro filoni di lavoro veri che continuano a scrivere il loro
+        # esito. Ogni tanto uno di loro riscriveva il file un istante dopo
+        # la pulizia e la cartella risultava «non vuota»: la prova diventava
+        # rossa a caso, senza che il prodotto avesse niente che non va. Un
+        # controllo che fallisce a caso e' un controllo che, dopo la terza
+        # volta, nessuno guarda piu'.
+        self._cartella = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         os.environ["LAVORI_DIR"] = self._cartella.name
         import service as _servizio
 
@@ -313,6 +320,262 @@ class TestIlMagazzinoSopravviveAiProcessiSeparati(_BaseServizio):
 
         sorgente = inspect.getsource(lavori._scrivi)
         self.assertIn("os.replace", sorgente)
+
+
+
+
+class TestChiRitiraNonDeveIndovinareIlTempo(_BaseServizio):
+    """[REGRESSIONE 2026-08-10 — da un guasto vero, in produzione, costato
+    otto minuti di generazione pagata e buttata.]
+
+    Il primo giro faceva aspettare Make a tempo fisso: 300 secondi di sonno,
+    una domanda, altri 180 di sonno, l'ultima domanda. Sembrava prudente.
+    Non lo era, e sbagliava in tutti e due i versi:
+
+      - **se la generazione finiva prima**, ogni cliente pagava 480 secondi
+        di attesa inutile;
+      - **se finiva dopo**, l'ultima domanda arrivava a vuoto, il documento
+        non veniva mai costruito, e la generazione — gia' fatta e gia'
+        pagata — finiva nel cestino.
+
+    Un'attesa indovinata e' la cosa che non puo' funzionare: chi chiede e'
+    l'unico che non sa quanto ci vuole. Adesso la domanda resta aperta e la
+    risposta arriva quando e' pronta.
+    """
+
+    def test_l_attesa_finisce_nell_istante_in_cui_il_lavoro_e_pronto(self):
+        """Il punto di tutto: non un secondo prima, non un secondo dopo.
+
+        Si chiede di aspettare fino a dieci secondi un lavoro che diventa
+        pronto dopo mezzo. Se la risposta arrivasse dopo dieci secondi
+        vorrebbe dire che stiamo ancora dormendo a tempo fisso.
+        """
+        import threading
+        import time
+
+        from src import lavori
+
+        identificativo = lavori.nuovo()
+
+        def _finisci_fra_mezzo_secondo():
+            time.sleep(0.5)
+            lavori.salva_esito(identificativo, {"ok": True}, 200)
+
+        threading.Thread(target=_finisci_fra_mezzo_secondo, daemon=True).start()
+        inizio = time.monotonic()
+        dati = lavori.attendi(identificativo, 10)
+        passato = time.monotonic() - inizio
+
+        self.assertEqual(dati.get("stato"), "pronto")
+        self.assertLess(
+            passato, 4.0,
+            f"la risposta ha impiegato {passato:.1f}s per un lavoro pronto "
+            "dopo 0,5s: si sta ancora aspettando a tempo fisso",
+        )
+
+    def test_se_non_e_pronto_si_torna_indietro_prima_del_tetto_di_make(self):
+        # Una risposta che arriva a 300,1 secondi e' una risposta persa: il
+        # modulo HTTP di Make ha gia' staccato. Il margine e' la differenza
+        # fra aspettare il massimo possibile e aspettare invano.
+        from src import lavori
+
+        self.assertLess(lavori.ATTESA_MASSIMA_SECONDI, 300)
+        self.assertGreater(lavori.ATTESA_MASSIMA_SECONDI, 240)
+
+    def test_nessuno_puo_tenere_il_servizio_appeso_dall_indirizzo(self):
+        """`?attendi=` arriva da fuori: deve reggere qualunque cosa.
+
+        Senza il tetto, un `?attendi=99999999` occuperebbe per giorni uno
+        degli otto filoni di lavoro del servizio. Con due o tre chiamate cosi'
+        il prodotto sarebbe spento senza che nessuno abbia fatto niente di
+        illegale.
+        """
+        from src import lavori
+
+        for valore in ("99999999", 99999999, "1e9", float("inf")):
+            with self.subTest(valore=valore):
+                self.assertLessEqual(lavori._secondi_validi(valore),
+                                     lavori.ATTESA_MASSIMA_SECONDI)
+
+    def test_un_attesa_scritta_male_non_fa_cadere_niente(self):
+        from src import lavori
+
+        for valore in (None, "", "subito", "-5", float("nan"), {}, []):
+            with self.subTest(valore=valore):
+                self.assertEqual(lavori._secondi_validi(valore), 0.0)
+
+    def test_senza_attendi_il_comportamento_e_quello_di_sempre(self):
+        # La rotta esisteva gia' e qualcuno potrebbe usarla senza il
+        # parametro: deve rispondere subito, come prima, senza aspettare.
+        import time
+
+        from src import lavori
+
+        identificativo = lavori.nuovo()
+        inizio = time.monotonic()
+        risposta = self.client.get(f"/v1/itinerary/esito/{identificativo}",
+                                   headers=self.intestazioni)
+        passato = time.monotonic() - inizio
+        self.assertEqual(risposta.status_code, 202)
+        self.assertLess(passato, 2.0)
+
+    def test_dall_indirizzo_si_puo_chiedere_di_aspettare(self):
+        """Il giro completo, dalla rotta: si chiede, si aspetta, si riceve."""
+        import threading
+        import time
+
+        from src import lavori
+
+        identificativo = lavori.nuovo()
+
+        def _finisci_fra_poco():
+            time.sleep(0.5)
+            lavori.salva_esito(identificativo, {"itinerary": {"days": []}}, 200)
+
+        threading.Thread(target=_finisci_fra_poco, daemon=True).start()
+        inizio = time.monotonic()
+        risposta = self.client.get(
+            f"/v1/itinerary/esito/{identificativo}?attendi=10",
+            headers=self.intestazioni)
+        passato = time.monotonic() - inizio
+
+        self.assertEqual(risposta.status_code, 200)
+        self.assertIn("itinerary", risposta.get_json())
+        self.assertLess(passato, 4.0, "l'attesa non si e' interrotta da sola")
+
+    def test_un_lavoro_gia_pronto_torna_indietro_immediatamente(self):
+        # Le domande sono piu' d'una in fila: la seconda e la terza trovano
+        # il lavoro gia' fatto e non devono aggiungere un solo secondo.
+        import time
+
+        from src import lavori
+
+        identificativo = lavori.nuovo()
+        lavori.salva_esito(identificativo, {"ok": True}, 200)
+        inizio = time.monotonic()
+        lavori.attendi(identificativo, 30)
+        self.assertLess(time.monotonic() - inizio, 1.0)
+
+    def test_un_numero_inventato_non_tiene_nessuno_in_attesa(self):
+        # Aspettare 290 secondi un lavoro che non esiste sarebbe il modo piu'
+        # sciocco di regalare il servizio a chi lo chiama a caso.
+        import time
+
+        from src import lavori
+
+        inizio = time.monotonic()
+        self.assertIsNone(lavori.attendi("numero-inventato-1234", 30))
+        self.assertLess(time.monotonic() - inizio, 1.0)
+
+
+class TestAncheIlFascicoloSiPuoPrendereInCarico(_BaseServizio):
+    """[AGGIUNTO 2026-08-10] La seconda fase ha lo stesso tetto della prima.
+
+    Il tetto dei 300 secondi del modulo HTTP di Make vale per OGNI chiamata,
+    non solo per la prima. La costruzione del fascicolo — cinque guide
+    generate dal modello, le fotografie scaricate, sei documenti stampati e
+    cuciti insieme — e' la fase piu' lenta delle due. Aspettare di vederla
+    morire in produzione, sapendo gia' fare il conto, sarebbe stato un
+    difetto scelto invece che subito.
+    """
+
+    def test_la_rotta_di_sempre_e_quella_presa_in_carico_fanno_lo_stesso_lavoro(self):
+        """La cosa che conta davvero: una sola implementazione.
+
+        Se il fascicolo venisse costruito da due funzioni diverse, fra sei
+        mesi il documento comprato dal cliente sarebbe diverso da quello
+        provato in prova, e nessuno saprebbe dire da quando.
+        """
+        import inspect
+
+        sorgente = inspect.getsource(self.servizio.generate_pdf)
+        self.assertIn("_esegui_pdf", sorgente,
+                      "la rotta di sempre non usa piu' la funzione condivisa")
+        sorgente_avvio = inspect.getsource(self.servizio.avvia_pdf)
+        self.assertIn("_esegui_pdf", sorgente_avvio)
+
+    def test_la_presa_in_carico_del_fascicolo_risponde_subito(self):
+        """Il controllo che descrive il guasto: si misura il TEMPO.
+
+        Un controllo che guarda solo il codice 202 resterebbe verde anche se
+        qualcuno rimettesse la costruzione dentro la risposta — che e'
+        esattamente il guasto da impedire.
+        """
+        import time
+
+        def _lentissimo(body):
+            time.sleep(10)
+            return {"pdf_base64": "x"}, 200
+
+        with mock.patch.object(self.servizio, "_esegui_pdf", _lentissimo):
+            inizio = time.monotonic()
+            risposta = self.client.post("/v1/pdf/avvia", json={"trip": {}},
+                                        headers=self.intestazioni)
+            passato = time.monotonic() - inizio
+
+        self.assertEqual(risposta.status_code, 202)
+        self.assertLess(passato, 3.0,
+                        f"la risposta ha impiegato {passato:.1f}s: la "
+                        "costruzione e' ancora dentro la risposta")
+
+    def test_il_fascicolo_si_ritira_con_lo_stesso_numero(self):
+        import time
+
+        with mock.patch.object(self.servizio, "_esegui_pdf",
+                               lambda body: ({"pdf_base64": "eccolo"}, 200)):
+            avvio = self.client.post("/v1/pdf/avvia", json={"trip": {}},
+                                     headers=self.intestazioni)
+            numero = avvio.get_json()["job_id"]
+            for _ in range(50):
+                ritiro = self.client.get(f"/v1/pdf/esito/{numero}",
+                                         headers=self.intestazioni)
+                if ritiro.status_code != 202:
+                    break
+                time.sleep(0.1)
+
+        self.assertEqual(ritiro.status_code, 200)
+        self.assertEqual(ritiro.get_json().get("pdf_base64"), "eccolo")
+
+    def test_un_body_che_non_e_un_oggetto_non_produce_un_numero_a_vuoto(self):
+        risposta = self.client.post("/v1/pdf/avvia", data="non sono JSON",
+                                    content_type="application/json",
+                                    headers=self.intestazioni)
+        self.assertEqual(risposta.status_code, 400)
+
+    def test_prendere_in_carico_un_fascicolo_senza_chiave_non_si_puo(self):
+        risposta = self.client.post("/v1/pdf/avvia", json={"trip": {}})
+        self.assertEqual(risposta.status_code, 401)
+
+
+class TestLIndirizzoDiRitiroEsisteDavvero(_BaseServizio):
+    """[REGRESSIONE 2026-08-10, difetto trovato mentre lo si scriveva.]
+
+    La risposta della presa in carico contiene un campo `ritira_su` che dice
+    dove ripassare. Componendolo dal nome del lavoro veniva fuori
+    `/v1/itinerario/esito/...` — con la «o» finale, in italiano — mentre la
+    rotta vera si chiama `/v1/itinerary/...`. Nessuno se ne sarebbe accorto:
+    oggi Make non legge quel campo, si compone l'indirizzo da solo. Sarebbe
+    stata una bugia scritta nel prodotto, in attesa del primo che ci crede.
+    """
+
+    def _ritira_su(self, rotta):
+        with mock.patch.object(self.servizio, "_esegui_itinerario",
+                               lambda body: ({"ok": True}, 200)), \
+             mock.patch.object(self.servizio, "_esegui_pdf",
+                               lambda body: ({"ok": True}, 200)):
+            risposta = self.client.post(rotta, json={"trip": {}},
+                                        headers=self.intestazioni)
+        return risposta.get_json()["ritira_su"]
+
+    def test_l_indirizzo_promesso_risponde_davvero(self):
+        for rotta in ("/v1/itinerary/avvia", "/v1/pdf/avvia"):
+            with self.subTest(rotta=rotta):
+                indirizzo = self._ritira_su(rotta)
+                risposta = self.client.get(indirizzo, headers=self.intestazioni)
+                self.assertNotEqual(
+                    risposta.status_code, 404,
+                    f"{rotta} promette di ripassare su {indirizzo}, che non "
+                    "e' una strada di questo servizio")
 
 
 if __name__ == "__main__":
