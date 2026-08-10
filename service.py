@@ -414,7 +414,7 @@ def _esegui_itinerario(body):
             context=alerting.safe_trip_context(result.trip),
         )
 
-    return jsonify({
+    risposta = {
         "trip": result.trip.to_dict(),
         "api_payload": result.api_payload.to_dict() if result.api_payload else None,
         "itinerary": result.itinerary,
@@ -427,7 +427,47 @@ def _esegui_itinerario(body):
         # e di chiamate sono esatti, i prezzi unitari sono un listino
         # configurabile da confermare (campo `prezzi_da_verificare`).
         "cost_estimate": ledger.to_dict(),
-    })
+    }
+
+    # [AGGIUNTO 2026-08-10 — dopo che questa cosa e' arrivata fino in fondo.]
+    #
+    # Fino a oggi la riga qui sopra diceva, testualmente: «E' un fallimento
+    # vero, anche se la risposta HTTP e' 200». Era scritto nero su bianco nel
+    # codice, e nessuno aveva tirato la conseguenza: **allora non deve essere
+    # 200**. Un itinerario senza giornate non e' un itinerario magro, e' un
+    # oggetto vuoto che manda avanti tutta la catena a costruire un documento
+    # su niente.
+    #
+    # E' esattamente quello che e' successo il 10 agosto: il modello non ha
+    # prodotto niente di leggibile, questa rotta ha risposto 200, il modulo
+    # dopo ha provato a stampare il vuoto ed e' morto con un `400 Bad
+    # Request` — cioe' con l'errore piu' lontano possibile dalla causa. Otto
+    # minuti per scoprire, nel posto sbagliato, una cosa che si sapeva gia'
+    # qui.
+    #
+    # Il lavoro non si butta: il corpo esce per intero, `parse_error`
+    # compreso. Cambia solo il codice, che e' l'unica cosa che Make guarda.
+    if not _itinerario_utilizzabile(result.itinerary):
+        risposta["error"] = (
+            "il modello non ha prodotto un itinerario utilizzabile (nessuna "
+            "giornata): non c'e' niente da stampare"
+            + (f" — {result.parse_error}" if result.parse_error else ""))
+        return jsonify(risposta), 502
+
+    return jsonify(risposta)
+
+
+def _itinerario_utilizzabile(itinerary) -> bool:
+    """Un itinerario si puo' stampare solo se ha almeno una giornata.
+
+    E' la stessa identica condizione che `/v1/pdf` controlla in ingresso. Che
+    sia scritta due volte non e' una svista: qui serve a fermare la catena
+    SUBITO, con un messaggio che nomina la causa vera; li' serve a difendersi
+    da chiunque chiami quella rotta. La differenza che conta e' che adesso
+    l'errore arriva nel punto in cui il guasto e' avvenuto, e non otto minuti
+    dopo, travestito da «richiesta malformata».
+    """
+    return isinstance(itinerary, dict) and bool(itinerary.get("days"))
 
 
 @app.route("/v1/itinerary/avvia", methods=["POST"])
@@ -472,13 +512,26 @@ def avvia_itinerario():
     if not isinstance(body, dict):
         return jsonify({"error": "body JSON mancante o non valido"}), 400
 
+    return _prendi_in_carico(_esegui_itinerario, body, "itinerario")
+
+
+def _prendi_in_carico(esecutore, body, nome_lavoro):
+    """Avvia un lavoro lungo in disparte e risponde con il numero d'ordine.
+
+    [FATTORIZZATO 2026-08-10] Nasce dalla presa in carico dell'itinerario e
+    adesso serve anche al fascicolo, che ha lo stesso identico problema. Una
+    sola copia per un motivo preciso: qui dentro c'e' la rete che salva un
+    lavoro morto (`salva_guasto`). Duplicandola, la seconda copia
+    dimenticherebbe un pezzo — e il pezzo dimenticato sarebbe proprio quello
+    che si vede solo quando qualcosa va storto, cioe' mai in prova.
+    """
     lavori.pulisci()
     identificativo = lavori.nuovo()
 
     def _lavora():
         try:
             with app.app_context():
-                corpo, codice = _normalizza_esito(_esegui_itinerario(body))
+                corpo, codice = _normalizza_esito(esecutore(body))
             lavori.salva_esito(identificativo, corpo, codice)
         except Exception as e:  # noqa: BLE001 — vedi sotto
             # Qualunque eccezione qui NON ha piu' nessuno a cui risalire: siamo
@@ -486,21 +539,56 @@ def avvia_itinerario():
             # «in corso» per sempre e Make ripasserebbe all'infinito. Meglio un
             # errore scritto e leggibile al ritiro.
             lavori.salva_guasto(identificativo, f"{type(e).__name__}: {e}")
-            alerting.notify("lavoro_itinerario_fallito", f"{type(e).__name__}: {e}")
+            alerting.notify(f"lavoro_{nome_lavoro}_fallito", f"{type(e).__name__}: {e}")
 
     threading.Thread(target=_lavora, daemon=True).start()
 
     return jsonify({
         "stato": "in_corso",
         "job_id": identificativo,
-        "ritira_su": f"/v1/itinerary/esito/{identificativo}",
+        # L'indirizzo di ritiro e' sempre quello generico, e non quello
+        # "dell'itinerario" o "del pdf": esiste una sola strada per ritirare
+        # qualunque lavoro, quindi non puo' esistere il caso in cui questo
+        # campo indica una strada che non c'e'. (Prima lo componeva il nome
+        # del lavoro — «itinerario» — e sarebbe uscito /v1/itinerario/esito/,
+        # che non e' una rotta di questo servizio: sbagliato, e sbagliato in
+        # silenzio, perche' oggi nessuno lo legge.)
+        "ritira_su": f"/v1/esito/{identificativo}",
         # Un'indicazione onesta a chi deve decidere ogni quanto ripassare. La
         # generazione piu' lenta mai misurata e' stata di 356 secondi.
         "riprova_fra_secondi": 45,
     }), 202
 
 
+@app.route("/v1/pdf/avvia", methods=["POST"])
+def avvia_pdf():
+    """Prende in carico la costruzione del fascicolo. Gemella di `/v1/itinerary/avvia`.
+
+    [AGGIUNTO 2026-08-10] Il tetto di 300 secondi del modulo HTTP di Make vale
+    per ogni chiamata, non solo per la prima. Con le guide davvero generate —
+    cinque chiamate al modello — piu' le fotografie e sei documenti da
+    stampare e cucire, questa fase ci arriva. Non e' una previsione prudente:
+    e' la stessa aritmetica che la settimana scorsa ha ucciso otto esecuzioni
+    di fila sull'altra rotta.
+
+    Il ritiro si fa su `/v1/pdf/esito/<numero>`, con lo stesso `?attendi=`.
+    """
+    auth_error = _check_auth()
+    if auth_error:
+        return jsonify({"error": auth_error}), 401
+
+    body = request.get_json(silent=True)
+    # Stesso principio della gemella: qui si guarda solo la forma del
+    # contenitore, la validazione vera resta in un posto solo.
+    if not isinstance(body, dict):
+        return jsonify({"error": "body JSON mancante o non valido"}), 400
+
+    return _prendi_in_carico(_esegui_pdf, body, "pdf")
+
+
 @app.route("/v1/itinerary/esito/<identificativo>", methods=["GET"])
+@app.route("/v1/pdf/esito/<identificativo>", methods=["GET"])
+@app.route("/v1/esito/<identificativo>", methods=["GET"])
 def esito_itinerario(identificativo):
     """Ritira un itinerario preso in carico.
 
@@ -516,12 +604,26 @@ def esito_itinerario(identificativo):
     sarebbe uscito aspettando (400, 502, 500...). E' deliberato: la strada
     nuova e quella vecchia devono comportarsi allo stesso modo anche quando
     vanno male, altrimenti la differenza si scopre dal cliente.
+
+    ## `?attendi=<secondi>` — e perche' esiste
+
+    [AGGIUNTO 2026-08-10, dopo il primo giro in produzione.]
+
+    Senza, chi ritira deve indovinare quanto dormire prima di ripassare. Il
+    primo giro dormiva 300 secondi e poi altri 180: se la generazione finiva
+    prima si buttava via l'attesa, e se finiva dopo si buttava via **la
+    generazione intera**, gia' pagata. Un'attesa a tempo fisso e' sbagliata
+    in tutti e due i versi.
+
+    Con `?attendi=280` la domanda resta aperta e la risposta arriva
+    nell'istante in cui e' pronta. Chi chiede non deve piu' sapere niente su
+    quanto ci vuole — che e' esattamente cio' che non puo' sapere.
     """
     auth_error = _check_auth()
     if auth_error:
         return jsonify({"error": auth_error}), 401
 
-    dati = lavori.leggi(identificativo)
+    dati = lavori.attendi(identificativo, request.args.get("attendi"))
     if dati is None:
         return jsonify({
             "error": "numero d'ordine sconosciuto: o non e' mai esistito, o il "
@@ -686,8 +788,28 @@ def generate_pdf():
     auth_error = _check_auth()
     if auth_error:
         return jsonify({"error": auth_error}), 401
+    corpo, codice = _normalizza_esito(_esegui_pdf(request.get_json(silent=True)))
+    return jsonify(corpo), codice
 
-    body = request.get_json(silent=True)
+
+def _esegui_pdf(body):
+    """Costruisce il fascicolo e ritorna `(dizionario, codice HTTP)`.
+
+    [ESTRATTO 2026-08-10] Era il corpo di `generate_pdf()`, ed e' stato tirato
+    fuori senza cambiare una virgola — stessa operazione, stesso motivo e
+    stesso travestimento di `jsonify` gia' spiegati in `_esegui_itinerario()`.
+
+    Serve perche' anche QUESTA fase ha superato il tetto dei 300 secondi del
+    modulo HTTP di Make. La generazione dell'itinerario e' stata sistemata il
+    10 agosto; la costruzione del fascicolo e' la fase piu' lenta delle due
+    quando le guide vengono davvero generate — cinque chiamate al modello, le
+    fotografie da scaricare, sei documenti da stampare e da cucire insieme.
+    Aspettare di vederla morire in produzione, sapendo gia' che sarebbe morta,
+    sarebbe stato un difetto scelto.
+    """
+    def jsonify(x):  # noqa: A001 — vedi il docstring di _esegui_itinerario
+        return x
+
     if not isinstance(body, dict):
         return jsonify({"error": "body JSON mancante o non valido"}), 400
 
@@ -1030,7 +1152,7 @@ def generate_pdf():
     # niente e senza mettere la sua email in una URL.
     _feedback_link = sections.get("feedback_link") or {}
 
-    return jsonify({
+    risposta = {
         "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
         # Il foglio della valigia, nello stesso formato del PDF, cosi' che
         # Make lo alleghi alla STESSA mail senza una seconda chiamata. Assente
@@ -1047,7 +1169,56 @@ def generate_pdf():
         # quello dell'itinerario: è il numero che dice se 4,90 € sono un
         # prezzo o una perdita. Vedi src/cost_telemetry.py.
         "cost_estimate": ledger.to_dict(carryover_eur=carryover_eur),
-    })
+    }
+
+    # [AGGIUNTO 2026-08-10 — da un guasto vero, arrivato fino al cliente.]
+    #
+    # Il 10 agosto il credito del modello si e' esaurito a meta' lavoro. Il
+    # servizio ha risposto **200 OK**, Make ha spedito la mail, e il cliente
+    # ha ricevuto un documento a cui mancavano tutte e cinque le guide dei
+    # luoghi — cioe' la meta' di quello che aveva comprato. Nessun errore da
+    # nessuna parte: ne' nei log, ne' nella risposta, ne' nella casella di
+    # Lorenzo. Se ne e' accorto qualcuno solo perche' stava guardando.
+    #
+    # E' la forma di tutti i guasti seri di questo progetto: **degradano
+    # invece di rompersi**. Un errore rumoroso costa un pomeriggio; uno
+    # silenzioso costa un cliente, e non si sa nemmeno quale.
+    #
+    # Qui la consegna si ferma. Il lavoro NON viene buttato — il documento
+    # resta dentro la risposta, cosi' com'e' — ma il codice e' un errore, e
+    # un errore Make non lo spedisce: si ferma, e manda una mail a Lorenzo.
+    motivo = _fascicolo_troppo_incompleto(counters)
+    if motivo:
+        alerting.notify("fascicolo_incompleto", motivo,
+                        context=alerting.safe_trip_context(trip))
+        risposta["error"] = motivo
+        return jsonify(risposta), 502
+
+    return jsonify(risposta)
+
+
+def _fascicolo_troppo_incompleto(counters) -> str:
+    """La frase che spiega perche' questo documento non si vende. Vuota se si vende.
+
+    Una regola sola, e deliberatamente sola: **tutte** le guide chieste
+    mancano. Non «qualcuna manca» — un luogo su nove senza scheda e' un
+    documento un po' piu' magro, e fermare la consegna per quello vorrebbe
+    dire non consegnare mai. Zero su cinque invece non e' un documento
+    magro: e' un altro prodotto.
+    """
+    chieste = counters.get("guides_requested") or 0
+    fatte = counters.get("guides_generated") or 0
+    if chieste <= 0 or fatte > 0:
+        return ""
+    errori = counters.get("section_errors") or {}
+    perche = "; ".join(f"{nome}: {dettaglio}"
+                       for nome, dettaglio in sorted(errori.items()))
+    quante = ("l'unica guida del luogo non e' stata generata"
+              if chieste == 1
+              else f"nessuna delle {chieste} guide dei luoghi e' stata generata")
+    return (f"{quante}: il documento non contiene la parte per cui il cliente "
+            f"ha pagato, e non va spedito cosi'"
+            + (f" — {perche}" if perche else ""))
 
 
 # ---------------------------------------------------------------------------
