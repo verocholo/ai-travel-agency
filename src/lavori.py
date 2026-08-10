@@ -78,6 +78,18 @@ SCADENZA_SECONDI = 1800
 # buttato. I lavori finiti servono solo finché Make non li ritira.
 ETA_MASSIMA_SECONDI = 24 * 3600
 
+# Quanto a lungo, al massimo, chi ritira può restare in ascolto in una sola
+# chiamata. Il numero non è arbitrario: il modulo HTTP di Make stacca a 300
+# secondi esatti, e una risposta che arriva a 300,1 è una risposta persa. Dieci
+# secondi di margine sono la differenza fra «ha aspettato il massimo possibile»
+# e «ha aspettato invano».
+ATTESA_MASSIMA_SECONDI = 290
+
+# Ogni quanto si guarda se il lavoro è finito. Due secondi: abbastanza spesso
+# da non aggiungere ritardo percepibile a una generazione di quattro minuti,
+# abbastanza raro da non consumare la macchina leggendo un file.
+INTERVALLO_CONTROLLO_SECONDI = 2.0
+
 
 def cartella() -> Path:
     """Dove vivono i lavori. Si può spostare con `LAVORI_DIR`.
@@ -180,6 +192,58 @@ def leggi(identificativo: str) -> dict | None:
                                    "che la stava eseguendo è stato interrotto"},
             }
     return dati
+
+
+def attendi(identificativo: str, secondi) -> dict | None:
+    """Come `leggi()`, ma resta in ascolto finché il lavoro non è pronto.
+
+    [AGGIUNTO 2026-08-10, dopo il primo giro con le attese a occhio.]
+
+    La prima versione del meccanismo faceva aspettare CHI CHIEDE, a tempo
+    fisso: Make dormiva 300 secondi, chiedeva, dormiva altri 180, richiedeva.
+    Due difetti, entrambi seri:
+
+      - se la generazione finiva in 200 secondi, si buttavano via 280 secondi
+        di attesa inutile a ogni singolo cliente;
+      - se finiva in 500, l'ultima domanda arrivava troppo presto e **tutto il
+        lavoro veniva buttato** — otto minuti di generazione, pagata, persa.
+
+    Un'attesa indovinata è sbagliata due volte su due. Qui non si indovina
+    più: chi ritira resta in ascolto e riceve la risposta **nell'istante** in
+    cui è pronta. Chi chiede non deve più sapere quanto ci vuole.
+
+    Il tetto (`ATTESA_MASSIMA_SECONDI`) esiste perché chi ascolta dall'altra
+    parte ha comunque il suo limite: si torna indietro poco prima, con un
+    onesto «non ancora», e chi vuole richiama.
+    """
+    limite = _secondi_validi(secondi)
+    scadenza = time.monotonic() + limite
+    while True:
+        dati = leggi(identificativo)
+        # Sconosciuto, pronto, o dichiarato morto: in tutti e tre i casi non
+        # c'è più niente da aspettare.
+        if dati is None or dati.get("stato") != "in_corso":
+            return dati
+        rimasto = scadenza - time.monotonic()
+        if rimasto <= 0:
+            return dati
+        time.sleep(min(INTERVALLO_CONTROLLO_SECONDI, rimasto))
+
+
+def _secondi_validi(secondi) -> float:
+    """Quanti secondi si può davvero aspettare, qualunque cosa sia arrivata.
+
+    Il valore arriva dall'indirizzo (`?attendi=...`), cioè da fuori: può
+    essere una parola, un numero negativo, o un milione. Nessuno di questi
+    deve poter bloccare un processo del servizio.
+    """
+    try:
+        richiesti = float(secondi)
+    except (TypeError, ValueError):
+        return 0.0
+    if richiesti != richiesti:  # NaN: ogni confronto con NaN è falso
+        return 0.0
+    return max(0.0, min(richiesti, float(ATTESA_MASSIMA_SECONDI)))
 
 
 def pulisci() -> int:
