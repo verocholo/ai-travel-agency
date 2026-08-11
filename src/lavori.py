@@ -97,10 +97,40 @@ def cartella() -> Path:
     Si legge a ogni chiamata invece di calcolarla una volta all'avvio: così i
     test possono spostarla senza reimportare il modulo, ed è anche il motivo
     per cui non c'è nessuna variabile globale da tenere allineata.
+
+    ## Perché il disco vero, e non la cartella temporanea
+
+    [CORRETTO 2026-08-11 — errore mio, scoperto un'ora dopo averlo commesso.]
+
+    La traccia che un lavoro lascia mentre è vivo serve a una cosa sola:
+    sopravvivere a chi l'ha scritta. Il primo giro la scriveva nella cartella
+    temporanea, che su Render riparte VUOTA a ogni riavvio del contenitore —
+    cioè esattamente nell'unico caso per cui la traccia era stata scritta.
+    Una scatola nera che si cancella nell'incidente non è una scatola nera.
+
+    Il servizio ha già un disco vero e permanente (`PUBLIC_FILES_DIR`, dove
+    vivono le guide pubblicate): i lavori vanno lì. Effetto secondario e
+    gradito: un documento già generato non si perde più a ogni riavvio, e chi
+    ripassa a ritirarlo lo trova comunque.
+
+    La cartella temporanea resta come ultima spiaggia — in sviluppo il disco
+    non c'è, e un servizio che non parte perché manca una cartella sarebbe un
+    guaio peggiore del problema che stiamo risolvendo.
     """
     scelta = (os.getenv("LAVORI_DIR") or "").strip()
+    if not scelta:
+        permanente = (os.getenv("PUBLIC_FILES_DIR") or "").strip()
+        if permanente and Path(permanente).is_dir():
+            scelta = str(Path(permanente) / "lavori")
     percorso = Path(scelta) if scelta else Path(tempfile.gettempdir()) / "lavori-itinerario"
-    percorso.mkdir(parents=True, exist_ok=True)
+    try:
+        percorso.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Il disco permanente può non essere scrivibile (permessi, spazio):
+        # meglio un lavoro che vive nella cartella temporanea che un servizio
+        # che non risponde più a nessuno.
+        percorso = Path(tempfile.gettempdir()) / "lavori-itinerario"
+        percorso.mkdir(parents=True, exist_ok=True)
     return percorso
 
 
@@ -322,6 +352,14 @@ def batti(identificativo: str) -> None:
         return
 
 
+def _errore_mostrabile(messaggio) -> str | None:
+    """Un messaggio d'errore ripulito di quel poco che non deve uscire."""
+    if not messaggio:
+        return None
+    testo = re.sub(r"[\w.+-]+@[\w-]+\.[\w.-]+", "<email>", str(messaggio))
+    return testo[:400]
+
+
 def ultimo() -> dict:
     """Il lavoro toccato piu' di recente, ridotto a cio' che si puo' mostrare.
 
@@ -341,6 +379,8 @@ def ultimo() -> dict:
             return {}
         if not isinstance(dati, dict):
             return {}
+        corpo = dati.get("corpo")
+        errore = corpo.get("error") if isinstance(corpo, dict) else None
         return {
             "riferimento": percorso.stem[:4] + "\u2026",
             "stato": dati.get("stato"),
@@ -348,5 +388,17 @@ def ultimo() -> dict:
             "memoria_mb": dati.get("memoria_mb"),
             "memoria_massima_mb": dati.get("memoria_massima_mb"),
             "codice": dati.get("codice"),
+            # [AGGIUNTO 2026-08-11] Il messaggio d'errore, e solo quello.
+            #
+            # Make mostra il corpo di una risposta 4xx, ma di una 5xx scrive
+            # soltanto «Couldn't connect»: la frase che spiega il guasto c'e',
+            # viaggia, e non la legge nessuno. Un errore che non si puo'
+            # leggere e' un errore che non aiuta.
+            #
+            # Qui esce ripulito: le email vanno via — un messaggio d'errore
+            # non e' il posto dove far comparire l'indirizzo di un cliente su
+            # una pagina senza chiave — e la lunghezza e' tagliata, perche'
+            # questa e' una spia, non un archivio.
+            "errore": _errore_mostrabile(errore),
         }
     return {}
