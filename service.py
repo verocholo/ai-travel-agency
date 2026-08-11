@@ -219,6 +219,26 @@ TEST_SUITE_STATUS = _compute_test_suite_label()
 # riavvio, non la lentezza, la cosa da spiegare.
 _ACCESO_DA = time.time()
 
+# Il codice con cui il servizio dice «ho lavorato, e quello che e' venuto fuori
+# non si puo' consegnare».
+#
+# [SCELTO 2026-08-11, dopo averci perso mezza giornata.] Era 502. Sembrava la
+# scelta giusta — «l'aiuto a monte mi ha dato una risposta inservibile» e' la
+# definizione da manuale di un 502 — ed e' stata la scelta piu' costosa di
+# tutta la settimana: **Make, davanti a una risposta 5xx, scrive soltanto
+# «Couldn't connect» e butta via il corpo.** La frase in italiano che spiega
+# esattamente cosa e' andato storto veniva scritta, spedita, e non letta da
+# nessuno. Tre esecuzioni fallite di fila e mezza giornata passata a cercare un
+# guasto di infrastruttura che non c'era, mentre la risposta viaggiava dentro
+# ogni singola richiesta.
+#
+# 422 e' altrettanto corretto — «ho capito la richiesta, ma il contenuto non e'
+# lavorabile» — e Make il corpo di un 4xx lo mostra. La regola generale, che
+# vale oltre questo progetto: **il codice giusto e' quello che fa arrivare il
+# messaggio a chi deve leggerlo.** Un errore illeggibile non e' un errore: e'
+# un silenzio con un numero sopra.
+_CODICE_ERRORE_LEGGIBILE = 422
+
 
 def _check_auth() -> str | None:
     """Ritorna un messaggio di errore se l'autenticazione fallisce, None se ok.
@@ -544,7 +564,7 @@ def _esegui_itinerario(body):
             "il modello non ha prodotto un itinerario utilizzabile (nessuna "
             "giornata): non c'e' niente da stampare"
             + (f" — {result.parse_error}" if result.parse_error else ""))
-        return jsonify(risposta), 502
+        return jsonify(risposta), _CODICE_ERRORE_LEGGIBILE
 
     return jsonify(risposta)
 
@@ -1304,7 +1324,7 @@ def _esegui_pdf(body):
         alerting.notify("fascicolo_incompleto", motivo,
                         context=alerting.safe_trip_context(trip))
         risposta["error"] = motivo
-        return jsonify(risposta), 502
+        return jsonify(risposta), _CODICE_ERRORE_LEGGIBILE
 
     return jsonify(risposta)
 
