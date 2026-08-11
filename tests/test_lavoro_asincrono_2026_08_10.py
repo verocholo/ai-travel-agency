@@ -578,5 +578,68 @@ class TestLIndirizzoDiRitiroEsisteDavvero(_BaseServizio):
                     "e' una strada di questo servizio")
 
 
+class TestIlServizioRegeIlTempoCheGliChiediamo(unittest.TestCase):
+    """[REGRESSIONE 2026-08-10 — da un `502 Bad Gateway` vero.]
+
+    Il 10 agosto, alle 16:19, un'esecuzione e' morta dopo 369 secondi con un
+    `502 Bad Gateway`. Quel codice non lo scrive il nostro servizio — quando
+    e' lui a rifiutare qualcosa risponde con una frase in italiano. Un 502
+    secco e' il portone che dice «dietro di me non risponde nessuno»: il
+    processo si era spento mentre lavorava.
+
+    Due numeri devono restare d'accordo fra loro, e vivono in file diversi:
+    quanto a lungo una richiesta puo' restare aperta ad aspettare
+    (`lavori.ATTESA_MASSIMA_SECONDI`) e dopo quanto gunicorn considera un
+    processo bloccato e lo uccide (`--timeout`). Se il secondo scende sotto il
+    primo, il servizio ammazza da solo le proprie richieste — e il cliente
+    riceve un 502 che non spiega niente.
+    """
+
+    def _riga_di_avvio(self, nome):
+        import pathlib
+
+        radice = pathlib.Path(__file__).resolve().parent.parent
+        for riga in (radice / nome).read_text(encoding="utf-8").splitlines():
+            pulita = riga.split("#", 1)[0].strip()
+            if "gunicorn" in pulita:
+                return pulita
+        return ""
+
+    def _valore(self, riga, opzione):
+        pezzi = riga.split()
+        return int(pezzi[pezzi.index(opzione) + 1])
+
+    def test_il_tetto_di_gunicorn_sta_sopra_all_attesa_piu_lunga(self):
+        from src import lavori
+
+        for nome in ("Dockerfile", "Procfile"):
+            with self.subTest(nome=nome):
+                riga = self._riga_di_avvio(nome)
+                self.assertTrue(riga, f"{nome}: riga di avvio non trovata")
+                self.assertGreater(
+                    self._valore(riga, "--timeout"), lavori.ATTESA_MASSIMA_SECONDI,
+                    f"{nome}: gunicorn uccide la richiesta prima che l'attesa "
+                    "finisca — il cliente riceve un 502 senza spiegazione")
+
+    def test_i_due_file_dicono_la_stessa_cosa(self):
+        # Render usa il Dockerfile, il Procfile serve altrove: due righe
+        # diverse vorrebbero dire due comportamenti diversi a seconda di dove
+        # gira, e nessuno se ne accorgerebbe finche' non conta.
+        self.assertEqual(
+            self._riga_di_avvio("Dockerfile").replace("CMD ", ""),
+            self._riga_di_avvio("Procfile").replace("web: ", ""))
+
+    def test_un_processo_solo(self):
+        """512 MB non bastano per due copie di una generazione.
+
+        Non e' una regola di stile: e' la lettura del guasto del 10 agosto.
+        Se un giorno il piano di Render cresce si puo' tornare indietro — ma
+        allora questo controllo va riscritto guardando la memoria vera, non
+        cancellato perche' da' fastidio.
+        """
+        self.assertEqual(self._valore(self._riga_di_avvio("Dockerfile"),
+                                      "--workers"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
