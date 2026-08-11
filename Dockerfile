@@ -62,6 +62,25 @@ COPY . .
 # saturavano entrambi i worker sync, /health incluso → riavvii a catena).
 # Procfile allineato a questa stessa riga.
 #
+# [AGGIUNTO 2026-08-11] Due impostazioni di memoria, non cosmetiche.
+#
+# `MALLOC_ARENA_MAX=2`: la libreria C di sistema, quando un programma usa piu'
+# filoni, apre fino a otto aree di memoria separate PER OGNI processore
+# disponibile, e non le restituisce piu' al sistema. E' un comportamento
+# pensato per la velocita' su macchine grandi; su un contenitore da 512 MB con
+# otto filoni e' un modo raffinato di sprecare centinaia di megabyte senza che
+# nessuna riga di Python risulti colpevole. Due aree bastano, e la differenza
+# si vede in produzione, non qui.
+#
+# `PYTHONMALLOC=malloc` NON viene impostata di proposito: renderebbe Python
+# piu' lento e la memoria non tornerebbe indietro comunque.
+#
+# `MALLOC_TRIM_THRESHOLD_=100000`: restituisce al sistema la memoria liberata
+# invece di tenerla «per dopo». Su una macchina con RAM abbondante e' inutile;
+# su questa e' la differenza fra finire e non finire.
+ENV MALLOC_ARENA_MAX=2
+ENV MALLOC_TRIM_THRESHOLD_=100000
+
 # [CAMBIATO 2026-08-10 — da un 502 vero, misurato.] Da due processi a UNO,
 # con il doppio dei filoni: `--workers 1 --threads 8`.
 #
