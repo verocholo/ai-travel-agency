@@ -213,5 +213,110 @@ class TestLeImpostazioniDiMemoriaRestanoAccese(unittest.TestCase):
         self.assertIn("MALLOC_TRIM_THRESHOLD_", self._dockerfile())
 
 
+class TestLaTracciaSopravviveAlRiavvio(unittest.TestCase):
+    """[REGRESSIONE 2026-08-11 — difetto mio, trovato un'ora dopo averlo fatto.]
+
+    La traccia serve a raccontare come e' morto un processo. La prima versione
+    la scriveva nella cartella temporanea, che su Render riparte VUOTA a ogni
+    riavvio del contenitore — cioe' esattamente nell'unico caso per cui era
+    stata scritta. Una scatola nera che si cancella nell'incidente non e' una
+    scatola nera.
+    """
+
+    def setUp(self):
+        self._precedenti = {k: os.environ.get(k)
+                            for k in ("LAVORI_DIR", "PUBLIC_FILES_DIR")}
+        os.environ.pop("LAVORI_DIR", None)
+        self._disco = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+
+    def tearDown(self):
+        for chiave, valore in self._precedenti.items():
+            if valore is None:
+                os.environ.pop(chiave, None)
+            else:
+                os.environ[chiave] = valore
+        self._disco.cleanup()
+
+    def test_i_lavori_finiscono_sul_disco_permanente_quando_c_e(self):
+        os.environ["PUBLIC_FILES_DIR"] = self._disco.name
+        self.assertTrue(
+            str(lavori.cartella()).startswith(self._disco.name),
+            "i lavori stanno ancora nella cartella temporanea: la traccia si "
+            "cancellerebbe proprio nel riavvio che deve spiegare")
+
+    def test_senza_disco_permanente_si_riparte_dalla_cartella_temporanea(self):
+        # In sviluppo il disco non c'e'. Un servizio che non parte perche'
+        # manca una cartella sarebbe un guaio peggiore del problema.
+        os.environ.pop("PUBLIC_FILES_DIR", None)
+        self.assertTrue(lavori.cartella().is_dir())
+
+    def test_un_disco_indicato_ma_inesistente_non_ferma_niente(self):
+        os.environ["PUBLIC_FILES_DIR"] = "/questo/percorso/non/esiste/davvero"
+        self.assertTrue(lavori.cartella().is_dir())
+
+    def test_lavori_dir_ha_sempre_la_precedenza(self):
+        # I test devono poter scegliere dove scrivere, altrimenti si
+        # scriverebbero addosso a vicenda.
+        os.environ["PUBLIC_FILES_DIR"] = self._disco.name
+        altrove = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        os.environ["LAVORI_DIR"] = altrove.name
+        try:
+            self.assertEqual(str(lavori.cartella()), altrove.name)
+        finally:
+            os.environ.pop("LAVORI_DIR", None)
+            altrove.cleanup()
+
+
+class TestLaSpiaMostraAncheIlMotivo(unittest.TestCase):
+    """Il numero da solo non basta: serve la frase.
+
+    `codice: 502` dice che qualcosa non e' consegnabile. Non dice se il
+    modello si e' troncato, se l'account e' a secco o se uno strato dati non
+    ha risposto: tre cause diverse, tre riparazioni diverse.
+    """
+
+    def setUp(self):
+        self._cartella = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        os.environ["LAVORI_DIR"] = self._cartella.name
+        import service
+
+        self.client = service.app.test_client()
+
+    def tearDown(self):
+        self._cartella.cleanup()
+        os.environ.pop("LAVORI_DIR", None)
+
+    def test_il_motivo_esce_sulla_pagina_di_stato(self):
+        identificativo = lavori.nuovo()
+        lavori.salva_esito(identificativo, {
+            "error": "il modello non ha prodotto un itinerario utilizzabile",
+        }, 422)
+        ultimo = self.client.get("/salute-lavori").get_json()["ultimo_lavoro"]
+        self.assertIn("itinerario utilizzabile", ultimo["errore"])
+
+    def test_l_email_del_cliente_non_finisce_su_una_pagina_senza_chiave(self):
+        # Un messaggio d'errore non e' il posto dove far comparire
+        # l'indirizzo di chi ha pagato, su una pagina che legge chiunque.
+        identificativo = lavori.nuovo()
+        lavori.salva_esito(identificativo, {
+            "error": "campo obbligatorio mancante per cliente@esempio.it",
+        }, 422)
+        testo = self.client.get("/salute-lavori").get_data(as_text=True)
+        self.assertNotIn("cliente@esempio.it", testo)
+        self.assertIn("email", testo)
+
+    def test_un_lavoro_riuscito_non_ha_nessun_motivo_da_mostrare(self):
+        identificativo = lavori.nuovo()
+        lavori.salva_esito(identificativo, {"pdf_base64": "x"}, 200)
+        ultimo = self.client.get("/salute-lavori").get_json()["ultimo_lavoro"]
+        self.assertIsNone(ultimo["errore"])
+
+    def test_il_motivo_e_tagliato_e_non_diventa_un_archivio(self):
+        identificativo = lavori.nuovo()
+        lavori.salva_esito(identificativo, {"error": "x" * 5000}, 422)
+        ultimo = self.client.get("/salute-lavori").get_json()["ultimo_lavoro"]
+        self.assertLessEqual(len(ultimo["errore"]), 400)
+
+
 if __name__ == "__main__":
     unittest.main()
