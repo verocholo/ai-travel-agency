@@ -175,7 +175,7 @@ class TestDallaRottaVera(unittest.TestCase):
             risposta.status_code, 200,
             "il servizio dice ancora «riuscito» per un documento a cui manca "
             "la parte che il cliente ha comprato: e' il guasto del 10 agosto")
-        self.assertEqual(risposta.status_code, 502)
+        self.assertEqual(risposta.status_code, service._CODICE_ERRORE_LEGGIBILE)
         dati = risposta.get_json()
         self.assertEqual(dati["guides_generated"], 0)
         self.assertGreater(dati["guides_requested"], 0)
@@ -282,7 +282,7 @@ class TestLaCatenaSiFermaAlPrimoAnelloRotto(unittest.TestCase):
     def test_niente_giornate_niente_duecento(self):
         risposta = self._chiedi({}, parse_error="risposta del modello non leggibile")
         self.assertEqual(
-            risposta.status_code, 502,
+            risposta.status_code, service._CODICE_ERRORE_LEGGIBILE,
             "la rotta dice ancora «riuscito» per un itinerario vuoto: la "
             "catena ripartirebbe e morirebbe otto minuti dopo, altrove")
 
@@ -300,6 +300,47 @@ class TestLaCatenaSiFermaAlPrimoAnelloRotto(unittest.TestCase):
     def test_un_itinerario_buono_passa_come_sempre(self):
         risposta = self._chiedi({"days": [{"day": 1, "blocks": []}]})
         self.assertEqual(risposta.status_code, 200)
+
+
+class TestUnErroreDeveEsserePOSSIBILELeggerlo(unittest.TestCase):
+    """[REGRESSIONE 2026-08-11 — la lezione piu' cara della settimana.]
+
+    I due controlli qui sopra rispondevano **502**. Da manuale e' il codice
+    giusto: «l'aiuto a monte mi ha dato una risposta inservibile». Ed e' stata
+    la scelta piu' costosa di tutta la settimana, perche' **Make, davanti a
+    una risposta 5xx, scrive soltanto «Couldn't connect» e butta via il
+    corpo**.
+
+    Risultato: la frase in italiano che diceva esattamente cosa era andato
+    storto veniva scritta, spedita a ogni singola richiesta, e non letta da
+    nessuno. Tre esecuzioni fallite di fila e mezza giornata passata a cercare
+    un guasto di infrastruttura che non esisteva — memoria, processi, piani da
+    comprare — mentre la risposta viaggiava dentro ogni risposta.
+
+    422 dice la stessa identica cosa («ho capito la richiesta, il contenuto
+    non e' lavorabile») e Make il corpo di un 4xx lo mostra.
+
+    La regola, che vale oltre questo progetto: **il codice giusto e' quello
+    che fa arrivare il messaggio a chi deve leggerlo.** Un errore illeggibile
+    non e' un errore, e' un silenzio con un numero sopra.
+    """
+
+    def test_gli_errori_del_contenuto_non_sono_nella_famiglia_dei_cinquecento(self):
+        codice = service._CODICE_ERRORE_LEGGIBILE
+        self.assertLess(codice, 500,
+                        "con un 5xx Make nasconde il messaggio: torneremmo a "
+                        "diagnosticare a occhio")
+        self.assertGreaterEqual(codice, 400)
+
+    def test_le_due_regole_usano_lo_stesso_codice(self):
+        # Due errori che vogliono dire la stessa cosa — «ho lavorato e non e'
+        # consegnabile» — devono comportarsi allo stesso modo a valle.
+        import inspect
+
+        for funzione in (service._esegui_itinerario, service._esegui_pdf):
+            with self.subTest(funzione=funzione.__name__):
+                self.assertIn("_CODICE_ERRORE_LEGGIBILE",
+                              inspect.getsource(funzione))
 
 
 if __name__ == "__main__":
