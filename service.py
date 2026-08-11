@@ -74,7 +74,8 @@ import hmac
 import os
 import tempfile
 import threading
-import unittest as _unittest
+import time
+import pathlib
 from pathlib import Path
 
 from flask import Flask, jsonify, make_response, request
@@ -124,37 +125,99 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 
 
-def _compute_test_suite_label() -> str:
-    """
-    [AGGIUNTO 2026-07-13 — audit di revisione completa, "certezza
-    matematica"] Prima era una costante scritta a mano ("404/404") da
-    aggiornare manualmente a ogni nuovo test aggiunto altrove nel
-    progetto — ed era infatti già disallineata (la suite reale è
-    cresciuta a 486 test, l'etichetta mostrata su /health era ferma a
-    404). Contare la suite reale via `unittest` discovery all'avvio
-    (sola ENUMERAZIONE dei test — nessuno viene eseguito, quindi nessun
-    impatto sul tempo di avvio del servizio) elimina strutturalmente il
-    rischio di staleness invece di richiedere disciplina umana per
-    tenerla aggiornata.
+def _conta_i_test_senza_eseguirli() -> int:
+    """Quanti test ha la suite, contati LEGGENDO i file, non importandoli.
 
-    Se il deploy non include la cartella `tests/` (es. esclusa da un
-    .dockerignore), degrada in modo esplicito invece di mostrare "0/0"
-    fuorviante — stesso principio "mai un fallimento silenzioso"
-    applicato altrove nel progetto (vedi maps_static.py).
+    [RISCRITTO 2026-08-11 — e la riscrittura nasce da un guasto di produzione.]
+
+    Prima qui c'era `unittest.TestLoader().discover(...)`, con questa
+    rassicurazione nel commento: «sola ENUMERAZIONE dei test — nessuno viene
+    eseguito, quindi nessun impatto sul tempo di avvio». La frase e' vera e
+    completamente fuorviante: per enumerare i test, `discover()` **importa
+    ogni singolo file di test**. E un modulo importato non si scarica piu'.
+
+    Cosa vuol dire in produzione: il contenitore che serve i clienti teneva in
+    memoria, per sempre, tutti i moduli di prova del progetto — con le loro
+    finte, i loro dati di esempio costruiti all'importazione e tutte le
+    librerie che tirano dentro. Non per lavorare: per **scrivere un numero su
+    una pagina di stato**.
+
+    E il costo cresceva da solo. Quando questa funzione e' stata scritta la
+    suite aveva 404 test; oggi ne ha piu' di 1600. Nessuno ha cambiato niente
+    qui: e' peggiorata quattro volte da sola, in silenzio, mentre il servizio
+    gira su un piano da 512 MB.
+
+    Contare leggendo la struttura del file — senza importare niente — da' lo
+    STESSO numero, e non lascia niente in memoria. L'ereditarieta' va
+    considerata: una classe di prova che ne estende un'altra eredita anche i
+    suoi test, ed e' esattamente la differenza (dieci test) che separava una
+    prima versione ingenua dal numero vero.
+    """
+    import ast as _ast
+
+    cartella = pathlib.Path(os.path.dirname(os.path.abspath(__file__))) / "tests"
+    propri: dict = {}
+    basi: dict = {}
+    per_nome: dict = {}
+
+    for percorso in sorted(cartella.glob("test_*.py")):
+        try:
+            albero = _ast.parse(percorso.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        for nodo in albero.body:
+            if not isinstance(nodo, _ast.ClassDef):
+                continue
+            chiave = (percorso.name, nodo.name)
+            propri[chiave] = {
+                c.name for c in nodo.body
+                if isinstance(c, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                and c.name.startswith("test")
+            }
+            basi[chiave] = [b.id for b in nodo.bases if isinstance(b, _ast.Name)]
+            per_nome.setdefault(nodo.name, []).append(chiave)
+
+    def _con_ereditati(chiave, visti=None):
+        visti = visti if visti is not None else set()
+        if chiave in visti:
+            return set()
+        visti.add(chiave)
+        nomi = set(propri.get(chiave, ()))
+        for base in basi.get(chiave, ()):
+            for candidata in per_nome.get(base, ()):
+                nomi |= _con_ereditati(candidata, visti)
+        return nomi
+
+    return sum(len(_con_ereditati(chiave)) for chiave in propri)
+
+
+def _compute_test_suite_label() -> str:
+    """L'etichetta mostrata su /health.
+
+    Resta calcolata e non scritta a mano: era una costante («404/404») gia'
+    disallineata dalla realta' il giorno in cui e' stata trovata, ed e' il
+    motivo per cui questa funzione esiste. Cambia solo il MODO di contare —
+    vedi `_conta_i_test_senza_eseguirli()`.
+
+    Se il deploy non include la cartella `tests/`, degrada in modo esplicito
+    invece di mostrare uno 0/0 fuorviante.
     """
     try:
-        tests_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tests")
-        loader = _unittest.TestLoader()
-        suite = loader.discover(start_dir=tests_dir, top_level_dir=os.path.dirname(tests_dir))
-        count = suite.countTestCases()
-        if count == 0:
+        quanti = _conta_i_test_senza_eseguirli()
+        if quanti == 0:
             return "sconosciuto (cartella tests/ non trovata in questo deploy)"
-        return f"{count}/{count} (conteggio automatico all'avvio del servizio)"
-    except Exception as e:
-        return f"sconosciuto (discovery della suite fallita: {e})"
+        return f"{quanti}/{quanti} (conteggio automatico all'avvio del servizio)"
+    except Exception as e:  # noqa: BLE001 — una pagina di stato non fa cadere niente
+        return f"sconosciuto (conteggio della suite fallito: {e})"
 
 
 TEST_SUITE_STATUS = _compute_test_suite_label()
+
+# Da quando questo processo e' vivo. Serve a una cosa sola ma decisiva: se la
+# pagina di stato dice «acceso da 40 secondi» mentre un lavoro dovrebbe essere
+# in corso da sei minuti, allora il processo e' stato riavviato — ed e' il
+# riavvio, non la lentezza, la cosa da spiegare.
+_ACCESO_DA = time.time()
 
 
 def _check_auth() -> str | None:
@@ -290,6 +353,35 @@ def _serialize_validation_report(vr) -> dict | None:
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "test_suite": TEST_SUITE_STATUS})
+
+
+@app.route("/salute-lavori", methods=["GET"])
+def salute_lavori():
+    """Come sta il servizio, e com'e' andato l'ultimo lavoro. Senza chiave.
+
+    [AGGIUNTO 2026-08-11 — perche' la diagnosi non puo' dipendere da chi ha
+    tempo di aprire un cruscotto.]
+
+    Due esecuzioni di produzione morte allo stesso punto con un `502 Bad
+    Gateway`: il contenitore si spegne mentre lavora, e un 502 non spiega
+    niente. La domanda che decide tutto e' una sola — **con quanta memoria
+    stava girando quando e' morto?** Se erano 480 MB su 512, e' la memoria e
+    si compra il piano piu' grande sapendo perche'. Se erano 120, non e' la
+    memoria e cercarla sarebbe buttare soldi.
+
+    Questa pagina risponde a quella domanda con un tocco, da telefono, senza
+    chiavi da incollare in un browser. Non e' protetta di proposito, e puo'
+    permetterselo: qui non passa niente di nessuno. Escono lo stato del
+    processo e due numeri in megabyte — nessuna destinazione, nessuna email,
+    nessun documento, e del numero d'ordine solo le prime quattro lettere,
+    che non bastano a ritirare niente (il ritiro vuole comunque la chiave).
+    """
+    return jsonify({
+        "memoria_adesso_mb": lavori.memoria_mb(),
+        "acceso_da_secondi": round(time.time() - _ACCESO_DA, 1),
+        "ultimo_lavoro": lavori.ultimo(),
+        "test_suite": TEST_SUITE_STATUS,
+    })
 
 
 @app.route("/v1/itinerary", methods=["POST"])
@@ -528,6 +620,24 @@ def _prendi_in_carico(esecutore, body, nome_lavoro):
     lavori.pulisci()
     identificativo = lavori.nuovo()
 
+    finito = threading.Event()
+
+    def _battito():
+        """Lascia una traccia mentre il lavoro e' vivo.
+
+        [AGGIUNTO 2026-08-11] Due esecuzioni di produzione sono morte allo
+        stesso identico punto con un `502 Bad Gateway`, cioe' con il
+        contenitore che si spegne mentre lavora. Un processo morto non scrive
+        niente, per definizione: l'unico modo di sapere com'e' morto e' che
+        abbia gia' scritto qualcosa PRIMA. Ogni cinque secondi finiscono su
+        disco da quanto sta lavorando e quanta memoria occupa — e quando muore
+        l'ultima riga resta li'.
+        """
+        while not finito.wait(lavori.INTERVALLO_BATTITO_SECONDI):
+            lavori.batti(identificativo)
+
+    threading.Thread(target=_battito, daemon=True).start()
+
     def _lavora():
         try:
             with app.app_context():
@@ -540,6 +650,8 @@ def _prendi_in_carico(esecutore, body, nome_lavoro):
             # errore scritto e leggibile al ritiro.
             lavori.salva_guasto(identificativo, f"{type(e).__name__}: {e}")
             alerting.notify(f"lavoro_{nome_lavoro}_fallito", f"{type(e).__name__}: {e}")
+        finally:
+            finito.set()
 
     threading.Thread(target=_lavora, daemon=True).start()
 
