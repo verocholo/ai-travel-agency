@@ -261,3 +261,92 @@ def pulisci() -> int:
     except OSError:
         return tolti
     return tolti
+
+
+# ---------------------------------------------------------------------------
+# Il battito: cosa stava facendo, e con quanta memoria, quando e' morto
+# ---------------------------------------------------------------------------
+# [AGGIUNTO 2026-08-11 — dopo due guasti identici e nessun modo di vederli.]
+#
+# Due esecuzioni di produzione morte allo stesso identico punto (368,9 s e
+# 372,9 s, stesse quattro operazioni, stessi 4.185 byte) con un `502 Bad
+# Gateway`: cioe' il contenitore che si spegne mentre lavora. Un 502 non dice
+# niente — non viene dal nostro codice, e il nostro codice, essendo morto, non
+# ha potuto scrivere nemmeno una riga.
+#
+# Da qui in poi il lavoro lascia una traccia mentre e' vivo: ogni pochi
+# secondi scrive su disco da quanto sta lavorando e quanta memoria sta
+# occupando. Quando il processo muore, l'ultima riga scritta resta — e dice
+# se e' morto con 480 MB occupati (allora e' la memoria, e si compra il piano
+# piu' grande sapendo perche') oppure con 120 MB (allora non e' la memoria, e
+# si cerca altrove invece di spendere).
+#
+# La traccia non contiene NIENTE del cliente: solo secondi e megabyte.
+
+INTERVALLO_BATTITO_SECONDI = 5.0
+
+
+def memoria_mb() -> float | None:
+    """Quanta memoria occupa adesso questo processo, in megabyte.
+
+    Si legge da `/proc/self/status`, che su Linux c'e' sempre e non costa
+    niente: nessuna libreria in piu' da installare per una misura che serve
+    proprio quando le cose vanno male.
+    """
+    try:
+        with open("/proc/self/status", encoding="utf-8") as f:
+            for riga in f:
+                if riga.startswith("VmRSS:"):
+                    return round(int(riga.split()[1]) / 1024, 1)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def batti(identificativo: str) -> None:
+    """Aggiorna la traccia di un lavoro vivo. Non solleva mai."""
+    percorso = _file(identificativo)
+    if percorso is None or not percorso.exists():
+        return
+    try:
+        dati = json.loads(percorso.read_text(encoding="utf-8"))
+        if not isinstance(dati, dict) or dati.get("stato") != "in_corso":
+            return
+        adesso = memoria_mb()
+        dati["da_secondi"] = round(time.time() - float(dati.get("creato") or 0), 1)
+        dati["memoria_mb"] = adesso
+        if adesso is not None:
+            dati["memoria_massima_mb"] = max(adesso, dati.get("memoria_massima_mb") or 0)
+        _scrivi(percorso, dati)
+    except (OSError, ValueError):
+        return
+
+
+def ultimo() -> dict:
+    """Il lavoro toccato piu' di recente, ridotto a cio' che si puo' mostrare.
+
+    Serve a una pagina di stato pubblica: per questo esce SOLO quello che non
+    dice niente di nessuno — stato, secondi, megabyte. Mai il corpo, mai il
+    numero d'ordine per intero.
+    """
+    try:
+        percorsi = sorted(cartella().glob("*.json"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return {}
+    for percorso in percorsi[:1]:
+        try:
+            dati = json.loads(percorso.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(dati, dict):
+            return {}
+        return {
+            "riferimento": percorso.stem[:4] + "\u2026",
+            "stato": dati.get("stato"),
+            "da_secondi": dati.get("da_secondi"),
+            "memoria_mb": dati.get("memoria_mb"),
+            "memoria_massima_mb": dati.get("memoria_massima_mb"),
+            "codice": dati.get("codice"),
+        }
+    return {}
