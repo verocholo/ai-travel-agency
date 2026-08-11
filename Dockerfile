@@ -61,4 +61,29 @@ COPY . .
 # anche mentre una generazione lunga è in corso (prima 2 chiamate lente
 # saturavano entrambi i worker sync, /health incluso → riavvii a catena).
 # Procfile allineato a questa stessa riga.
-CMD gunicorn service:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 300
+#
+# [CAMBIATO 2026-08-10 — da un 502 vero, misurato.] Da due processi a UNO,
+# con il doppio dei filoni: `--workers 1 --threads 8`.
+#
+# Il motivo. Il piano di Render e' `starter`, cioe' 512 MB. Ogni processo
+# gunicorn tiene in piedi la sua copia completa dell'applicazione, e durante
+# una generazione ci stanno dentro l'itinerario, le fotografie scaricate e sei
+# documenti da stampare e cucire. Due copie di tutto questo in 512 MB e' una
+# scommessa; quando la si perde Render non lo dice con un errore, spegne il
+# contenitore — e chi stava aspettando riceve un `502 Bad Gateway` che non
+# viene dal nostro codice e non spiega niente. E' successo alle 16:19 del 10
+# agosto, dopo 369 secondi, e con ogni probabilita' e' anche il motivo per cui
+# nel giro precedente la generazione «non era ancora pronta» dopo otto minuti:
+# non era lenta, era morta a meta' senza dirlo a nessuno.
+#
+# Un solo processo dimezza la memoria di base e non toglie niente: il prodotto
+# genera un itinerario alla volta, e gli otto filoni bastano largamente per
+# l'health check di Render, per chi ritira un lavoro e per chi scarica una
+# guida mentre una generazione e' in corso. In piu' toglie di mezzo
+# un'ambiguita': con un processo solo, chi prende in carico un lavoro e chi
+# passa a ritirarlo sono sempre lo stesso.
+#
+# `--timeout` alzato a 600. Da oggi una richiesta di ritiro puo' restare
+# aperta fino a 290 secondi per aspettare che il lavoro finisca (vedi
+# `src/lavori.py`): con il tetto a 300 si correva lungo il bordo per niente.
+CMD gunicorn service:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 600
