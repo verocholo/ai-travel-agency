@@ -68,10 +68,42 @@ def select_model(objective_function: str, duration_days: int) -> str:
 # lunghezza dello <scratchpad>. Raddoppiato a 32000, stesso margine di headroom
 # gia' usato nel fix precedente (8192->16000), ancora ben sotto il tetto di
 # sicurezza MAX_TOKENS_CEILING=64000 e il limite reale del modello (128.000).
-BASE_MAX_TOKENS = 32000
+# [FIX 2026-08-11, #6 — ed e' la QUARTA volta.]
+#
+# Il guasto di stasera, parola per parola dal servizio: «ha raggiunto il limite
+# max_tokens=32000 (output_tokens usati: 32000) prima di completare il JSON».
+# Un viaggio di due giorni a Siena. La catena si e' fermata dopo 358 secondi di
+# lavoro gia' pagato, e il cliente non avrebbe ricevuto niente.
+#
+# La storia di questo numero: 8192 → 16000 → 32000 → 64000. Ogni volta la
+# stessa correzione — raddoppiare — e ogni volta ha retto finche' non ha
+# smesso. Vale la pena dirlo chiaramente: **un numero fisso e' la forma
+# sbagliata di risposta a questo problema.** Nessuno puo' sapere in anticipo
+# quanto lunga sara' la risposta del modello per un viaggio che non ha ancora
+# visto, e chi indovina sbaglia prima o poi — qui ha sbagliato quattro volte.
+#
+# Quindi due cose insieme, non una:
+#
+# 1. Il budget di partenza sale a 64.000. **Non costa niente**: `max_tokens`
+#    e' un tetto, non un acquisto, e si paga solo cio' che il modello scrive
+#    davvero. Alzarlo toglie il muro dove sta oggi.
+# 2. `call_claude()` qui sotto, se la risposta esce troncata, **riprova da sola
+#    una volta con il doppio del budget** fino al tetto reale del modello. Cosi'
+#    la prossima volta che questo numero sara' di nuovo insufficiente — e lo
+#    sara' — il prodotto se ne accorge e rimedia da solo, invece di consegnare
+#    un fallimento e aspettare che qualcuno legga un log.
+#
+# Cio' che NON si tocca: la lunghezza del ragionamento del modello. Accorciare
+# lo <scratchpad> avrebbe risolto il troncamento pagando con la qualita' del
+# documento, ed e' esattamente il baratto che Lorenzo ha rifiutato («io voglio
+# tenere alta la qualita'»). Il modello ragiona quanto gli serve; siamo noi a
+# fargli spazio.
+BASE_MAX_TOKENS = 64000
 BASELINE_DAYS = 7
 TOKENS_PER_EXTRA_DAY = 1500
-MAX_TOKENS_CEILING = 64000
+# Il limite vero del modello e' 128.000 token di uscita. Ci si ferma poco
+# sotto: un tetto identico al limite non lascia margine a un ritentativo.
+MAX_TOKENS_CEILING = 120000
 
 
 def select_max_tokens(duration_days: int) -> int:
@@ -206,10 +238,37 @@ def call_claude(
 
     if response.stop_reason == "max_tokens":
         used = getattr(response.usage, "output_tokens", "?")
+        piu_largo = min(max_tokens * 2, MAX_TOKENS_CEILING)
+        if piu_largo > max_tokens:
+            # [AGGIUNTO 2026-08-11] Invece di consegnare un fallimento, si
+            # rifa' la domanda con piu' spazio.
+            #
+            # Il troncamento e' l'unico errore di questa funzione che si sa
+            # gia' come si ripara: serviva piu' budget. Fino a stasera la
+            # riparazione la faceva una persona — leggendo un log, cambiando
+            # una costante, rifacendo un deploy — mentre il cliente restava
+            # senza documento e la generazione era gia' stata pagata. Adesso
+            # la fa il prodotto, subito, una volta sola.
+            #
+            # UNA volta sola per giro, e con un tetto: un ritentativo che si
+            # ripete all'infinito trasforma un errore visibile in una bolletta
+            # invisibile, che e' un guasto peggiore di quello che risolve.
+            print(f"⚠️  risposta troncata a {used} token: si riprova una volta "
+                  f"con un budget di {piu_largo}", flush=True)
+            return call_claude(
+                payload,
+                trip_objective_function=trip_objective_function,
+                trip_duration_days=trip_duration_days,
+                api_key=api_key,
+                use_prefill=use_prefill,
+                max_tokens=piu_largo,
+                temperature=temperature,
+            )
         raise ClaudeEngineError(
             f"Risposta di Claude troncata: ha raggiunto il limite max_tokens={max_tokens} "
-            f"(output_tokens usati: {used}) prima di completare il JSON. Non è un errore di "
-            f"formato — aumenta max_tokens in call_claude() (tetto reale del modello: 128.000 "
-            f"token, verificato su platform.claude.com/docs) e riprova."
+            f"(output_tokens usati: {used}) prima di completare il JSON, ed e' gia' il tetto "
+            f"massimo del modello. Non è un errore di formato: questo viaggio produce piu' "
+            f"testo di quanto il modello possa scriverne in una volta, e va spezzato in piu' "
+            f"chiamate invece che allargato ancora."
         )
     return text
