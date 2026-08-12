@@ -132,6 +132,71 @@ class ValidationReport:
         return "\n".join(lines)
 
 
+def _oggetto_bilanciato(testo: str, inizio: int) -> str | None:
+    """Da una graffa aperta alla sua chiusura, saltando quelle nelle stringhe."""
+    profondita = 0
+    dentro_stringa = False
+    scappato = False
+    for posizione in range(inizio, len(testo)):
+        carattere = testo[posizione]
+        if dentro_stringa:
+            if scappato:
+                scappato = False
+            elif carattere == "\\":
+                scappato = True
+            elif carattere == '"':
+                dentro_stringa = False
+            continue
+        if carattere == '"':
+            dentro_stringa = True
+        elif carattere == "{":
+            profondita += 1
+        elif carattere == "}":
+            profondita -= 1
+            if profondita == 0:
+                return testo[inizio:posizione + 1]
+    return None
+
+
+# Quante graffe aperte si prova a interpretare prima di arrendersi. Un
+# ragionamento lungo puo' contenerne parecchie; oltre questo numero non e' piu'
+# un ragionamento con dentro un oggetto, e' un testo senza oggetto.
+_MASSIMO_CANDIDATI = 400
+
+
+def _estrai_oggetto_json(testo: str):
+    """L'oggetto JSON contenuto nel testo, gia' interpretato. `None` se non c'e'.
+
+    [AGGIUNTO 2026-08-11] Serve quando la risposta del modello contiene il
+    ragionamento PRIMA dell'oggetto — che e' esattamente cio' che il prompt
+    gli chiede di fare.
+
+    Non basta prendere dalla prima graffa all'ultima: il ragionamento ne
+    contiene di sue («se {qualcosa} allora...»), e una stringa dentro il JSON
+    puo' contenerne che non aprono niente («orario: 10:00 {chiuso}»). Qui si
+    prova ogni graffa aperta, in ordine, e si tiene la prima che produce
+    davvero un oggetto — le graffe del discorso non producono niente e vengono
+    scartate da sole. E' la differenza fra un lettore che funziona e uno che
+    funziona finche' nessuno scrive una parentesi.
+    """
+    if not isinstance(testo, str):
+        return None
+    posizione = testo.find("{")
+    provati = 0
+    while posizione >= 0 and provati < _MASSIMO_CANDIDATI:
+        provati += 1
+        candidato = _oggetto_bilanciato(testo, posizione)
+        if candidato:
+            try:
+                letto = json.loads(candidato)
+            except json.JSONDecodeError:
+                letto = None
+            if isinstance(letto, dict):
+                return letto
+        posizione = testo.find("{", posizione + 1)
+    return None
+
+
 def parse_claude_output(raw_text: str) -> dict:
     """[9.1] Parse JSON. Solleva ParseError se non è JSON valido —
     nel Make.com reale questo attiva il repair/retry (Cap. 7.2).
@@ -145,8 +210,33 @@ def parse_claude_output(raw_text: str) -> dict:
     text = _strip_markdown_json_fence(raw_text)
     try:
         parsed = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ParseError(f"Output di Claude non è JSON valido: {e}") from e
+    except json.JSONDecodeError as primo_errore:
+        # [AGGIUNTO 2026-08-11 — da un guasto vero, in produzione, e da una
+        # riparazione precedente che ne e' stata la causa.]
+        #
+        # L'errore era: «Expecting value: line 1 column 1 (char 0)» con 35.445
+        # token di risposta. Tradotto: il modello aveva scritto tantissimo, e
+        # il primo carattere non era una graffa. Non e' un errore del modello:
+        # il prompt gli CHIEDE di ragionare a voce alta in uno <scratchpad>
+        # prima di rispondere, ed e' quel ragionamento che tiene alta la
+        # qualita' dell'itinerario.
+        #
+        # Perche' e' successo solo adesso: fino a ieri il budget di scrittura
+        # era stretto e il ragionamento restava corto; alzandolo a 64.000 per
+        # riparare i troncamenti, il modello ha finalmente avuto spazio per
+        # ragionare davvero — e ha smesso di far cominciare la risposta con la
+        # graffa. Una riparazione che scopre il difetto successivo.
+        #
+        # La risposta sbagliata sarebbe stata vietargli il ragionamento
+        # (`use_prefill`, che forza la graffa al primo carattere): risolve il
+        # parsing e paga con la qualita', cioe' il baratto gia' rifiutato.
+        # La risposta giusta e' che sia il LETTORE a saper trovare l'oggetto
+        # dentro la risposta, invece di pretendere che sia solo.
+        parsed = _estrai_oggetto_json(text)
+        if parsed is None:
+            raise ParseError(
+                f"Output di Claude non è JSON valido: {primo_errore}"
+            ) from primo_errore
     # [AGGIUNTO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
     # `json.loads` accetta QUALSIASI valore JSON top-level: un array `[...]`,
     # uno scalare (`42`, `"ciao"`, `null`) sono JSON validi ma NON un itinerario.
