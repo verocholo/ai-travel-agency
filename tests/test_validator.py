@@ -34,10 +34,28 @@ class TestParseClaudeOutput(unittest.TestCase):
         with self.assertRaises(ParseError):
             parse_claude_output("questo non è JSON")
 
-    def test_prose_before_json_raises(self):
-        # violazione OUTPUT_CONTRACT: "NIENTE testo prima o dopo"
-        with self.assertRaises(ParseError):
-            parse_claude_output('Certo! Ecco il tuo itinerario: {"a": 1}')
+    def test_prose_before_json_e_ora_TOLLERATA(self):
+        """[CAMBIATO 2026-08-11 — da un guasto vero, in produzione.]
+
+        Questa prova pretendeva il contrario: che del testo prima
+        dell'oggetto facesse fallire la lettura, perche' il contratto scritto
+        nel prompt dice «NIENTE testo prima o dopo».
+
+        L'11 agosto il contratto e' stato violato dal modello per un motivo
+        buono: il prompt gli chiede ANCHE di ragionare a voce alta in uno
+        `<scratchpad>` prima di rispondere, ed e' quel ragionamento a tenere
+        alta la qualita' dell'itinerario. Risultato: 35.445 token di risposta
+        e un lettore che diceva «Expecting value: line 1 column 1». Il cliente
+        non riceveva niente.
+
+        Fra due regole in conflitto ha vinto quella che serve al documento.
+        Il lettore adesso trova l'oggetto dentro la risposta invece di
+        pretendere che la risposta sia solo l'oggetto — vedi
+        `tests/test_ragionamento_prima_del_json_2026_08_11.py`.
+        """
+        self.assertEqual(
+            parse_claude_output('Certo! Ecco il tuo itinerario: {"a": 1}'),
+            {"a": 1})
 
     def test_markdown_json_fence_is_stripped(self):
         # [AGGIUNTO 2026-07-11 — bug reale dal capstone live test lavoro/
@@ -56,13 +74,19 @@ class TestParseClaudeOutput(unittest.TestCase):
         result = parse_claude_output('   ```json\n{"a": 1}\n```   \n')
         self.assertEqual(result, {"a": 1})
 
-    def test_partial_fence_not_stripped_still_raises(self):
-        # Un testo che INIZIA con una fence ma non FINISCE con una fence
-        # (es. prosa residua dopo la chiusura, o fence non chiusa) non deve
-        # essere silenziosamente "aggiustato" — il match è volutamente
-        # stretto (intero testo racchiuso, non solo l'inizio).
-        with self.assertRaises(ParseError):
-            parse_claude_output('```json\n{"a": 1}\nCerto, fammi sapere se serve altro!')
+    def test_fence_a_meta_non_fa_piu_perdere_l_itinerario(self):
+        """[CAMBIATO 2026-08-11, stessa ragione della prova qui sopra.]
+
+        La regola di prima era: una fence aperta e non chiusa non si
+        «aggiusta» in silenzio. Il principio resta giusto — non si indovina
+        mai il contenuto — ma qui non si indovina niente: l'oggetto JSON c'e',
+        completo e bilanciato, e viene letto. Rifiutarlo per una spina di
+        formattazione voleva dire buttare via un itinerario intero, gia'
+        generato e gia' pagato, per una punteggiatura.
+        """
+        self.assertEqual(
+            parse_claude_output('```json\n{"a": 1}\nCerto, fammi sapere se serve altro!'),
+            {"a": 1})
 
 
 class TestFormatCompliance(unittest.TestCase):
