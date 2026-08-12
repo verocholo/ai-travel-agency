@@ -662,6 +662,11 @@ _CSS = """
     }
     .cover-toc-sub a { color: #4a5b6b; text-decoration: none; }
     .cover-note {
+      /* [AGGIUNTO 2026-08-11] Se proprio non ci sta, si sposta INTERA.
+         Spezzata lascia una riga orfana in cima alla pagina dopo, che e'
+         esattamente il difetto segnalato. `page-break-inside` il motore di
+         stampa lo rispetta sulle tabelle e sui blocchi semplici come questo. */
+      page-break-inside: avoid;
       font-size: 9.5px; color: #6b7a89; margin-top: 26px;
       background-color: #faf7f1;
       border-left: 3px solid #2f6690;
@@ -2294,9 +2299,24 @@ def _render_cover(
     # corti — che sono la maggioranza. Quindi la spaziatura è a tre livelli,
     # scelti sulla colonna PIÙ ALTA dell'indice, che è ciò che detta davvero
     # l'altezza. Le soglie sono misurate sul PDF vero, non stimate.
-    if tallest <= 8:
+    # [STRETTE 2026-08-11 — segnalazione di Lorenzo: «l'impaginazione della
+    # prima e seconda pagina fa schifo, non voglio una pagina iniziata per due
+    # righe e poi lasciata bianca».]
+    #
+    # Le soglie erano 8 e 11 ed erano tarate su un campione COSTRUITO A MANO.
+    # Sul primo documento uscito davvero dalla catena completa — Bologna, due
+    # giorni, indice alto 6 — la copertina prendeva il respiro massimo e la
+    # nota di chiusura sbordava di due righe sulla pagina dopo, lasciandola
+    # bianca per il resto. Due righe su una pagina intera sono la cosa che, in
+    # un documento venduto, si nota per prima.
+    #
+    # Ora sono 4 e 7. La regola dietro il numero: **fra una copertina un po'
+    # piu' compatta e una seconda pagina quasi vuota, vince sempre la prima.**
+    # Il bianco in fondo a una pagina e' respiro; il bianco sotto due righe e'
+    # un errore.
+    if tallest <= 4:
         density = " cover-airy"
-    elif tallest <= 11:
+    elif tallest <= 7:
         density = " cover-roomy"
     else:
         density = ""
@@ -3225,10 +3245,19 @@ def _render_vademecum(vademecum: dict | None, checklist_sheet: dict | None = Non
             third.append(
                 f"<div class='vad-num-small'>Pioggia {_esc(climate['rain'])}</div>"
             )
-        if climate.get("daylight_label"):
-            third.append(
-                f"<div class='vad-num-small'>{_esc(climate['daylight_label'])}</div>"
-            )
+        # [TOLTO 2026-08-11 — richiesta di Lorenzo: «12h e 45 di luce e'
+        # un'informazione inutile e brutta da vedere, rimuovila».]
+        #
+        # Aveva ragione, e vale la pena scrivere perche': quel numero e' VERO
+        # ma non serve a decidere niente. Nessuno cambia un programma perche'
+        # la giornata dura dodici ore e quarantacinque invece di tredici. Cio'
+        # che serve davvero — a che ora fa buio, quando e' l'ora d'oro per le
+        # fotografie — e' gia' scritto altrove e in una forma che si usa.
+        #
+        # La durata resta calcolata in `src/sun_times.py`, che serve anche
+        # all'ora d'oro: qui smette solo di essere stampata. Un documento non
+        # migliora aggiungendo dati veri, migliora togliendo quelli che non
+        # rispondono a nessuna domanda.
         if third:
             cells.append(
                 "<td>" + "".join(third)
