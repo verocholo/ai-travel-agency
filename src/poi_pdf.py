@@ -56,6 +56,7 @@ import tempfile
 from pathlib import Path
 
 from src import fascicolo
+from src import foto
 from src import hosting
 from src import scheduling_criteria
 from src.pdf_links import PROBE_PREFIX
@@ -351,9 +352,11 @@ def build_guide_html(
     # testo più immagini, non deve essere noioso». Prima del testo, non
     # dopo — una foto in fondo alla pagina l'ha già persa chi si è annoiato.
     if isinstance(photo, dict) and photo.get("png") and photo.get("credito"):
-        b64 = base64.b64encode(photo["png"]).decode("ascii")
+        byte_foto = photo["png"]
+        b64 = base64.b64encode(byte_foto).decode("ascii")
+        tipo = foto.mime_immagine(byte_foto)
         parti.append(
-            f"<div class='foto'><img src='data:image/png;base64,{b64}' "
+            f"<div class='foto'><img src='data:{tipo};base64,{b64}' "
             f"alt='{_esc(nome or titolo)}'>"
             f"<div class='credito'>{_esc(photo['credito'])}</div></div>"
         )

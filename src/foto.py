@@ -75,7 +75,18 @@ from . import wikimedia
 MAX_FOTO = 12
 
 # Larghezza massima in pixel dell'immagine che finisce nel documento.
-LARGHEZZA_MAX = 800
+# [ALZATO 2026-08-11 — segnalazione di Lorenzo: «le foto sono stretchate o in
+# bassa risoluzione».] Erano 800 pixel di larghezza. Su schermo bastano; sulla
+# pagina stampata quella stessa immagine si allarga su diciotto centimetri,
+# cioe' circa 110 punti per pollice — la soglia sotto la quale una fotografia
+# comincia a sembrare sgranata, e il documento con lei. A 1600 si sta intorno
+# ai 220, che e' qualita' da stampa.
+#
+# Il peso non aumenta, DIMINUISCE: vedi `normalizza_png()` qui sotto, che da
+# oggi salva in JPEG invece che in PNG. Una fotografia in PNG pesa dieci volte
+# tanto, perche' il PNG e' fatto per i disegni a tinte piatte e non per le
+# sfumature di un cielo.
+LARGHEZZA_MAX = 1600
 
 # --- Il tempo che si puo' spendere cercando fotografie gratuite ------------
 #
@@ -176,11 +187,38 @@ def normalizza_png(grezzi: bytes, larghezza_max: int = LARGHEZZA_MAX) -> bytes |
             nuova_altezza = max(1, round(altezza * larghezza_max / larghezza))
             immagine = immagine.resize((larghezza_max, nuova_altezza), Image.LANCZOS)
         uscita = io.BytesIO()
-        immagine.save(uscita, format="PNG", optimize=True)
+        # [CAMBIATO 2026-08-11] JPEG, non PNG. Il PNG conserva ogni pixel
+        # esattamente com'e': perfetto per un disegno a tinte piatte, sbagliato
+        # per una fotografia, dove costa dieci volte tanto per una differenza
+        # che nessun occhio vede. Con lo stesso peso di prima si porta il
+        # doppio della risoluzione.
+        #
+        # `quality=85` e' il punto dove si smette di vedere la differenza;
+        # `progressive` non serve alla stampa ma non costa niente.
+        immagine.save(uscita, format="JPEG", quality=85, optimize=True,
+                      progressive=True)
         return uscita.getvalue()
     except Exception as e:  # noqa: BLE001 — un'immagine rotta non e' un guasto
         print(f"⚠️  foto.normalizza_png: immagine illeggibile — {type(e).__name__}: {e}")
         return None
+
+
+def mime_immagine(dati: bytes) -> str:
+    """`image/jpeg` o `image/png`, guardando i byte veri.
+
+    [AGGIUNTO 2026-08-11] Da quando le fotografie escono in JPEG e le cartine
+    restano PNG, il documento non puo' piu' dichiarare un formato a memoria.
+    Scrivere `data:image/png` davanti a un JPEG e' la bugia che il browser
+    perdona e il motore di stampa no: l'immagine sparisce dal PDF e ce ne si
+    accorge guardando la pagina finita, cioe' tardi.
+
+    Si guardano i primi due byte, che sono la firma del formato. Il PNG resta
+    la risposta prudente per tutto il resto: e' cio' che il documento ha
+    sempre usato.
+    """
+    if isinstance(dati, (bytes, bytearray)) and dati[:2] == b"\xff\xd8":
+        return "image/jpeg"
+    return "image/png"
 
 
 def _sfumatura_verticale(disegno, larghezza: int, altezza: int, alto, basso) -> None:
@@ -263,6 +301,11 @@ def copertina_interna(nome: str, tipo: str = "") -> bytes | None:
             y += 56
 
         uscita = io.BytesIO()
+        # Qui il PNG resta, e non e' una dimenticanza: questa immagine e' un
+        # DISEGNO a tinte piatte — sfondo, righe, lettere. E' esattamente il
+        # caso per cui il PNG esiste, e in JPEG le lettere si sfrangerebbero.
+        # Le fotografie vere, che sono l'altro caso, escono in JPEG da
+        # `normalizza_png()`.
         immagine.save(uscita, format="PNG", optimize=True)
         return uscita.getvalue()
     except Exception as e:  # noqa: BLE001

@@ -52,6 +52,7 @@ from .directions import describe_leg_duration, summarize_day_travel
 from .price_display import price_level_symbol
 # [AGGIUNTO 2026-08-01 — punto 6 del feedback "da investitore"] Testi legali
 # rivolti al cliente, tenuti in un solo posto: vedi src/legal_notices.py.
+from . import foto
 from . import legal_notices
 # [AGGIUNTO 2026-08-05 — task #190] La cucitura dei capitoli staccati dentro
 # un unico file, e i nomi delle ancore di ritorno. Il modulo non importa
@@ -793,8 +794,25 @@ _CSS = """
        L'altezza e' tagliata a una fascia: una foto verticale a piena pagina
        spingerebbe il programma della giornata alla pagina dopo, che e'
        esattamente il difetto che Lorenzo ha segnalato sull'impaginazione. */
-    .day-foto { margin: 0 0 8px 0; }
-    .day-foto img { width: 100%; max-height: 150px; }
+    /* [CORRETTO 2026-08-11 — segnalazione di Lorenzo: «le foto sono
+       stretchate».] C'era `width: 100%` INSIEME a `max-height: 150px`. Sono
+       due ordini che si contraddicono: il primo dice «larga quanto la
+       pagina», il secondo «alta al massimo cosi'», e il motore obbedisce a
+       tutti e due schiacciando la fotografia. Una torre diventava tozza, un
+       viale diventava una fessura.
+
+       La regola giusta e' dire solo i LIMITI e lasciare che sia l'immagine a
+       scegliere le proprie proporzioni dentro quei limiti. Una foto
+       orizzontale riempie la fascia; una verticale resta stretta e centrata,
+       con del bianco ai lati — che in una pagina impaginata bene non e' un
+       difetto, e' respiro.
+
+       `object-fit: cover`, che risolverebbe ritagliando, non esiste nel
+       motore di stampa: e' una di quelle proprieta' che funzionano benissimo
+       nell'anteprima del browser e vengono ignorate in silenzio nel PDF
+       venduto. */
+    .day-foto { margin: 0 0 10px 0; text-align: center; }
+    .day-foto img { max-width: 100%; max-height: 190px; }
     .day-foto .didascalia { font-size: 9px; color: #8a97a5; margin-top: 2px; }
 
     /* [AGGIUNTO 2026-08-03 — task #181] L'immagine in testa alla scheda di
@@ -809,8 +827,8 @@ _CSS = """
        raccontare il luogo, e una copertina disegnata con su scritto che non
        e' una fotografia non inganna nessuno. In cima a una giornata sarebbe
        un'altra cosa. */
-    .guide-foto { margin: 0 0 6px 0; }
-    .guide-foto img { width: 100%; max-height: 110px; }
+    .guide-foto { margin: 0 0 8px 0; text-align: center; }
+    .guide-foto img { max-width: 100%; max-height: 150px; }
     .guide-foto .didascalia { font-size: 8px; color: #98a4b0; margin-top: 2px; }
 
     /* --- Prima di partire ---------------------------------------------- */
@@ -1244,7 +1262,7 @@ def _render_guide_foto(guide: dict, photos: dict | None) -> str:
     nome = str(guide.get("poi_name") or guide.get("title") or "").strip()
     return (
         "<div class='guide-foto'>"
-        f"<img src='data:image/png;base64,{b64}' alt='{_esc(nome)}'>"
+        f"<img src='data:{foto.mime_immagine(png)};base64,{b64}' alt='{_esc(nome)}'>"
         f"<div class='didascalia'>{_esc(credito)}</div></div>"
     )
 
@@ -1765,7 +1783,7 @@ def _render_at_a_glance(
         # l'immagine di prima, identica: la cartina interattiva e' un
         # miglioramento, non una condizione per vedere la cartina.
         img_tag = (
-            f"<img src='data:image/png;base64,{b64}' "
+            f"<img src='data:{foto.mime_immagine(png)};base64,{b64}' "
             f"alt='Cartina con hotel, tappe e percorsi'>"
         )
         hits = _render_map_hits(piano, png, pin_targets)
@@ -2543,7 +2561,7 @@ def _render_day_map(
         # pallini, o se nessuna tappa ha una destinazione, resta l'immagine
         # di prima senza differenze.
         img_tag = (
-            f"<img src='data:image/png;base64,{b64}' "
+            f"<img src='data:{foto.mime_immagine(png)};base64,{b64}' "
             f"alt='Cartina del giorno con le tappe numerate'>"
         )
         hits = _render_map_hits(day_map, png, pin_targets)
@@ -2803,7 +2821,7 @@ def _render_day_photo(blocks, photos: dict | None) -> str:
         nome = str(block.get("location") or "").strip()
         return (
             "<div class='day-foto'>"
-            f"<img src='data:image/png;base64,{b64}' alt='{_esc(nome)}'>"
+            f"<img src='data:{foto.mime_immagine(png)};base64,{b64}' alt='{_esc(nome)}'>"
             f"<div class='didascalia'>{_esc(credito)}</div></div>"
         )
     return ""
