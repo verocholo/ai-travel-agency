@@ -56,14 +56,51 @@ def _guida(identificativo, nome):
 class TestNormalizzaPng(unittest.TestCase):
     """La conversione e il ridimensionamento delle immagini scaricate."""
 
-    def test_un_jpeg_diventa_un_png(self):
-        """Google restituisce JPEG; il PDF riceve PNG."""
+    def test_una_fotografia_esce_in_jpeg(self):
+        """[CAMBIATO 2026-08-11] Prima questa prova pretendeva un PNG.
+
+        Il cambio nasce da una segnalazione di Lorenzo — «le foto sono in
+        bassa risoluzione» — e dal conto che c'e' dietro: una fotografia
+        salvata in PNG pesa circa dieci volte quanto la stessa in JPEG, senza
+        che nessun occhio veda la differenza. Quel peso e' il motivo per cui
+        la larghezza era ferma a 800 pixel, cioe' il motivo per cui le foto
+        sembravano sgranate sulla pagina stampata.
+
+        In JPEG si porta il doppio della risoluzione pesando meno di prima.
+        Si controlla la firma dei byte e non il tipo dichiarato: e' l'unico
+        modo di sapere che la conversione e' davvero avvenuta.
+        """
         uscita = foto.normalizza_png(_jpeg_finto())
         self.assertIsNotNone(uscita)
-        # I primi otto byte di ogni PNG. Controllare l'intestazione invece del
-        # tipo dichiarato e' l'unico modo per sapere che la conversione e'
-        # avvenuta davvero.
-        self.assertEqual(uscita[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(uscita[:2], b"\xff\xd8")
+        self.assertEqual(foto.mime_immagine(uscita), "image/jpeg")
+
+    def test_il_documento_non_dichiara_mai_il_formato_sbagliato(self):
+        """La bugia che il motore di stampa non perdona.
+
+        Scrivere `data:image/png` davanti a un JPEG funziona in un browser e
+        fa sparire l'immagine dal PDF. Da quando i due formati convivono —
+        fotografie in JPEG, cartine e disegni in PNG — il tipo va letto dai
+        byte, mai ricordato a memoria.
+        """
+        self.assertEqual(foto.mime_immagine(foto.normalizza_png(_jpeg_finto())),
+                         "image/jpeg")
+        self.assertEqual(
+            foto.mime_immagine(foto.copertina_interna("Torre", "museum")),
+            "image/png")
+        for storto in (b"", b"xy", None, "non byte"):
+            with self.subTest(storto=storto):
+                self.assertEqual(foto.mime_immagine(storto), "image/png")
+
+    def test_la_larghezza_basta_per_la_stampa(self):
+        """[REGRESSIONE 2026-08-11] Erano 800 pixel, e si vedeva.
+
+        Su una pagina A4 una fotografia a piena larghezza copre circa diciotto
+        centimetri: a 800 pixel fanno poco piu' di 110 punti per pollice, che
+        e' sotto la soglia in cui una foto comincia a sembrare sgranata. Il
+        numero non e' un gusto, e' una divisione.
+        """
+        self.assertGreaterEqual(foto.LARGHEZZA_MAX, 1400)
 
     def test_un_immagine_larga_viene_rimpicciolita(self):
         """1600 px in ingresso, al massimo `LARGHEZZA_MAX` in uscita.
