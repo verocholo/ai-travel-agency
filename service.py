@@ -404,6 +404,31 @@ def salute_lavori():
     })
 
 
+@app.route("/impronte", methods=["GET"])
+def impronte_dei_file():
+    """Quali file, qui dentro, non sono quelli che dovrebbero essere.
+
+    [AGGIUNTO 2026-08-13 — da un guasto vero, trovato dieci minuti prima da
+    `/prova-collegamenti`.] In produzione `pdf_renderer.py` era quello nuovo e
+    chiamava `fascicolo.cuci(..., ancore=...)`; `fascicolo.py` era rimasto
+    quello vecchio. Il servizio rispondeva bene a tutto, e sarebbe morto solo
+    al momento di cucire il fascicolo — cioe' dopo dodici minuti di
+    generazione gia' pagata.
+
+    Il codice qui arriva a mano, un file alla volta, da un telefono: con
+    cinquantacinque moduli, prima o poi ne salta uno. Questa pagina dice
+    l'impronta di ognuno, cosi' si sa in due secondi ESATTAMENTE quali
+    ricaricare invece di ricaricare tutto sperando.
+
+    Senza chiave: un'impronta non si puo' riaprire. E' un numero ricavato dal
+    contenuto, non il contenuto — non esce nessun nome, nessun indirizzo,
+    nessuna chiave, nemmeno una riga di codice.
+    """
+    from src import impronte
+
+    return jsonify({"file": impronte.impronte(), "test_suite": TEST_SUITE_STATUS})
+
+
 @app.route("/prova-collegamenti", methods=["GET"])
 def prova_collegamenti():
     """I rimandi interni sopravvivono al motore di stampa DI QUESTA macchina?
