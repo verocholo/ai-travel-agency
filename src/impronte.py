@@ -57,7 +57,8 @@ RADICE = Path(__file__).resolve().parent.parent
 # girano in produzione e i documenti non cambiano il comportamento di niente.
 # Qui c'e' cio' che, se e' vecchio, produce un guasto.
 FILE_DI_RADICE = ("service.py", "main.py", "requirements.txt",
-                  "Dockerfile", "Procfile", "scripts_sample_pdf.py")
+                  "Dockerfile", "Procfile", "scripts_sample_pdf.py",
+                  "scripts_qualita_pagina.py")
 
 # Lunghezza dell'impronta. Dodici cifre esadecimali bastano largamente a
 # distinguere due versioni di uno stesso file, e stanno su una riga di

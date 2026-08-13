@@ -52,7 +52,7 @@ from .directions import describe_leg_duration, summarize_day_travel
 from .price_display import price_level_symbol
 # [AGGIUNTO 2026-08-01 — punto 6 del feedback "da investitore"] Testi legali
 # rivolti al cliente, tenuti in un solo posto: vedi src/legal_notices.py.
-from . import foto
+from . import compositore, foto
 from . import legal_notices
 # [AGGIUNTO 2026-08-05 — task #190] La cucitura dei capitoli staccati dentro
 # un unico file, e i nomi delle ancore di ritorno. Il modulo non importa
@@ -1201,6 +1201,43 @@ _CSS_MODELLO = """
     .cover-foto { text-align: center; margin: 0 0 18px 0; page-break-inside: avoid; }
     .cover-foto img { width: 100%; }
     .cover-foto .didascalia { font-size: 8px; color: #98a4b0; margin-top: 3px; }
+    /* [AGGIUNTO 2026-08-13 — task #214] La fotografia che esce dai margini e
+       arriva al bordo del foglio: e' la mossa che distingue una rivista da una
+       relazione. E' anche l'unica forma che il motore accetta — `@page {
+       margin: 0 }` sposterebbe anche tutto il testo.
+       Questi due numeri valgono ESATTAMENTE quanto i margini di `@page` in
+       cima al foglio: se un domani cambiano li', vanno cambiati anche qui,
+       altrimenti la fotografia sborda dal foglio o si ferma prima del bordo.
+       C'e' un controllo che lo verifica, perche' e' il tipo di disallineamento
+       che non da' nessun errore e si vede solo sulla carta. */
+    .day-banda { margin-left: -1.8cm; margin-right: -1.8cm; margin-bottom: 10px;
+                 page-break-inside: avoid; }
+    .day-banda .didascalia { font-size: 8px; color: #98a4b0;
+                             margin-top: 2px; margin-left: 1.8cm; }
+    /* [AGGIUNTO 2026-08-13 — task #215] Gli ornamenti della giornata.
+       Colori pieni e nessuna sfumatura: il motore non le sa fare e le stampa
+       piatte o non le stampa affatto. Il tondo del bollo si ottiene con
+       `border-radius` su un blocco COLORATO, che il motore regge — e' solo
+       sulle IMMAGINI che si rompe (misurato: mezzo tondo, mezzo quadrato). */
+    .day-bollo { width: 74px; height: 74px; border-radius: 37px;
+                 background: {{accento}}; color: #ffffff; text-align: center;
+                 float: right; margin: 0 0 6px 10px; page-break-inside: avoid; }
+    .day-bollo .n { font-family: Georgia, 'Times New Roman', serif;
+                    font-size: 26px; line-height: 1; padding-top: 16px; }
+    .day-bollo .e { font-size: 7px; letter-spacing: 0.13em;
+                    text-transform: uppercase; }
+    .day-capolettera { font-family: Georgia, 'Times New Roman', serif;
+                       font-size: 72px; line-height: 0.8; color: {{sfondo_tenue}};
+                       float: right; margin: 0 0 4px 12px; }
+    /* Il nastro storto. Uno per pagina: due lo fanno sembrare un volantino di
+       sconti, e questo documento si vende a 4,90 non a 0,90. */
+    .day-nastro { -webkit-transform: rotate(-2deg); background: {{scuro}};
+                  color: #ffffff; display: inline-block; padding: 4px 14px;
+                  font-size: 9px; letter-spacing: 0.15em;
+                  text-transform: uppercase; margin: 4px 0 8px 0; }
+    .day-tonda { text-align: center; margin: 8px 0; page-break-inside: avoid; }
+    .day-tonda img { width: 190px; }
+    .day-tonda .didascalia { font-size: 8px; color: #98a4b0; margin-top: 2px; }
 """
 
 
@@ -3051,6 +3088,144 @@ def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "") -> s
     return ("<table class='day-striscia'><tr>" + "".join(celle) + "</tr></table>")
 
 
+def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
+                          riserva_viaggio, apertura_precedente):
+    """Come si apre questa giornata: l'HTML e il nome dell'apertura scelta.
+
+    [AGGIUNTO 2026-08-13 — task #214, primo pezzo del compositore che entra
+    davvero nel documento venduto.]
+
+    Prima ogni giornata si apriva allo stesso identico modo: una fotografia
+    centrata sotto il titolo. Con un viaggio di cinque giorni erano cinque
+    pagine gemelle, ed e' la richiesta di Lorenzo: «non devono essere una
+    uguale all'altra».
+
+    Qui cambia UN pezzo di HTML, nello stesso punto in cui prima ce n'era uno
+    solo: le tre aperture si impilano tutte allo stesso modo, quindi la
+    struttura della giornata — titolo, cartina, programma, legenda — resta
+    intatta e con lei i controlli di impaginazione che la difendono. Gli
+    impianti a colonne arrivano dopo, quando questa parte e' collaudata in
+    produzione. Questa settimana ha gia' mostrato due volte cosa succede a
+    cambiare tutto insieme: una singola immagine in piu' fa sfondare una
+    pagina.
+
+    Torna anche il nome dell'apertura perche' chi chiama deve poterlo passare
+    alla giornata dopo: senza, «mai due volte di fila» non e' verificabile.
+    """
+    proprie = [(scatto, nome) for _poi, scatto, nome
+               in _foto_vere_della_giornata(blocks, photos)]
+    disponibili, _provenienza = compositore.foto_della_giornata(
+        proprie, riserva_viaggio, None, giorno_numero)
+    apertura = compositore.scegli_apertura(
+        chiave, giorno_numero, len(disponibili), apertura_precedente)
+    if not apertura or not disponibili:
+        return "", ""
+
+    # [ESTESO 2026-08-13 — task #215, e nasce da una bocciatura.]
+    # La prima versione portava dentro SOLO l'apertura e lasciava fuori tutto
+    # cio' che nei provini faceva il lavoro. Lorenzo, confrontando il
+    # documento vero col prototipo: «ci sono meno foto e anche la grafica e'
+    # diversa [...] PIU' DINAMISMO E FOTO».
+    #
+    # Aveva ragione: un'apertura che cambia e tutto il resto identico non e'
+    # una pagina diversa, e' la stessa pagina con un cappello diverso. Qui
+    # entrano anche gli ORNAMENTI — bollo, nastro, capolettera, foto tonda —
+    # scelti dal compositore con i suoi vincoli, e le fotografie in piu'.
+    ricetta = compositore.componi(
+        chiave, giorno_numero, len(disponibili),
+        {"impianto": {"nome": apertura_precedente or ""}, "ornamenti": []})
+    ornamenti = ricetta["ornamenti"]
+
+    def _figura(scatto, larghezza_html, rapporto, sfumata=False):
+        png = scatto.get("png") if isinstance(scatto, dict) else None
+        credito = str((scatto or {}).get("credito") or "").strip()
+        if not png or not credito:
+            return ""
+        ritagliata = foto.ritaglia_panoramica(png, rapporto) or png
+        if sfumata:
+            ritagliata = foto.sfuma_in_basso(ritagliata) or ritagliata
+        try:
+            b64 = base64.b64encode(ritagliata).decode("ascii")
+        except (TypeError, ValueError):
+            return ""
+        tipo = foto.mime_immagine(ritagliata)
+        return (f"<img src='data:{tipo};base64,{b64}' alt='' {larghezza_html}>"
+                f"<div class='didascalia'>Foto: {_esc(credito)}</div>")
+
+    def _tonda(scatto):
+        png = scatto.get("png") if isinstance(scatto, dict) else None
+        credito = str((scatto or {}).get("credito") or "").strip()
+        if not png or not credito:
+            return ""
+        # Il ritaglio tondo si fa sui PIXEL: in CSS esce mezzo tondo e mezzo
+        # quadrato, misurato sul motore di stampa.
+        ritagliata = foto.ritaglia_tondo(png, 380)
+        if not ritagliata:
+            return ""
+        try:
+            b64 = base64.b64encode(ritagliata).decode("ascii")
+        except (TypeError, ValueError):
+            return ""
+        return (f"<div class='day-tonda'><img src='data:image/png;base64,{b64}' "
+                f"alt=''><div class='didascalia'>Foto: {_esc(credito)}</div></div>")
+
+    pezzi = []
+
+    # --- il segno che apre: bollo tondo col numero, oppure capolettera ----
+    # Sono alternativi per regola (due numeroni si contendono l'occhio) e il
+    # compositore non li mette mai insieme: qui si stampa quello scelto.
+    if "bollo" in ornamenti:
+        pezzi.append(f"<div class='day-bollo'><div class='n'>{_esc(giorno_numero)}</div>"
+                     "<div class='e'>giorno</div></div>")
+    elif "capolettera" in ornamenti:
+        try:
+            numero = f"{int(giorno_numero):02d}"
+        except (TypeError, ValueError):
+            numero = str(giorno_numero or "")
+        pezzi.append(f"<div class='day-capolettera'>{numero}</div>")
+
+    # --- l'apertura fotografica -------------------------------------------
+    scelta = apertura
+    if apertura == "mosaico":
+        celle = []
+        for scatto, _nome in disponibili[:3]:
+            figura = _figura(scatto, "style='width:100%; display:block;'", 1.35)
+            if figura:
+                celle.append(f"<td style='width:33%'>{figura}</td>")
+        if len(celle) >= 3:
+            pezzi.append("<table class='day-striscia'><tr>" + "".join(celle)
+                         + "</tr></table>")
+        else:
+            scelta = "banda"
+
+    if scelta == "banda":
+        figura = _figura(disponibili[0][0], "style='width:100%; display:block;'", 3.1)
+        if figura:
+            pezzi.append(f"<div class='day-banda'>{figura}</div>")
+        else:
+            scelta = "foto-sola"
+
+    if scelta == "foto-sola":
+        figura = _figura(disponibili[0][0], "", 1.5)
+        if figura:
+            pezzi.append(f"<div class='day-foto'>{figura}</div>")
+
+    # --- il nastro coi numeri della giornata ------------------------------
+    if "nastro" in ornamenti and blocks:
+        quante = len(blocks)
+        pezzi.append(f"<span class='day-nastro'>{quante} "
+                     f"{'tappa' if quante == 1 else 'tappe'}</span>")
+
+    # --- una fotografia in piu', tonda ------------------------------------
+    # E' l'ornamento che alza di piu' la densita' di immagini, ed e' anche il
+    # motivo per cui il compositore lo esclude quando le fotografie sono meno
+    # di due: se se la prendesse lui, l'apertura resterebbe senza.
+    if "tonda" in ornamenti and len(disponibili) >= 2:
+        pezzi.append(_tonda(disponibili[1][0]))
+
+    return "".join(x for x in pezzi if x), scelta
+
+
 def _render_day_photo(blocks, photos: dict | None) -> str:
     """La fotografia di apertura della giornata, oppure "".
 
@@ -4194,6 +4369,27 @@ def render_html(
             + _render_criterio()
         ))
 
+    # [AGGIUNTO 2026-08-13 — task #214] Le due cose che il ciclo delle
+    # giornate si deve ricordare da una all'altra.
+    #
+    # La RISERVA e' l'insieme delle fotografie vere di TUTTO il viaggio, ed
+    # esiste per la richiesta di Lorenzo «ogni giornata deve avere le foto».
+    # Quando per le tappe di una giornata Google non ha restituito niente si
+    # prende in prestito da un'altra tappa dello stesso viaggio: stessa
+    # citta', luogo dichiarato nella didascalia, nessuno ci legge una
+    # promessa. Non si inventa niente — e' la regola su cui e' costruito
+    # tutto questo prodotto.
+    #
+    # L'APERTURA PRECEDENTE serve a non ripetersi: senza, «mai due giornate
+    # uguali di fila» non sarebbe nemmeno verificabile.
+    _riserva_foto_viaggio = [
+        (scatto, nome)
+        for giorno_qualunque in days
+        for _poi, scatto, nome in _foto_vere_della_giornata(
+            (giorno_qualunque.get("blocks") or []), photos)
+    ]
+    _apertura_precedente = ""
+
     for day in days:
         # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
         # il rendering PDF NON è gated sull'esito PASS del Nodo 9 (main.py e
@@ -4274,7 +4470,10 @@ def render_html(
         # giornata. Calcolata qui, fuori dal ciclo dei tronchi, perche' va
         # stampata UNA volta: dentro il ciclo verrebbe ripetuta a ogni
         # "(continua)", cioe' tre volte nella stessa giornata lunga.
-        _foto_html = _render_day_photo(blocks, photos)
+        _foto_html, _apertura_usata = _apertura_di_giornata(
+            destination, day_number, blocks, photos,
+            _riserva_foto_viaggio, _apertura_precedente)
+        _apertura_precedente = _apertura_usata or _apertura_precedente
         # La fotografia in apertura ne usa una; la fila in chiusura prende le
         # altre. Passare qui quale e' gia' stata usata evita di stamparla due
         # volte nella stessa pagina, che e' il modo piu' rapido di far

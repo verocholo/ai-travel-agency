@@ -263,3 +263,50 @@ def foto_della_giornata(proprie, riserva_viaggio, riserva_destinazione,
     if riserva_destinazione:
         return [riserva_destinazione], "della destinazione"
     return [], "nessuna"
+
+
+# --------------------------------------------------------------------------
+# LE APERTURE DI GIORNATA
+#
+# [AGGIUNTO 2026-08-13 — primo pezzo del compositore che entra davvero nel
+# documento.] Sono un sottoinsieme degli impianti: quelli che si IMPILANO,
+# cioe' che non ridisegnano la pagina in colonne.
+#
+# La scelta e' voluta e va spiegata, perche' sembra una rinuncia e non lo e'.
+# Gli impianti a colonne cambiano la struttura dell'intera giornata — titolo,
+# cartina, programma, legenda — e quella struttura oggi regge sette controlli
+# di impaginazione, fra cui quello che impedisce a una pagina di restare mezza
+# vuota. Cambiarla tutta in una volta vorrebbe dire rimettere in gioco sette
+# garanzie insieme, e questa settimana ha gia' mostrato cosa succede: due
+# volte una singola immagine in piu' ha fatto sfondare una pagina.
+#
+# Le aperture impilate danno la varieta' visibile — nessuna giornata uguale
+# alla precedente — al prezzo di UN pezzo di HTML che cambia, nello stesso
+# punto in cui prima ce n'era uno solo. Le colonne arrivano dopo, quando
+# questa parte e' in produzione e collaudata.
+# --------------------------------------------------------------------------
+APERTURE = (
+    {"nome": "foto-sola", "foto": 1,
+     "descrizione": "una fotografia centrata, com'era prima"},
+    {"nome": "banda", "foto": 1,
+     "descrizione": "fotografia panoramica a tutta larghezza, fino al bordo"},
+    {"nome": "mosaico", "foto": 3,
+     "descrizione": "tre fotografie in fila"},
+)
+
+
+def scegli_apertura(chiave: str, indice: int, foto_disponibili: int,
+                    precedente: str | None = None) -> str:
+    """Come si apre una giornata. Mai due volte di fila nello stesso modo.
+
+    Torna "" quando non c'e' nemmeno una fotografia: in quel caso la giornata
+    si apre come si apriva prima, col solo titolo. E' l'unico caso, ed e'
+    dichiarato — succede se manca la chiave di Google, cioe' un guasto di
+    configurazione, non una giornata sfortunata.
+    """
+    possibili = [a for a in APERTURE if a["foto"] <= foto_disponibili
+                 and a["foto"] >= 1]
+    if not possibili:
+        return ""
+    diverse = [a for a in possibili if a["nome"] != precedente] or possibili
+    return diverse[numero_stabile(chiave, "apertura", indice) % len(diverse)]["nome"]
