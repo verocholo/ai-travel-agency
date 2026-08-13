@@ -59,7 +59,7 @@ from src import fascicolo
 from src import foto
 from src import hosting
 from src import scheduling_criteria
-from src.pdf_links import PROBE_PREFIX
+from src.pdf_links import LINK_PREFIX, PROBE_PREFIX
 from src.pdf_renderer import (
     _esc, _paragraphs, _slug, _tieni_uniti_i_paragrafi,
 )
@@ -435,7 +435,7 @@ def build_guide_html(
             etichetta = str(voce.get("etichetta") or "Torna all'itinerario")
             parti.append(
                 f"<div class='bottone-torna'>"
-                f"<a href='#{_esc(str(voce['ancora']))}'>&#8617; {etichetta}</a>"
+                f"<a href='{LINK_PREFIX}{_esc(str(voce['ancora']))}'>&#8617; {etichetta}</a>"
                 f"</div>"
             )
         if len(voci_ritorno) > 1:

@@ -1203,6 +1203,30 @@ _CSS = """
 _ANCHOR_PROBE_PREFIX = pdf_links.PROBE_PREFIX
 
 
+# Il comando esatto con cui si stampa. UNA definizione sola, e il motivo e'
+# preciso.
+#
+# [ESTRATTO 2026-08-13] Serve a `src/prova_stampa.py`, la prova che chiede al
+# motore di stampa VERO — quello di produzione, con le patch — che cosa fa dei
+# rimandi interni. Se quella prova costruisse un comando suo, misurerebbe il
+# comportamento di un comando che nessuno esegue: risposta precisa alla
+# domanda sbagliata, cioe' il modo piu' elegante di prendersi in giro. Da qui
+# in poi chi misura e chi stampa eseguono le stesse identiche parole.
+#
+# `--enable-internal-links` resta acceso di proposito anche adesso che i
+# rimandi interni non passano piu' di li': toglierlo cambierebbe il
+# comportamento del motore su un documento che gia' funziona, e non abbiamo
+# modo di provare qui che cosa succede. Si tocca una cosa alla volta.
+COMANDO_STAMPA = (
+    "wkhtmltopdf", "--quiet",
+    "--enable-internal-links",
+    "--outline",
+    "--footer-center", "[page] / [topage]",
+    "--footer-font-size", "8",
+    "--footer-spacing", "5",
+)
+
+
 # [AGGIUNTO 2026-07-12 — richiesta di Lorenzo: "aggiungerli al pdf che si
 # genera", chiarita con "Voglio tutti e tre nello stesso PDF"] Prima,
 # guida turistica (`--guide`), affinamento (`--refine`) e feedback
@@ -1403,7 +1427,7 @@ def _render_guide_section(
         parts.append(f"<div class='disclaimer'>{_esc(guide['disclaimer'])}</div>")
     parts.append(
         "<div class='guide-back'>"
-        "<a href='#giorno-per-giorno'>Torna al programma giorno per giorno</a></div>"
+        "<a href='" + pdf_links.LINK_PREFIX + "giorno-per-giorno'>Torna al programma giorno per giorno</a></div>"
     )
     parts.append("</div>")
     return "".join(parts)
@@ -1704,7 +1728,7 @@ def _costruisci_pin_targets(
         if not isinstance(poi_id, str) or not nome:
             continue
         bersagli[poi_id] = {
-            "href": f"#{nome}", "titolo": _titolo(poi_id), "modo": "capitolo",
+            "href": f"{pdf_links.LINK_PREFIX}{nome}", "titolo": _titolo(poi_id), "modo": "capitolo",
         }
 
     for poi_id, url in (guide_urls or {}).items():
@@ -1721,7 +1745,7 @@ def _costruisci_pin_targets(
         if not isinstance(poi_id, str) or not anchor or poi_id in bersagli:
             continue
         bersagli[poi_id] = {
-            "href": f"#{anchor}", "titolo": _titolo(poi_id), "modo": "interno",
+            "href": f"{pdf_links.LINK_PREFIX}{anchor}", "titolo": _titolo(poi_id), "modo": "interno",
         }
     return bersagli
 
@@ -2387,7 +2411,7 @@ def _render_cover(
             parts.append("<td class='col'>")
             for index, (anchor, title) in enumerate(column):
                 label = (
-                    f"<a href='#{_esc(anchor)}'>{_esc(title)}</a>" if anchor
+                    f"<a href='{pdf_links.LINK_PREFIX}{_esc(anchor)}'>{_esc(title)}</a>" if anchor
                     else _esc(title)
                 )
                 parts.append(
@@ -2399,7 +2423,7 @@ def _render_cover(
                     for day_anchor, day_title in subs:
                         parts.append(
                             f"<div class='cover-toc-sub'>"
-                            f"<a href='#{_esc(day_anchor)}'>{_esc(day_title)}</a></div>"
+                            f"<a href='{pdf_links.LINK_PREFIX}{_esc(day_anchor)}'>{_esc(day_title)}</a></div>"
                         )
             parts.append("</td>")
             offset += len(column)
@@ -4602,15 +4626,7 @@ def render_pdf(
         # - `--footer-center`: numeri di pagina. Un documento che il cliente
         #   stampa senza numeri di pagina è ingestibile se cade per terra.
         result = subprocess.run(
-            [
-                "wkhtmltopdf", "--quiet",
-                "--enable-internal-links",
-                "--outline",
-                "--footer-center", "[page] / [topage]",
-                "--footer-font-size", "8",
-                "--footer-spacing", "5",
-                tmp_html_path, tmp_pdf_path,
-            ],
+            [*COMANDO_STAMPA, tmp_html_path, tmp_pdf_path],
             capture_output=True,
             text=True,
             timeout=60,
@@ -4671,6 +4687,11 @@ def render_pdf(
                 Path(tmp_pdf_path).read_bytes(),
                 [c["pdf"] for c in capitoli_pronti],
                 allegati_veri,
+                # Le ancore, in fila con i capitoli: e' cio' che permette di
+                # sapere dove atterra ogni collegamento senza doverlo dedurre
+                # da un segnaposto invisibile che il motore di stampa di
+                # produzione non disegna.
+                ancore=[c.get("ancora") for c in capitoli_pronti],
             )
             Path(tmp_pdf_path).write_bytes(dati)
             link_report = resoconto.get("collegamenti") or {}

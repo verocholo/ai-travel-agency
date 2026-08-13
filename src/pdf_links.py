@@ -55,8 +55,60 @@ from urllib.parse import unquote
 #
 # Il nome è in italiano di proposito: se un giorno finisse per sbaglio in un
 # PDF consegnato, si capirebbe al volo da dove arriva.
+# [CAMBIATO 2026-08-13 — e il cambio nasce da un difetto che in produzione
+# ha azzerato TUTTA la navigazione interna del documento, mentre in sviluppo
+# non si vedeva.]
+#
+# Era `ancora-interna:`, uno schema inventato da noi. La logica era buona: uno
+# schema che non esiste non lo interpreta nessuno. Sbagliata l'ipotesi che ne
+# stava sotto — che il motore di stampa lasciasse in pace cio' che non
+# capisce.
+#
+# Cosa si e' misurato sul PDF venduto: 42 collegamenti verso l'esterno, tutti
+# perfetti; 26 annotazioni completamente vuote, rettangolo [0,0,0,0] e nessuna
+# azione; zero destinazioni interne. Il taglio e' netto — **tutto cio' che
+# punta fuori sopravvive, tutto cio' che punta dentro diventa un guscio
+# vuoto.** Il binario di produzione ha le patch e `--enable-internal-links`
+# funziona davvero: cerca il bersaglio, non lo trova (sta in un capitolo che
+# verra' cucito DOPO) e butta via il collegamento. Il binario di sviluppo,
+# senza patch, ignora quel flag e lascia tutto intatto: per questo qui non si
+# e' mai visto niente.
+#
+# Quindi si usa l'unica forma che in produzione arriva intatta: un indirizzo
+# `https://`. `.invalid` e' un dominio riservato dallo standard e non risolve
+# MAI — se un giorno un collegamento sfuggisse alla riparazione, il cliente
+# troverebbe un link morto invece del sito di qualcun altro, che e' il modo
+# giusto di sbagliare.
+#
+# Due sentieri diversi perche' sono due cose diverse: `sonda/` marca DOVE si
+# atterra, `vai/` e' il collegamento che ci porta.
+HOST_INTERNO = "https://ancora-interna.invalid/"
+_HOST_INTERNO = HOST_INTERNO  # nome vecchio, tenuto per non rompere niente
 PROBE_SCHEME = "ancora-interna"
-PROBE_PREFIX = f"{PROBE_SCHEME}:"
+PROBE_PREFIX = f"{HOST_INTERNO}sonda/"
+LINK_PREFIX = f"{HOST_INTERNO}vai/"
+
+
+def href_interno(ancora: str) -> str:
+    """L'indirizzo da mettere in un `href` per saltare DENTRO il documento.
+
+    Esiste per un motivo preciso, imparato il 13 agosto 2026: la forma di
+    questo indirizzo e' gia' cambiata una volta (`#ancora` → `ancora-interna:`
+    → `https://…/vai/`) e ogni cambio ha lasciato in giro decine di posti
+    scritti a mano, fra codice e controlli. Chi scrive un rimando interno
+    chiama questa funzione; chi lo cerca usa `RIFERIMENTI_NELL_HTML`. Cosi' un
+    eventuale terzo cambio si fa in due righe invece che in quaranta.
+    """
+    return f"{LINK_PREFIX}{ancora}"
+
+
+# Con che cosa si ritrovano, dentro l'HTML, i rimandi interni.
+#
+# Serve ai controlli e alla diagnostica: cercare `href='#…'` a mano — cioe'
+# quello che facevano tutti i controlli fino a ieri — non trova piu' niente,
+# e un controllo che non trova niente NON diventa rosso: diventa verde a
+# vuoto. E' il modo piu' silenzioso che conosciamo di perdere una garanzia.
+RIFERIMENTI_NELL_HTML = re.compile(re.escape(LINK_PREFIX) + r"([^'\"\s>]+)")
 
 _OBJ_RE = re.compile(rb"(?m)^(\d+)\s+(\d+)\s+obj\b")
 _URI_APERTURA_RE = re.compile(rb"/URI\s*\(")
@@ -223,6 +275,14 @@ def _anchor_of_uri(uri: str) -> str | None:
     """Nome dell'ancora se l'URI è un link interno tradotto male, altrimenti
     `None`. Solo `file:`: un `https://…#sezione` verso un sito vero è un link
     esterno legittimo e non va toccato."""
+    # La forma nuova: un indirizzo sentinella che il motore di stampa tratta
+    # come un normale link esterno e quindi non tocca.
+    if uri.startswith(LINK_PREFIX):
+        return unquote(uri[len(LINK_PREFIX):]).strip("/") or None
+    # La forma vecchia, `file:...#ancora`: resta riconosciuta perche' e' cio'
+    # che produce il motore di stampa SENZA le patch, cioe' quello di
+    # sviluppo. Toglierla renderebbe il campione locale diverso dal venduto,
+    # ed e' esattamente la differenza che ci e' costata questa settimana.
     if not uri.startswith("file:"):
         return None
     if "#" not in uri:
@@ -289,13 +349,20 @@ def _goto_body(body: bytes, page_obj: int, top: float) -> bytes:
     `/XYZ null <top> null`: `null` su ascissa e zoom significa «non toccare».
     Un lettore che scorre a sinistra o cambia lo zoom sotto le mani del
     cliente ogni volta che segue un link è più fastidioso del link rotto."""
-    action = (
-        b"/A <<\n/Type /Action\n/S /GoTo\n/D ["
-        + str(page_obj).encode("ascii")
-        + b" 0 R /XYZ null "
-        + f"{top:.2f}".encode("ascii")
-        + b" null]\n>>\n"
-    )
+    # `top` puo' essere `None`: succede quando la destinazione arriva dalla
+    # cucitura del fascicolo invece che da un segnaposto — li' si conosce la
+    # PAGINA ma non l'altezza. `/Fit` porta in cima a quella pagina, che per
+    # l'inizio di un capitolo e' esattamente il punto giusto.
+    if top is None:
+        destinazione = str(page_obj).encode("ascii") + b" 0 R /Fit"
+    else:
+        destinazione = (
+            str(page_obj).encode("ascii")
+            + b" 0 R /XYZ null "
+            + f"{top:.2f}".encode("ascii")
+            + b" null"
+        )
+    action = b"/A <<\n/Type /Action\n/S /GoTo\n/D [" + destinazione + b"]\n>>\n"
     # [CORRETTO 2026-08-02] Qui c'era `body.find(b"/A")`, che agganciava il
     # `/A` di `/Annot` — due righe più in su — e produceva `/Type /A << … >>`:
     # un PDF che pdfinfo rifiutava con «Dictionary key must be a name object».
@@ -381,12 +448,37 @@ def _incremental_update(data: bytes, replacements: dict[int, bytes]) -> bytes:
     return bytes(out)
 
 
-def repair_internal_links_bytes(data: bytes) -> tuple[bytes, dict]:
+def repair_internal_links_bytes(data: bytes, ancore_note=None) -> tuple[bytes, dict]:
     """Versione pura (byte in, byte fuori) — è quella che i test esercitano.
 
     Ritorna `(dati, rapporto)`. Se non c'è niente da fare, o se qualcosa non
-    torna, ritorna i dati IDENTICI a quelli in ingresso."""
-    report = {"riscritti": 0, "sonde": 0, "non_risolte": [], "errore": None}
+    torna, ritorna i dati IDENTICI a quelli in ingresso.
+
+    ## `ancore_note`: la rete che non dipende dal segnaposto
+
+    [AGGIUNTO 2026-08-13 — da un difetto che in produzione ha prodotto ZERO
+    collegamenti interni su sette capitoli, mentre in sviluppo ne produceva
+    sessantacinque con lo stesso identico codice.]
+
+    Il modo normale di sapere DOVE atterra un collegamento e' il segnaposto:
+    un'ancora larga due pixel, invisibile, che il motore di stampa trasforma
+    in un'annotazione della quale si legge la posizione. Funziona — finche' il
+    motore la disegna. In produzione, con un binario diverso da quello di
+    sviluppo, quei due pixel non producono nessuna annotazione: i segnaposto
+    spariscono e con loro tutte le destinazioni.
+
+    `ancore_note` e' `{nome_ancora: indice_di_pagina}` e arriva da chi cuce il
+    fascicolo, che le pagine dei capitoli le conosce per costruzione — non le
+    deve dedurre da un'immagine. Si usa SOLO per le ancore che il segnaposto
+    non ha risolto: dove il segnaposto c'e', la sua posizione e' piu' precisa,
+    perche' sa anche a che altezza della pagina atterrare.
+
+    La lezione, che vale oltre questo caso: **quando un'informazione la sai
+    per costruzione, non ricavarla guardando il risultato.** Il segnaposto era
+    un modo elegante di leggere qualcosa che avevamo gia' in mano.
+    """
+    report = {"riscritti": 0, "sonde": 0, "non_risolte": [], "errore": None,
+              "da_costruzione": 0}
     try:
         pdf = _Pdf(data)
         pages = _page_order(pdf)
@@ -422,10 +514,25 @@ def repair_internal_links_bytes(data: bytes) -> tuple[bytes, dict]:
             if anchor:
                 broken.append((num, anchor))
 
+        # Le ancore che il segnaposto non ha trovato si risolvono con quello
+        # che sappiamo per costruzione: la prima pagina del capitolo.
+        note = {}
+        for nome, pagina in (ancore_note or {}).items():
+            if not isinstance(nome, str) or not nome:
+                continue
+            try:
+                indice = int(pagina)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= indice < len(pages) and nome not in probes:
+                # `None` come altezza: si atterra in cima alla pagina, che per
+                # l'inizio di un capitolo e' esattamente il punto giusto.
+                note[nome] = (indice, None)
+
         replacements: dict[int, bytes] = {}
         unresolved: set[str] = set()
         for num, anchor in broken:
-            target = probes.get(anchor)
+            target = probes.get(anchor) or note.get(anchor)
             if target is None:
                 unresolved.add(anchor)
                 continue
