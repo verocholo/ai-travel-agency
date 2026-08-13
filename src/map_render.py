@@ -99,6 +99,9 @@ _PATH_RGB = (26, 59, 92)
 _LABEL_RGB = (26, 59, 92)
 _MUTED_RGB = (138, 151, 163)
 _WHITE = (255, 255, 255)
+# Il filo scuro attorno al pallino: e' l'inchiostro dell'identita'
+# (`identita.INCHIOSTRO`, #16212F) tradotto in rosso-verde-blu.
+_INCHIOSTRO_RGB = (22, 33, 47)
 
 # Disegniamo a 3x la dimensione di stampa e lasciamo che sia il PDF a ridurre:
 # è l'anti-aliasing del povero, ma su cerchi e linee sottili funziona meglio di
@@ -106,7 +109,22 @@ _WHITE = (255, 255, 255)
 _SCALE = 3
 _W, _H = 380, 260                  # dimensione logica, in punti di stampa
 _PAD = 30                          # margine interno perché i marker di bordo non vengano tagliati
-_PIN_RADIUS = 9 * _SCALE           # raggio del pallino numerato
+# [INGRANDITO 2026-08-13 — segnalazione di Lorenzo: «i pallini sono poco
+# chiari».] Era 9. Il problema non era la dimensione in se': era il CONTRASTO.
+# Questi pallini si appoggiano su una cartina stradale vera, gia' fitta di
+# nomi di vie, insegne e numeri civici, e un cerchietto da nove punti con
+# dentro una cifra da nove si perde nel rumore di fondo. Undici punti con un
+# alone bianco piu' largo (vedi `_ALONE_PIN`) lo staccano dallo sfondo senza
+# coprire mezza citta'.
+#
+# Effetto collaterale voluto: le zone cliccabili sulla cartina si calcolano da
+# questo raggio, quindi diventano piu' facili da centrare con un dito.
+_PIN_RADIUS = 11 * _SCALE          # raggio del pallino numerato
+
+# Quanto e' spesso l'anello bianco attorno al pallino. E' cio' che lo separa
+# dallo sfondo: su una cartina chiara serve a staccarlo dal grigio delle
+# strade, su un parco verde a non farlo sembrare parte del prato.
+_ALONE_PIN = 3 * _SCALE
 # Scostamento massimo consentito a un pallino per non coprirne un altro: un
 # diametro e mezzo, cioè circa quattro millimetri sulla pagina stampata. È il
 # prezzo che accettiamo di pagare alla precisione per far vedere tutte le
@@ -510,7 +528,7 @@ def _disegna_sopra(
             _dashed_line(draw, stop_px[-1], hotel_px, _WHITE, 4 * _SCALE)
         _dashed_line(draw, stop_px[-1], hotel_px, _PATH_RGB, 2 * _SCALE)
 
-    font_pin = _load_font(9 * _SCALE, bold=True)
+    font_pin = _load_font(11 * _SCALE, bold=True)
     font_label = _load_font(8 * _SCALE, bold=True)
     font_small = _load_font(7 * _SCALE)
     # L'alone dietro il testo: sullo schema il colore della carta, sopra una
@@ -685,9 +703,17 @@ def _pin(draw, px: float, py: float, colour: tuple, label: str, font) -> None:
     la stessa cosa a colpo d'occhio."""
     radius = _PIN_RADIUS
     draw.ellipse(
-        [px - radius - 1.5 * _SCALE, py - radius - 1.5 * _SCALE,
-         px + radius + 1.5 * _SCALE, py + radius + 1.5 * _SCALE],
+        [px - radius - _ALONE_PIN, py - radius - _ALONE_PIN,
+         px + radius + _ALONE_PIN, py + radius + _ALONE_PIN],
         fill=_WHITE,
+    )
+    # [AGGIUNTO 2026-08-13] Un filo scuro fra l'alone e il colore. Su un fondo
+    # chiaro il bianco contro il bianco della cartina sparisce, e il pallino
+    # torna a sembrare una macchia di colore appoggiata li'. Il filo gli da'
+    # un bordo in tutte le condizioni di sfondo.
+    draw.ellipse(
+        [px - radius - 1, py - radius - 1, px + radius + 1, py + radius + 1],
+        fill=_INCHIOSTRO_RGB,
     )
     draw.ellipse([px - radius, py - radius, px + radius, py + radius], fill=colour)
     if font is None:
