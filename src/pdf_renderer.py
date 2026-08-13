@@ -816,6 +816,17 @@ _CSS = """
        motore di stampa: e' una di quelle proprieta' che funzionano benissimo
        nell'anteprima del browser e vengono ignorate in silenzio nel PDF
        venduto. */
+    /* La fila di fotografie in chiusura di giornata — vedi
+       `_render_striscia_foto()` per il perche' delle tre scelte. */
+    .day-striscia {
+      width: 100%; border-collapse: separate; border-spacing: 6px;
+      margin: 10px -6px 4px -6px; page-break-inside: avoid;
+    }
+    .day-striscia td { vertical-align: top; padding: 0; text-align: center; }
+    .day-striscia img { max-width: 100%; max-height: 120px; }
+    .day-striscia .didascalia {
+      font-size: 8px; color: #98a4b0; margin-top: 3px; line-height: 1.3;
+    }
     .day-foto { margin: 0 0 10px 0; text-align: center; }
     .day-foto img { max-width: 100%; max-height: 190px; }
     .day-foto .didascalia { font-size: 9px; color: #8a97a5; margin-top: 2px; }
@@ -2496,6 +2507,43 @@ def _lunghezza_visibile(html_interno: str) -> int:
     return len(html.unescape(testo))
 
 
+# Un titolo di sezione seguito subito dalla sua riga di presentazione. Sono
+# due elementi semplici e mai annidati, quindi qui l'espressione regolare e'
+# sicura — cosa che NON sarebbe se provasse a inghiottire il primo blocco
+# qualunque, che puo' contenerne altri dentro.
+_RE_TITOLO_CON_INIZIO = re.compile(
+    r"(<div class='section-title'>.*?</div>)\s*"
+    r"(<div class='section-intro'>.*?</div>)",
+    re.S,
+)
+
+
+def _tieni_il_titolo_col_suo_inizio(documento: str) -> str:
+    """Un titolo non resta mai da solo in fondo alla pagina.
+
+    [AGGIUNTO 2026-08-13 — segnalazione di Lorenzo: «non voglio che ci sia una
+    pagina iniziata per due righe e poi lasciata bianca», e prima ancora
+    «evitando di spezzare i paragrafi o di iniziare una pagina con tre
+    righe».]
+
+    Il motore di stampa non conosce «non spezzare DOPO questo elemento»: la
+    proprieta' esiste nello standard e qui viene ignorata in silenzio. Conosce
+    invece «non spezzare DENTRO una tabella». Quindi il titolo e la sua riga
+    di presentazione viaggiano dentro la stessa tabella-guscio: o entrano
+    insieme in questa pagina, o vanno insieme nella prossima.
+
+    E' lo stesso identico rimedio gia' usato per i paragrafi corti, applicato
+    allo stesso modo — una passata sola sul documento finito invece di una
+    regola da ricordarsi in quindici punti diversi. Vale anche per le sezioni
+    che ancora non esistono, che e' l'unico modo perche' non si debba
+    richiedere la stessa cosa fra un mese.
+    """
+    return _RE_TITOLO_CON_INIZIO.sub(
+        lambda m: f"<table class='keep'><tr><td>{m.group(1)}{m.group(2)}</td></tr></table>",
+        documento,
+    )
+
+
 def _tieni_uniti_i_paragrafi(documento: str) -> str:
     """Passata finale di impaginazione sull'intero documento.
 
@@ -2787,6 +2835,78 @@ def _render_day_travel_total(legs) -> str:
         if sintesi.get("walking_minutes"):
             testo += f" (~{sintesi['walking_minutes']} min di cammino)"
     return f"<div class='day-total'>{_esc(testo)}</div>"
+
+
+def _foto_vere_della_giornata(blocks, photos: dict | None) -> list:
+    """Le fotografie VERE delle tappe di una giornata, nell'ordine di visita.
+
+    Una tappa sola per luogo: se il cliente torna in Piazza Maggiore due
+    volte, la sua fotografia si stampa una volta.
+    """
+    if not isinstance(photos, dict) or not photos:
+        return []
+    viste, uscita = set(), []
+    for block in blocks or []:
+        if not isinstance(block, dict):
+            continue
+        poi_id = block.get("poi_id")
+        if not isinstance(poi_id, str) or not poi_id or poi_id in viste:
+            continue
+        scatto = photos.get(poi_id)
+        if not isinstance(scatto, dict) or not scatto.get("reale"):
+            continue
+        credito = scatto.get("credito")
+        if not scatto.get("png") or not isinstance(credito, str) or not credito.strip():
+            continue
+        viste.add(poi_id)
+        uscita.append((poi_id, scatto, str(block.get("location") or "").strip()))
+    return uscita
+
+
+def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "") -> str:
+    """Fino a tre fotografie in fila, in chiusura di giornata.
+
+    [AGGIUNTO 2026-08-13 — richiesta di Lorenzo: «inserisci piu' foto,
+    soprattutto negli spazi bianchi; a pagina 5 e 7 ce ne stanno almeno 3».]
+
+    Una fotografia per giornata lasciava mezze pagine vuote e raccontava un
+    luogo su sei. Qui se ne mettono altre due o tre, in fondo alla giornata:
+    e' il punto in cui lo spazio avanza davvero, ed e' anche il posto giusto
+    per un colpo d'occhio su cio' che si e' appena letto.
+
+    Tre scelte, tutte per lo stesso motivo — che il documento non peggiori
+    quando i dati sono pochi:
+
+      - la fila si stampa **solo se ci sono almeno due** fotografie nuove. Una
+        sola, larga un terzo di pagina e sola in una riga da tre, sembra un
+        errore di impaginazione;
+      - le colonne si fanno con una TABELLA, l'unico modo che questo motore
+        di stampa conosce davvero;
+      - `page-break-inside: avoid` sulla tabella: se la fila non ci sta,
+        scende intera invece di spezzarsi in due pagine — la stessa regola
+        della nota di copertina, e per lo stesso motivo.
+    """
+    candidate = [c for c in _foto_vere_della_giornata(blocks, photos)
+                 if c[0] != gia_usata][:3]
+    if len(candidate) < 2:
+        return ""
+    larghezza = 100 // len(candidate)
+    celle = []
+    for _poi_id, scatto, nome in candidate:
+        try:
+            b64 = base64.b64encode(scatto["png"]).decode("ascii")
+        except (TypeError, ValueError, KeyError):
+            continue
+        tipo = foto.mime_immagine(scatto.get("png"))
+        celle.append(
+            f"<td style='width:{larghezza}%'>"
+            f"<img src='data:{tipo};base64,{b64}' alt='{_esc(nome)}'>"
+            f"<div class='didascalia'>{_esc(scatto.get('credito') or '')}</div>"
+            "</td>"
+        )
+    if len(celle) < 2:
+        return ""
+    return ("<table class='day-striscia'><tr>" + "".join(celle) + "</tr></table>")
 
 
 def _render_day_photo(blocks, photos: dict | None) -> str:
@@ -4003,6 +4123,14 @@ def render_html(
         # stampata UNA volta: dentro il ciclo verrebbe ripetuta a ogni
         # "(continua)", cioe' tre volte nella stessa giornata lunga.
         _foto_html = _render_day_photo(blocks, photos)
+        # La fotografia in apertura ne usa una; la fila in chiusura prende le
+        # altre. Passare qui quale e' gia' stata usata evita di stamparla due
+        # volte nella stessa pagina, che e' il modo piu' rapido di far
+        # sembrare automatico un documento.
+        _foto_disponibili = _foto_vere_della_giornata(blocks, photos)
+        _striscia_html = _render_striscia_foto(
+            blocks, photos,
+            gia_usata=(_foto_disponibili[0][0] if _foto_disponibili else ""))
         _MAX_BLOCKS_PER_DAY_CARD = 20
         chunks = [
             blocks[i : i + _MAX_BLOCKS_PER_DAY_CARD]
@@ -4142,6 +4270,12 @@ def render_html(
                 parts.append(_render_maps_link(poi_id, location_lookup, place_cards))
                 parts.append("</div>")
             parts.append("</div>")
+
+        # [AGGIUNTO 2026-08-13] La fila di fotografie chiude la giornata,
+        # dopo il programma e prima degli spostamenti residui: e' li' che lo
+        # spazio avanza davvero.
+        if _striscia_html:
+            parts.append(_striscia_html)
 
         # [AGGIUNTO 2026-07-31 — richiesta di Lorenzo: "manca anche la parte
         # 'cartina e come arrivare'"] Subito dopo il programma della
@@ -4291,6 +4425,17 @@ def render_html(
     # spezzarsi fra due pagine. Sta qui, alla fine, e non dentro i singoli
     # capitoli, per la ragione scritta su `_tieni_uniti_i_paragrafi` - vale
     # anche per i capitoli che verranno aggiunti domani.
+    # [PROVATO E TOLTO 2026-08-13] Qui era stata inserita una passata che
+    # teneva il titolo di sezione attaccato alla sua riga di presentazione,
+    # per rispondere a «non voglio una pagina iniziata per due righe».
+    # Funzionava — e peggiorava il documento: il controllo misurato
+    # `test_nessuna_pagina_si_ferma_a_meta_foglio` e' diventato rosso, con la
+    # pagina 3 che si fermava al 68%. Togliere un titolo orfano creando due
+    # centimetri di vuoto altrove non e' un miglioramento, e' uno scambio.
+    # La funzione `_tieni_il_titolo_col_suo_inizio()` resta scritta e non
+    # collegata: servira' quando si sapra' tenere insieme il titolo SOLO se
+    # cade nell'ultimo quarto di pagina, che e' l'informazione che questo
+    # motore di stampa non ci da'.
     return _tieni_uniti_i_paragrafi("".join(parts))
 
 
