@@ -491,3 +491,158 @@ def solo_reali(foto: dict | None) -> dict:
         chiave: valore for chiave, valore in foto.items()
         if isinstance(valore, dict) and valore.get("reale") and valore.get("png")
     }
+
+
+def ritaglia_panoramica(grezzi: bytes, rapporto: float = 2.6) -> bytes | None:
+    """La stessa fotografia, ritagliata a fascia larga. `None` se non si legge.
+
+    [AGGIUNTO 2026-08-13 — task #209] Serve alla fascia in cima alla
+    copertina, e nasce da un vincolo che in questo progetto ha gia' fatto
+    danni una volta.
+
+    In un browser questa cosa si fa con una riga: `object-fit: cover`, e
+    l'immagine riempie il riquadro tagliando quello che avanza. Il motore di
+    stampa di questo progetto quella proprieta' la ignora **in silenzio**: si
+    vedrebbe l'anteprima perfetta e il PDF venduto sbagliato.
+
+    L'alternativa dentro il foglio di stile sarebbe `width: 100%` insieme a
+    `max-height`, ed e' esattamente la coppia che l'11 agosto ha prodotto le
+    fotografie schiacciate che Lorenzo ha segnalato: il motore obbedisce a
+    tutte e due gli ordini e deforma l'immagine.
+
+    Quindi il ritaglio si fa QUI, sui pixel, dove funziona davvero. Dopo, il
+    foglio di stile puo' dire soltanto `width: 100%`: le proporzioni sono gia'
+    giuste e non c'e' piu' niente da schiacciare.
+
+    Si taglia al CENTRO in altezza, non in alto: nelle fotografie di viaggio
+    la meta' superiore e' quasi sempre cielo, e una fascia di solo cielo non
+    racconta nessun posto.
+    """
+    try:
+        import io
+
+        from PIL import Image
+    except ImportError:
+        return None
+    if not isinstance(grezzi, (bytes, bytearray)) or not grezzi:
+        return None
+    try:
+        with Image.open(io.BytesIO(grezzi)) as immagine:
+            piena = immagine.convert("RGB")
+            larghezza, altezza = piena.size
+            if not larghezza or not altezza or rapporto <= 0:
+                return None
+            voluta = int(larghezza / rapporto)
+            if voluta >= altezza:
+                # Gia' piu' panoramica di cosi': si lascia com'e'. Allargarla
+                # vorrebbe dire aggiungere pixel che non esistono.
+                ritagliata = piena
+            else:
+                alto = (altezza - voluta) // 2
+                ritagliata = piena.crop((0, alto, larghezza, alto + voluta))
+            fuori = io.BytesIO()
+            ritagliata.save(fuori, format="JPEG", quality=85, optimize=True,
+                            progressive=True)
+            return fuori.getvalue()
+    except Exception:
+        return None
+
+
+def sfuma_in_basso(grezzi: bytes, quota: float = 0.62,
+                   forza: float = 0.86) -> bytes | None:
+    """La stessa foto con la luce che cala verso il fondo. `None` se non si legge.
+
+    [AGGIUNTO 2026-08-13 — task #213] Serve dove un titolo bianco viene
+    stampato SOPRA una fotografia. E' la mossa che fa sembrare il documento
+    una rivista invece di una relazione, e ha un difetto che non si vede
+    provandola: se capita una foto col fondo chiaro — un cielo, un muro
+    d'intonaco, la neve — il titolo sparisce. E capita al cliente, non a noi,
+    perche' noi la proviamo su tre foto e lui ne riceve trenta.
+
+    In un browser si risolve con una sfumatura nera semitrasparente. Il motore
+    di stampa di questo progetto non sa fare ne' le sfumature (`linear-
+    gradient`) ne' la trasparenza (`rgba`, `opacity`): le ignora in silenzio,
+    e in silenzio e' la parola che conta. Quindi la sfumatura si disegna sui
+    PIXEL, riga per riga, dove funziona sempre.
+
+    Sfumata e non a fascia piena di proposito: una fascia scurita di colpo si
+    riconosce come un rettangolo appoggiato sopra la foto, ed e' il contrario
+    di premium. L'esponente 1,4 fa partire il buio piano e stringere in fondo,
+    che e' come si comporta la luce vera.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    if not isinstance(grezzi, (bytes, bytearray)) or not grezzi:
+        return None
+    try:
+        with Image.open(io.BytesIO(grezzi)) as immagine:
+            piena = immagine.convert("RGB")
+            larghezza, altezza = piena.size
+            if not larghezza or not altezza:
+                return None
+            quota = min(max(float(quota), 0.05), 1.0)
+            forza = min(max(float(forza), 0.0), 1.0)
+            inizio = int(altezza * (1.0 - quota))
+            corsa = max(1, altezza - inizio)
+            velo = Image.new("L", (1, corsa))
+            for riga in range(corsa):
+                peso = (riga / (corsa - 1)) ** 1.4 if corsa > 1 else 1.0
+                velo.putpixel((0, riga), int(255 * forza * peso))
+            velo = velo.resize((larghezza, corsa))
+            nero = Image.new("RGB", (larghezza, corsa), (0, 0, 0))
+            fascia = piena.crop((0, inizio, larghezza, altezza))
+            piena.paste(Image.composite(nero, fascia, velo), (0, inizio))
+            fuori = io.BytesIO()
+            piena.save(fuori, format="JPEG", quality=88, optimize=True,
+                       progressive=True)
+            return fuori.getvalue()
+    except Exception:
+        return None
+
+
+def ritaglia_tondo(grezzi: bytes, lato: int = 460) -> bytes | None:
+    """La stessa foto dentro un cerchio, su fondo bianco. `None` se non si legge.
+
+    [AGGIUNTO 2026-08-13 — task #213] Misurato sul motore di stampa: il
+    ritaglio tondo via CSS (`border-radius` piu' `overflow: hidden` sul
+    contenitore) esce **mezzo tondo e mezzo quadrato** — arrotonda in alto e
+    taglia netto in basso. E' una di quelle cose che nell'anteprima del
+    browser sono perfette e nel PDF venduto sono un difetto.
+
+    Quindi si ritaglia sui pixel. Si prende il quadrato CENTRALE dell'immagine
+    prima di renderla tonda: partendo dall'angolo si taglierebbe via meta' del
+    soggetto, che nelle fotografie di viaggio sta quasi sempre al centro.
+
+    Fondo bianco invece che trasparente: il documento va su carta bianca, un
+    PNG con canale alfa pesa di piu' e su certi lettori si annerisce.
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return None
+    if not isinstance(grezzi, (bytes, bytearray)) or not grezzi:
+        return None
+    try:
+        lato = max(16, int(lato))
+        with Image.open(io.BytesIO(grezzi)) as immagine:
+            piena = immagine.convert("RGB")
+            larghezza, altezza = piena.size
+            minimo = min(larghezza, altezza)
+            if not minimo:
+                return None
+            sinistra = (larghezza - minimo) // 2
+            alto = (altezza - minimo) // 2
+            quadrata = piena.crop(
+                (sinistra, alto, sinistra + minimo, alto + minimo)
+            ).resize((lato, lato))
+            maschera = Image.new("L", (lato, lato), 0)
+            ImageDraw.Draw(maschera).ellipse((0, 0, lato - 1, lato - 1), fill=255)
+            sfondo = Image.new("RGB", (lato, lato), (255, 255, 255))
+            sfondo.paste(quadrata, (0, 0), maschera)
+            fuori = io.BytesIO()
+            sfondo.save(fuori, format="PNG", optimize=True)
+            return fuori.getvalue()
+    except Exception:
+        return None

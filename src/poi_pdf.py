@@ -89,7 +89,7 @@ TIMEOUT_S = 30
 # scatole flessibili. Le due colonne, dove servono, si fanno con le
 # tabelle.
 # ---------------------------------------------------------------------------
-_CSS = """
+_CSS_MODELLO = """
     @page { size: A4; margin: 1.6cm 1.6cm; }
     * { box-sizing: border-box; }
     body {
@@ -103,11 +103,11 @@ _CSS = """
        sono due documenti, non uno. Adesso si riconoscono come parenti. */
     .testata {
       background-color: #ffffff; color: #16212f;
-      border-top: 3px solid #b08d4f;
+      border-top: 3px solid {{accento}};
       padding: 18px 0 16px 0; margin-bottom: 4px;
     }
     .testata .occhiello {
-      font-size: 9px; letter-spacing: .20em; color: #b08d4f;
+      font-size: 9px; letter-spacing: .20em; color: {{accento_testo}};
       text-transform: uppercase; margin-bottom: 14px; font-weight: bold;
     }
     .testata h1 {
@@ -124,14 +124,14 @@ _CSS = """
     .sottotitolo {
       font-family: Georgia, 'Times New Roman', serif;
       font-size: 17px; font-weight: normal; color: #16212f;
-      border-bottom: 1px solid #e2ded6; padding-bottom: 6px;
+      border-bottom: 1px solid {{bordo_caldo}}; padding-bottom: 6px;
       margin: 22px 0 10px 0;
     }
     .corpo { margin: 0 0 9px 0; }
-    .riga-luogo { padding: 4px 0; border-bottom: 1px solid #efece5; }
+    .riga-luogo { padding: 4px 0; border-bottom: 1px solid {{bordo_caldo}}; }
     .nome-luogo { font-weight: bold; color: #16212f; }
     .riquadro {
-      background: #faf7f1; border-left: 2px solid #b08d4f;
+      background: {{sfondo_caldo}}; border-left: 2px solid {{accento}};
       padding: 11px 16px; margin: 12px 0;
     }
     .riquadro ul { margin: 6px 0 0 0; padding-left: 18px; }
@@ -152,7 +152,7 @@ _CSS = """
        ogni volta. */
     .bottone-torna a {
       display: inline-block;
-      background-color: #1a3b5c; color: #ffffff; text-decoration: none;
+      background-color: {{scuro}}; color: #ffffff; text-decoration: none;
       padding: 10px 18px; border-radius: 0; font-weight: bold;
       font-size: 13px;
     }
@@ -166,7 +166,7 @@ _CSS = """
     .anchor-probe { font-size: 2px; line-height: 2px; color: #ffffff; }
     .anchor-probe a { color: #ffffff; text-decoration: none; }
     .nota { font-size: 10.5px; color: #6b7a89; margin-top: 12px; }
-    a { color: #2f6690; }
+    a { color: {{primario}}; }
     /* Il motore non sa tenere insieme una scatola alta, ma sa tenere
        insieme una riga di tabella: dove serve davvero si usa quella. */
     tr, img { page-break-inside: avoid; }
@@ -183,6 +183,32 @@ _CSS = """
     }
     .keep-prosa td { padding: 0; border: none; }
 """
+
+
+def _css(tavolozza: dict | None = None) -> str:
+    """Il foglio di stile del capitolo, coi colori del posto (task #209).
+
+    [AGGIUNTO 2026-08-13] I capitoli staccati vengono cuciti dentro lo stesso
+    file del documento principale: se restassero blu navy mentre il principale
+    e' color cotto, il fascicolo sembrerebbe due documenti incollati per
+    sbaglio — un difetto piu' evidente del grigiore da cui siamo partiti.
+
+    La tavolozza si sceglie dalle stesse fotografie che vede il documento
+    principale, quindi le due meta' arrivano allo stesso colore da sole. Che
+    ci arrivino DAVVERO non e' una cosa da dare per buona: c'e' una prova
+    apposta che stampa tutte e due e confronta.
+    """
+    from src import tavolozza as _tav
+
+    piena = _tav.completa(tavolozza) if tavolozza else _tav.completa(_tav.PREDEFINITA)
+    foglio = _CSS_MODELLO
+    for ruolo, colore in piena.items():
+        if isinstance(colore, str) and colore.startswith("#"):
+            foglio = foglio.replace("{{" + ruolo + "}}", colore)
+    return foglio
+
+
+_CSS = _css()
 
 
 def _righe_nominate(voci, titolo: str) -> str:
@@ -291,6 +317,9 @@ def build_guide_html(
     open_hours: dict | None = None,
     ancora_capitolo: str = "",
     ritorni=None,
+    # [AGGIUNTO 2026-08-13 — task #209] I colori del posto. `None` = quelli
+    # di sempre, cioe' il capitolo esattamente com'era ieri.
+    tavolozza: dict | None = None,
 ) -> str:
     """L'HTML di UNA guida, completo e autonomo.
 
@@ -334,7 +363,7 @@ def build_guide_html(
 
     parti = [
         "<!DOCTYPE html><html lang='it'><head><meta charset='utf-8'>",
-        f"<title>{_esc(titolo or 'Guida')}</title><style>{_CSS}</style></head><body>",
+        f"<title>{_esc(titolo or 'Guida')}</title><style>{_css(tavolozza)}</style></head><body>",
         # La sonda del capitolo sta PRIMA di tutto: è il punto in cui deve
         # atterrare chi arriva dall'itinerario, e deve essere la testata —
         # non il primo paragrafo — la prima cosa che vede.
@@ -565,6 +594,13 @@ def costruisci_capitoli(
     tragitti = directions_by_poi if isinstance(directions_by_poi, dict) else {}
     orari = open_hours_by_poi if isinstance(open_hours_by_poi, dict) else {}
 
+    # Stesse fotografie del documento principale, quindi stessa tavolozza:
+    # le due meta' del fascicolo ci arrivano da sole. Che ci arrivino
+    # DAVVERO lo verifica `test_copertina_illustrata`, stampandole entrambe.
+    from src import tavolozza as _tav
+
+    tinte = _tav.scegli(foto if isinstance(foto, dict) else None)
+
     capitoli: list[dict] = []
     for guide in elenco[:MAX_GUIDE]:
         poi_id = guide.get("poi_id")
@@ -580,6 +616,7 @@ def costruisci_capitoli(
                 open_hours=orari.get(poi_id),
                 ancora_capitolo=fascicolo.ancora_capitolo(poi_id),
                 ritorni=ritorni.get(poi_id),
+                tavolozza=tinte,
             )
             blob = render_guide_pdf(html)
         except Exception:
