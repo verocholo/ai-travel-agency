@@ -280,7 +280,12 @@ class TestIlCapitoloStaccato(unittest.TestCase):
             self._guida(), ancora_capitolo="capitolo-poi1",
             ritorni=self._ritorni())
         for voce in self._ritorni():
-            self.assertIn(f"href='#{voce['ancora']}'", html)
+            # [AGGIORNATO 2026-08-13] Era `href='#{ancora}'`. Il pulsante
+            # "torna al programma" e' proprio uno di quelli che in produzione
+            # sparivano: punta indietro, verso il documento principale, cioe'
+            # verso un bersaglio che al momento della stampa del capitolo non
+            # esiste ancora. Il motore lo cancellava.
+            self.assertIn(f"href='{pdf_links.href_interno(voce['ancora'])}'", html)
 
     def test_nel_fascicolo_il_ritorno_non_passa_da_internet(self):
         # Il documento principale è a due pagine di distanza. Mandare il
@@ -643,7 +648,9 @@ class TestIlDocumentoVeroDalPrincipioAllaFine(unittest.TestCase):
             capitoli={"POI1": fascicolo.ancora_capitolo("POI1")},
         )
         self.assertNotIn("Una storia lunga.", html)
-        self.assertIn(f"href='#{fascicolo.ancora_capitolo('POI1')}'", html)
+        self.assertIn(
+            f"href='{pdf_links.href_interno(fascicolo.ancora_capitolo('POI1'))}'",
+            html)
 
     def test_ogni_passaggio_semina_il_suo_ritorno_nel_punto_giusto(self):
         # Due passaggi al Duomo, due segnaposti distinti, ognuno accanto al

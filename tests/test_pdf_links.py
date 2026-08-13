@@ -172,7 +172,13 @@ class TestAncoreNellHtml(unittest.TestCase):
     def test_ogni_collegamento_interno_ha_il_suo_bersaglio(self):
         html = self._html()
         bersagli = set(re.findall(r"id='([^']+)' class='anchor-probe'", html))
-        partenze = set(re.findall(r"href='#([^']+)'", html))
+        # [AGGIORNATO 2026-08-13] Era `href='#([^']+)'`. Il motivo per cui
+        # questo aggiornamento non e' cosmetico: cercando la forma vecchia il
+        # controllo non troverebbe NIENTE, e insieme vuoto meno insieme
+        # qualunque fa insieme vuoto — sarebbe rimasto verde per sempre senza
+        # guardare piu' niente. L'unica rete che se ne accorge e' l'assertTrue
+        # qui sotto, ed e' per questo che c'e'.
+        partenze = set(pdf_links.RIFERIMENTI_NELL_HTML.findall(html))
         self.assertTrue(partenze, "il documento deve avere collegamenti interni")
         self.assertEqual(
             partenze - bersagli, set(),
@@ -191,7 +197,7 @@ class TestAncoreNellHtml(unittest.TestCase):
         # È il collegamento che Lorenzo ha segnalato per primo: dal blocco
         # della giornata alla scheda della guida in fondo al documento.
         html = self._html()
-        self.assertIn("href='#guida-poi1'", html.lower())
+        self.assertIn(f"href='{pdf_links.href_interno('guida-poi1')}'", html.lower())
         self.assertIn("id='guida-poi1' class='anchor-probe'", html.lower())
 
     def test_le_sonde_non_si_vedono(self):

@@ -10,7 +10,7 @@ o è universalmente vera, o è ancorata a un dato REALE di QUESTO viaggio.
 """
 import unittest
 
-from src import predeparture
+from src import pdf_links, predeparture
 from src.pdf_renderer import _render_predeparture, render_html
 from src.schemas import POI
 
@@ -248,7 +248,9 @@ class TestSezioneNelDocumento(unittest.TestCase):
 
     def test_e_raggiungibile_dallindice(self):
         html = self._html()
-        self.assertIn("href='#prima-di-partire'", html)
+        # [AGGIORNATO 2026-08-13] I rimandi interni non partono piu' con
+        # `#`: in produzione il motore di stampa li cancellava.
+        self.assertIn(f"href='{pdf_links.href_interno('prima-di-partire')}'", html)
         self.assertIn("Prima di partire", html)
 
     def test_senza_dati_il_documento_resta_identico_a_prima(self):
@@ -280,12 +282,12 @@ class TestIndiceDiCopertinaCliccabile(unittest.TestCase):
         # copertina — un test che passa senza più guardare dove doveva.
         cover = html.split("class='header'")[0]
         self.assertIn("cover-toc-item", cover)
-        self.assertIn("href='#giorno-per-giorno'", cover)
+        self.assertIn(f"href='{pdf_links.href_interno('giorno-per-giorno')}'", cover)
         # I giorni annidati erano l'unica cosa che la pagina d'indice separata
         # aveva in più della copertina: se si perdessero, la fusione delle due
         # pagine avrebbe tolto informazione invece che spazio bianco.
         self.assertIn("cover-toc-sub", cover)
-        self.assertIn("href='#giorno-1'", cover)
+        self.assertIn(f"href='{pdf_links.href_interno('giorno-1')}'", cover)
 
 
 if __name__ == "__main__":

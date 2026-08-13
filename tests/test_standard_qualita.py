@@ -49,7 +49,7 @@ import tempfile
 import unittest
 
 import scripts_sample_pdf
-from src import pdf_renderer
+from src import pdf_links, pdf_renderer
 
 
 def _documento() -> str:
@@ -144,7 +144,14 @@ class TestICollegamentiPortanoDaQualchePartE(unittest.TestCase):
     def test_nessun_collegamento_interno_punta_nel_vuoto(self):
         html = _documento()
         bersagli = set(re.findall(r"id='([^']+)' class='anchor-probe'", html))
-        partenze = set(re.findall(r"href='#([^']+)'", html))
+        # [AGGIORNATO 2026-08-13] Era `href='#([^']+)'`. La forma dei
+        # rimandi interni e' cambiata perche' quella vecchia, in produzione,
+        # veniva cancellata dal motore di stampa. Attenzione: cercando ancora
+        # la forma vecchia questo controllo non sarebbe diventato rosso — non
+        # avrebbe trovato nulla, e «nessun collegamento senza bersaglio» e'
+        # banalmente vero quando i collegamenti sono zero. Regge solo grazie
+        # all'`assertTrue` qui sotto.
+        partenze = set(pdf_links.RIFERIMENTI_NELL_HTML.findall(html))
         self.assertTrue(partenze, "un documento senza collegamenti interni non è questo prodotto")
         self.assertEqual(
             set(), partenze - bersagli,
@@ -157,7 +164,8 @@ class TestICollegamentiPortanoDaQualchePartE(unittest.TestCase):
         html = _documento()
         schede = set(re.findall(r"id='(guida-[^']+)' class='anchor-probe'", html))
         self.assertTrue(schede, "il campione deve avere guide tascabili")
-        orfane = [a for a in schede if f"href='#{a}'" not in html]
+        orfane = [a for a in schede
+                  if f"href='{pdf_links.href_interno(a)}'" not in html]
         self.assertEqual([], orfane, f"guide non raggiungibili dal programma: {orfane}")
 
     def test_il_collegamento_alla_recensione_e_coerente_col_capitolo(self):
@@ -167,7 +175,7 @@ class TestICollegamentiPortanoDaQualchePartE(unittest.TestCase):
         cliente, non la presenza incondizionata di un'àncora."""
         html = _documento()
         ancora = "id='recensione' class='anchor-probe'" in html
-        rimando = "href='#recensione'" in html
+        rimando = f"href='{pdf_links.href_interno('recensione')}'" in html
         capitolo = "Facci sapere com&#x27;è andata" in html or "Facci sapere com'è andata" in html
         self.assertEqual(
             {ancora, rimando, capitolo}, {ancora},
@@ -916,7 +924,7 @@ class TestLaCartaNonRestaMezzaVuota(unittest.TestCase):
         except ImportError:
             self.skipTest("serve pypdf per guardare dentro il PDF")
 
-        attesi = len(re.findall(r"href='#([^']+)'", _documento()))
+        attesi = len(pdf_links.RIFERIMENTI_NELL_HTML.findall(_documento()))
         self.assertTrue(attesi, "il documento non contiene nessun rimando interno")
 
         lettore = pypdf.PdfReader(self.pdf)
@@ -966,7 +974,7 @@ class TestLaCartaNonRestaMezzaVuota(unittest.TestCase):
             f"il documento scrive {attesi} rimandi interni ma sulla carta ne "
             f"funzionano {saltano}: qualcuno è tornato a essere solo testo blu",
         )
-        bersagli = len(set(re.findall(r"href='#([^']+)'", _documento())))
+        bersagli = len(set(pdf_links.RIFERIMENTI_NELL_HTML.findall(_documento())))
         self.assertEqual(
             bersagli, senza_destinazione,
             f"i segnaposto di atterraggio sono {senza_destinazione} per "
@@ -1018,10 +1026,14 @@ class TestLaCartinaSiPuoCliccare(unittest.TestCase):
         """
         documento = _documento()
         ancore = set(re.findall(r"id='([^']+)' class='anchor-probe'", documento))
-        rotti = [
-            b for b in re.findall(r"<a class='map-hit' href='#([^']+)'", documento)
-            if b not in ancore
-        ]
+        pallini = re.findall(
+            r"<a class='map-hit' href='" + re.escape(pdf_links.LINK_PREFIX) + r"([^']+)'",
+            documento)
+        # Senza questa riga il controllo sopravvive a un cambio di forma
+        # dell'indirizzo restando verde su una lista vuota: e' esattamente
+        # come si e' perso, per una settimana, TUTTO il salto interno.
+        self.assertTrue(pallini, "nessun pallino rimanda piu' dentro al documento")
+        rotti = [b for b in pallini if b not in ancore]
         self.assertEqual([], rotti, f"pallini che puntano nel vuoto: {rotti}")
 
     def test_ogni_pallino_dice_dove_porta_prima_che_ci_si_clicchi(self):

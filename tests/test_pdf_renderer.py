@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from src import pdf_renderer
+from src import pdf_links, pdf_renderer
 from src.pdf_renderer import render_html, render_pdf, PdfRendererError, _build_poi_energy_lookup
 
 TRIP = {
@@ -51,13 +51,42 @@ class TestRenderHtml(unittest.TestCase):
         self.assertIn("<style>", out)
 
     def test_output_is_self_contained_no_external_resources(self):
-        # Nessun CDN/font remoto: il PDF deve poter essere generato anche
-        # offline (wkhtmltopdf senza accesso di rete).
+        """Nessun CDN, nessun font remoto: il PDF si deve poter generare
+        anche offline, perche' wkhtmltopdf gira senza accesso di rete.
+
+        [AGGIORNATO 2026-08-13 — ed e' esattamente il controllo che il
+        documento di diagnosi aveva previsto si sarebbe rotto.] Da oggi nel
+        documento c'e' un indirizzo `https://`: e' cosi' che si scrive un
+        rimando INTERNO, dopo che la forma `#ancora`, in produzione, e' stata
+        cancellata dal motore di stampa insieme a tutta la navigazione.
+
+        Non e' un'eccezione da ignorare. `ancora-interna.invalid` non viene
+        MAI contattato: non e' una risorsa che serve a costruire la pagina,
+        e' un'etichetta che il riparatore sostituisce con un salto vero prima
+        che il file parta. Ma la promessa di questo controllo va difesa lo
+        stesso, e allargarla a «qualunque https va bene» la svuoterebbe.
+        Quindi si elencano gli indirizzi trovati e si pretende che l'unico sia
+        il sentinella: il giorno in cui qualcuno aggiunge davvero un font
+        remoto, questo controllo torna rosso come deve.
+        """
+        import re
+
+        from src import pdf_links
+
         itinerary = {"destination": "Roma", "executive_summary": "x", "days": []}
         out = render_html(itinerary, TRIP)
         self.assertNotIn("http://", out)
         self.assertNotIn("https://cdn", out)
         self.assertNotIn("fonts.googleapis", out)
+
+        estranei = sorted({
+            indirizzo for indirizzo in re.findall(r"https://[^\s'\"<>]+", out)
+            if not indirizzo.startswith(pdf_links.HOST_INTERNO)
+        })
+        self.assertEqual(
+            [], estranei,
+            "il documento chiama risorse esterne: senza rete wkhtmltopdf le "
+            f"salta in silenzio e il PDF esce sbagliato — {estranei}")
 
     def test_budget_alert_rendered_when_present(self):
         itinerary = {
@@ -1456,7 +1485,11 @@ class TestNewSections2026_07_31(unittest.TestCase):
         out = render_html(self._itinerary(), TRIP, guides=[guide])
         self.assertIn("Guida turistica tascabile</a>", out)
         anchor = guide["_anchor"]
-        self.assertIn(f"href='#{anchor}'", out)
+        # [AGGIORNATO 2026-08-13] Era `href='#{anchor}'`. Questo e' proprio il
+        # collegamento che Lorenzo ha segnalato per primo e che in produzione
+        # non faceva niente: il motore di stampa patchato lo riconosceva come
+        # interno, non trovava il bersaglio e lo cancellava.
+        self.assertIn(f"href='{pdf_links.href_interno(anchor)}'", out)
         self.assertIn(f"id='{anchor}'", out)
 
     def test_no_dead_guide_link_when_the_guide_failed_for_that_poi(self):
@@ -1493,9 +1526,13 @@ class TestNewSections2026_07_31(unittest.TestCase):
         self.assertIn("Piani B: se piove</a>", full)
         # Ogni voce dell'indice deve avere una destinazione reale nel
         # documento: un indice che punta al vuoto è un difetto visibile.
-        import re
-        for anchor in re.findall(r"<a href='#([a-z0-9\-]+)'>", full):
-            self.assertIn(f"id='{anchor}'", full, f"l'indice punta a '#{anchor}', che non esiste")
+        voci = pdf_links.RIFERIMENTI_NELL_HTML.findall(full)
+        # [AGGIORNATO 2026-08-13] Senza questo `assertTrue` l'aggiornamento
+        # della forma dell'indirizzo avrebbe reso il ciclo qui sotto un ciclo
+        # su zero elementi: verde, muto, e senza piu' garantire niente.
+        self.assertTrue(voci, "l'indice non ha piu' nessuna voce cliccabile")
+        for anchor in voci:
+            self.assertIn(f"id='{anchor}'", full, f"l'indice punta a '{anchor}', che non esiste")
 
     # --- Tutto insieme, e i vincoli di wkhtmltopdf ------------------------
     def test_full_document_still_respects_the_engine_constraints(self):

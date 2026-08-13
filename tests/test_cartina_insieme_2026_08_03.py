@@ -25,7 +25,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src import map_render, maps_static, pdf_extras
+from src import map_render, maps_static, pdf_extras, pdf_links
 from src.pdf_renderer import render_html
 
 
@@ -315,7 +315,14 @@ class TestLaCartinaSiPuoCliccare(unittest.TestCase):
         difficile da vedere e il più frustrante da subire."""
         import re
         out = self._documento()
-        destinazione = re.search(r"class='map-hit' href='#([^']+)'", out).group(1)
+        # [AGGIORNATO 2026-08-13] Prima qui c'era `href='#([^']+)'`. I rimandi
+        # interni non si scrivono piu' cosi': in produzione il motore di
+        # stampa li riconosceva, non trovava il bersaglio (sta in un capitolo
+        # cucito DOPO) e li buttava via lasciando annotazioni vuote. Ora
+        # partono verso un indirizzo sentinella che il motore lascia in pace.
+        destinazione = re.search(
+            r"class='map-hit' href='" + re.escape(pdf_links.LINK_PREFIX) + r"([^']+)'",
+            out).group(1)
         # `_anchor()` stampa il punto di atterraggio come `id`; il PDF ci
         # arriva perche' `src/pdf_links.py` riscrive i rimandi interni dopo
         # la stampa usando la sonda che l'ancora si porta dietro.
@@ -340,7 +347,14 @@ class TestDoveVaAFinireIlClick(unittest.TestCase):
             guide_anchors={"P1": "guida-duomo"},
             poi_by_id={"P1": {"name": "Duomo"}},
         )
-        self.assertEqual(bersagli["P1"]["href"], "#guida-duomo")
+        # [AGGIORNATO 2026-08-13] Era `"#guida-duomo"`. Un rimando scritto
+        # cosi' in produzione spariva: il motore di stampa patchato lo
+        # riconosceva come interno, cercava il bersaglio, non lo trovava
+        # (e' in un capitolo cucito dopo) e lo cancellava. Adesso il rimando
+        # esce dalla porta degli indirizzi esterni, che il motore non tocca,
+        # e viene trasformato in un salto vero dopo la stampa.
+        self.assertEqual(bersagli["P1"]["href"],
+                         pdf_links.href_interno("guida-duomo"))
         self.assertEqual(bersagli["P1"]["modo"], "interno")
         self.assertEqual(bersagli["P1"]["titolo"], "Duomo")
 
@@ -359,7 +373,8 @@ class TestDoveVaAFinireIlClick(unittest.TestCase):
             poi_by_id={},
             guide_urls={"P1": "http://esempio.invalid/g.pdf"},
         )
-        self.assertEqual(bersagli["P1"]["href"], "#guida-duomo")
+        self.assertEqual(bersagli["P1"]["href"],
+                         pdf_links.href_interno("guida-duomo"))
 
     def test_senza_guide_non_si_inventa_nessuna_destinazione(self):
         self.assertEqual(self._costruisci(guide_anchors=None, poi_by_id=None), {})

@@ -27,7 +27,7 @@ I test di principio, quelli che valgono più degli altri messi insieme:
 """
 import unittest
 
-from src import vademecum
+from src import pdf_links, vademecum
 from src.pdf_renderer import _render_vademecum, render_html
 from src.schemas import POI
 
@@ -356,7 +356,9 @@ class TestResaNelDocumento(unittest.TestCase):
 
     def test_e_raggiungibile_dallindice(self):
         html = self._html()
-        self.assertIn("href='#vademecum'", html)
+        # [AGGIORNATO 2026-08-13] I rimandi interni non partono piu' con
+        # `#`: in produzione il motore di stampa li cancellava.
+        self.assertIn(f"href='{pdf_links.href_interno('vademecum')}'", html)
         self.assertIn("Vademecum", html)
 
     def test_senza_dati_il_documento_resta_identico_a_prima(self):

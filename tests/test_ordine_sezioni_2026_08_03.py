@@ -24,7 +24,7 @@ a cercare nel posto sbagliato.
 """
 import unittest
 
-from src import pdf_renderer
+from src import pdf_links, pdf_renderer
 
 
 TRIP = {"destination": "Siena", "date_start": "2026-09-10",
@@ -102,11 +102,20 @@ def _ordine_indice(html: str) -> list[str]:
     """Le ancore dell'indice, nell'ordine in cui sono elencate."""
     import re
 
-    # L'indice sta prima del primo capitolo: si taglia li'. Le voci sono
-    # `href="#ancora"`; i rimandi interni sparsi nel programma verrebbero
-    # dopo e non entrano nel taglio.
+    # L'indice sta prima del primo capitolo: si taglia li'. I rimandi
+    # interni sparsi nel programma verrebbero dopo e non entrano nel taglio.
+    #
+    # [AGGIORNATO 2026-08-13] La forma dell'indirizzo non e' piu' `#ancora`
+    # ma un indirizzo sentinella: quella vecchia, in produzione, veniva
+    # cancellata dal motore di stampa. Qui l'aggiornamento e' obbligatorio
+    # per un motivo brutto: una lista vuota avrebbe reso VERDI tutti i
+    # confronti d'ordine che la usano, senza controllare piu' niente. Il
+    # `assert` qui sotto e' la rete che lo impedisce.
     fine = html.find("class='section-title'")
-    return re.findall(r"href='#([a-z0-9-]+)'", html[:fine if fine > 0 else len(html)])
+    voci = pdf_links.RIFERIMENTI_NELL_HTML.findall(
+        html[:fine if fine > 0 else len(html)])
+    assert voci, "l'indice non contiene piu' nessuna voce cliccabile"
+    return voci
 
 
 class TestPrimaDiPartireStaInFondo(unittest.TestCase):

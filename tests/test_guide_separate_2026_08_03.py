@@ -37,7 +37,7 @@ import shutil
 import tempfile
 import unittest
 
-from src import hosting, pdf_extras, poi_pdf
+from src import hosting, pdf_extras, pdf_links, poi_pdf
 from src.pdf_renderer import render_html
 
 
@@ -573,7 +573,10 @@ class TestIlCollegamentoDentroIlProgramma(unittest.TestCase):
         # poi_id="P1" l'ancora vera e' `guida-p1` e non `guida-duomo`.
         # Scriverlo sbagliato qui non si vede (l'assertIn fallisce e lo scopri),
         # ma scriverlo sbagliato in un assertNotIn passa per sempre a vuoto.
-        self.assertIn("href='#guida-p1'", out)
+        # [AGGIORNATO 2026-08-13] Era `href='#guida-p1'`. I rimandi interni
+        # ora escono verso un indirizzo sentinella: e' l'unica forma che in
+        # produzione arriva intatta fino al PDF venduto.
+        self.assertIn(f"href='{pdf_links.href_interno('guida-p1')}'", out)
         self.assertIn("Guida turistica tascabile", out)
 
     def test_con_la_pubblicazione_il_link_porta_al_documento_vero(self):
@@ -582,7 +585,10 @@ class TestIlCollegamentoDentroIlProgramma(unittest.TestCase):
         self.assertIn(f"href='{url}'", out)
         # Stesso discorso al contrario: il capitolo interno non deve piu'
         # esistere, e l'unica ancora che potrebbe esistere e' `guida-p1`.
-        self.assertNotIn("href='#guida-p1'", out)
+        # L'`assertNotIn` va aggiornato con ancora piu' cura dell'assertIn:
+        # cercando la forma vecchia non fallirebbe mai piu', qualunque cosa
+        # succeda al prodotto.
+        self.assertNotIn(f"href='{pdf_links.href_interno('guida-p1')}'", out)
 
     def test_la_dicitura_dice_la_verita_su_dove_si_va(self):
         """"Tascabile" promette una cosa che un documento ospitato non
