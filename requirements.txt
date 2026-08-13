@@ -35,7 +35,26 @@ Pillow>=10.0.0
 # era esatta quando fu scritta, ed è il tipo di frase che fra sei mesi
 # convincerebbe qualcuno a togliere questa riga «perché tanto serve solo ai
 # test».
-pypdf>=3.17
+# [BLOCCATO 2026-08-13 — sospetto principale del difetto piu' grave finora.]
+#
+# Era `pypdf>=3.17`, cioe' «una qualunque versione da qui in avanti». Il 5
+# agosto il campione costruito in sviluppo aveva 65 collegamenti interni
+# funzionanti; il documento vero uscito dalla produzione l'11 agosto ne aveva
+# ZERO, con lo stesso identico codice. La differenza piu' probabile fra i due
+# ambienti e' proprio questa riga: qui la libreria e' ferma alla 3.17.4, in
+# produzione il contenitore viene ricostruito e si prende l'ultima uscita.
+#
+# Non e' una prova — nel sandbox non c'e' rete per installare una versione
+# diversa e riprodurre il guasto — ma un limite superiore assente e' comunque
+# un rischio che non ha nessun motivo di esistere: la cucitura dei capitoli e
+# la riparazione dei collegamenti lavorano sulla STRUTTURA del PDF, che e'
+# esattamente cio' che cambia fra una versione maggiore e l'altra.
+#
+# Il controllo vero non e' questo numero, che si puo' sempre alzare: e' il
+# contatore `collegamenti_interni` nella risposta di `/v1/pdf`, che da oggi
+# dice quanti salti sono stati scritti davvero e ferma la consegna se sono
+# zero mentre i capitoli ci sono.
+pypdf==3.17.4
 
 # [AGGIUNTO 2026-08-05 — DIFETTO REALE, trovato al primo deploy dopo quattro
 # giorni in cui il prodotto era rotto in produzione senza che nessuno lo

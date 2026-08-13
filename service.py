@@ -1184,10 +1184,15 @@ def _esegui_pdf(body):
         try:
             tmp_pdf_fd, tmp_pdf_path = tempfile.mkstemp(suffix=".pdf")
             os.close(tmp_pdf_fd)
+            # [AGGIUNTO 2026-08-13] Il resoconto della riparazione dei
+            # collegamenti interni risale fino ai contatori qui sotto. Vedi
+            # `render_pdf(resoconto_collegamenti=...)`.
+            collegamenti = {}
             pdf_renderer.render_pdf(
                 itinerary, trip.to_dict(), hotels=[h.to_dict() for h in api_payload.hotels],
                 guides=guides, feedback=feedback, poi=used_pois,
                 map_png_bytes=map_png_bytes, output_path=tmp_pdf_path,
+                resoconto_collegamenti=collegamenti,
                 **sections,
             )
             pdf_bytes = Path(tmp_pdf_path).read_bytes()
@@ -1267,6 +1272,18 @@ def _esegui_pdf(body):
         # solo se allegarlo, senza aprire il file.
         "checklist_rows": (sections.get("checklist_sheet") or {}).get("rows", 0),
         "checklist_filename": checklist_file.get("filename"),
+        # [AGGIUNTI 2026-08-13] La navigazione interna del fascicolo, in
+        # numeri. `collegamenti_interni` e' quanti pulsanti «Apri la guida» e
+        # quante zone cliccabili sulle cartine sono diventati un salto vero.
+        # Nel documento consegnato l'11 agosto erano ZERO su un fascicolo di
+        # nove capitoli, e non se n'era accorto nessuno perche' il numero
+        # esisteva solo nei log di Render.
+        "capitoli_staccati": len(sections.get("capitoli_pdf") or []),
+        # `None` quando la stampa non ha nemmeno riferito — cosi' la regola
+        # qui sotto distingue «zero collegamenti» da «non lo so», che sono
+        # due cose diverse e vanno trattate in modo diverso.
+        "collegamenti_interni": (collegamenti or {}).get("riscritti"),
+        "collegamenti_non_risolti": len((collegamenti or {}).get("non_risolte") or []),
         "section_errors": section_errors,
     }
 
@@ -1338,6 +1355,21 @@ def _fascicolo_troppo_incompleto(counters) -> str:
     dire non consegnare mai. Zero su cinque invece non e' un documento
     magro: e' un altro prodotto.
     """
+    # [AGGIUNTO 2026-08-13] La navigazione interna morta.
+    #
+    # Un fascicolo con i capitoli staccati e nessun collegamento che ci porti
+    # non e' un documento un po' meno comodo: e' un documento in cui meta'
+    # del contenuto e' irraggiungibile a meno di scorrere ventotto pagine a
+    # mano. E' successo davvero l'11 agosto — nove capitoli, zero salti — ed
+    # e' arrivato al cliente perche' l'unico posto dove il numero compariva
+    # erano i log di Render.
+    capitoli = counters.get("capitoli_staccati") or 0
+    salti = counters.get("collegamenti_interni")
+    if capitoli > 0 and salti is not None and salti <= 0:
+        return ("il documento ha " + str(capitoli) + " capitoli staccati e "
+                "NESSUN collegamento interno che ci porti: chi legge non ha "
+                "modo di arrivarci se non scorrendo il documento a mano")
+
     chieste = counters.get("guides_requested") or 0
     fatte = counters.get("guides_generated") or 0
     if chieste <= 0 or fatte > 0:
