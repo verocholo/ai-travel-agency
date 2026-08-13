@@ -86,7 +86,13 @@ class TestNessunaImmagineVieneSchiacciata(unittest.TestCase):
     di una torre diventata tozza.
     """
 
-    REGOLE_CON_IMMAGINE = (".day-foto img", ".guide-foto img")
+    # [ESTESO 2026-08-13 — task #209] Aggiunta la fascia di copertina.
+    # E' la prima immagine che il cliente vede, ed e' anche quella con
+    # piu' voglia di essere «larga quanto la pagina»: il posto in cui la
+    # coppia vietata verrebbe scritta per prima. Il ritaglio in panoramica
+    # si fa sui pixel (`foto.ritaglia_panoramica`), dove funziona davvero,
+    # cosi' il foglio di stile puo' dire soltanto `width`.
+    REGOLE_CON_IMMAGINE = (".day-foto img", ".guide-foto img", ".cover-foto img")
 
     def test_nessuna_regola_impone_insieme_larghezza_piena_e_altezza_massima(self):
         for nome in self.REGOLE_CON_IMMAGINE:
@@ -108,7 +114,10 @@ class TestNessunaImmagineVieneSchiacciata(unittest.TestCase):
     def test_i_limiti_ci_sono_comunque(self):
         # Senza un tetto all'altezza, una foto verticale si prende una pagina
         # intera e sposta tutto il resto: il difetto opposto, e sarebbe peggio.
-        for nome in self.REGOLE_CON_IMMAGINE:
+        # La fascia di copertina e' l'eccezione dichiarata: la sua altezza e'
+        # gia' decisa dal ritaglio in panoramica, quindi un tetto qui sarebbe
+        # la meta' della coppia vietata.
+        for nome in (".day-foto img", ".guide-foto img"):
             with self.subTest(regola=nome):
                 regola = _regola(nome)
                 self.assertIn("max-width", regola)

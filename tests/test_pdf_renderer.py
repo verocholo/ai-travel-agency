@@ -414,11 +414,34 @@ class TestRenderHtml(unittest.TestCase):
         # chiaro) — a prova di qualunque bug di compositing su motori
         # datati. Questo test blocca la regressione: fallisce se `opacity`
         # o un canale alpha rgba/rgb() con 4 argomenti ricompaiono nel CSS.
+        # [AGGIORNATO 2026-08-13] Prima qui c'era `assertIn("#d7e6f5", out)`,
+        # cioe' il preciso azzurrino scelto quel giorno. Da oggi i colori del
+        # documento vengono dalla tavolozza del posto e quel numero non esiste
+        # piu' — ma la proprieta' da difendere non era mai stata «quel
+        # colore»: era «un colore PIENO, senza nessuna forma di trasparenza,
+        # e abbastanza chiaro da leggersi sulla fascia scura».
+        #
+        # Scritta cosi' la prova vale per tutte e otto le tavolozze, non solo
+        # per quella di allora — cioe' copre piu' di prima, non meno.
+        import re
+
+        from src import tavolozza
+
         itinerary = {"destination": "Roma", "executive_summary": "x", "days": []}
         out = render_html(itinerary, TRIP)
         self.assertNotIn("opacity", out)
         self.assertNotIn("rgba(", out)
-        self.assertIn("#d7e6f5", out)
+
+        regola = out.split(".header .meta {", 1)[1].split("}", 1)[0]
+        colore = re.search(r"color:\s*(#[0-9a-fA-F]{6})\s*;", regola)
+        self.assertTrue(colore, f".header .meta non ha un colore pieno: {regola!r}")
+        for nome in (t["nome"] for t in tavolozza.TAVOLOZZE):
+            piena = tavolozza.per_nome(nome)
+            with self.subTest(tavolozza=nome):
+                self.assertGreaterEqual(
+                    tavolozza.contrasto(piena["chiaro_su_scuro"], piena["scuro"]), 4.5,
+                    f"con la tavolozza '{nome}' la riga di sottotitolo della "
+                    "testata non si legge sulla propria fascia")
 
     def test_header_uses_solid_background_color_no_gradient(self):
         # Bug reale trovato il 2026-07-12 durante la prima verifica dal vivo

@@ -174,8 +174,30 @@ class TestLaFilaArrivaDAVVERONELDOCUMENTO(unittest.TestCase):
     def test_la_foto_di_apertura_non_e_anche_nella_fila(self):
         # Il giro completo del non-doppione, misurato sul documento vero e non
         # sulla funzione isolata: e' li' che il difetto si vedrebbe.
+        #
+        # [RISTRETTO 2026-08-13 — task #209, e va spiegato, perche' allargare
+        # o restringere un controllo e' il modo classico di svuotarlo.]
+        # Prima qui c'era «in tutto il documento quella foto compare una volta
+        # sola». Funzionava perche' la copertina non aveva immagini. Da oggi
+        # ce l'ha, e la copertina RIUSA per forza uno degli scatti del
+        # viaggio: con tre tappe e tre fotografie non esiste una quarta
+        # immagine da mettere in prima pagina.
+        #
+        # Il doppione che questo controllo esisteva per impedire pero' non era
+        # quello: era la stessa foto in cima alla giornata E dentro la fila, a
+        # otto centimetri di distanza sulla stessa pagina. Quello resta
+        # vietato, e adesso il controllo guarda la FILA invece di tutto il
+        # foglio — cioe' dice esattamente cio' che difende.
         documento = self._documento()
-        self.assertEqual(documento.count("Foto: a / Prova"), 1)
+        fila = documento.split("<table class='day-striscia'>", 1)[1].split("</table>", 1)[0]
+        self.assertNotIn(
+            "Foto: a / Prova", fila,
+            "la fotografia che apre la giornata compare anche nella fila qui "
+            "sotto: due volte la stessa immagine sulla stessa pagina")
+        # Senza questa riga una fila VUOTA supererebbe il controllo qui sopra
+        # a mani basse, ed e' esattamente il modo in cui questo progetto ha
+        # gia' perso una garanzia altre volte.
+        self.assertIn("Foto: b / Prova", fila)
 
 
 if __name__ == "__main__":

@@ -70,10 +70,21 @@ class TestLaCopertinaNonSbordaMai(unittest.TestCase):
         from src import pdf_renderer
 
         sorgente = inspect.getsource(pdf_renderer._render_cover)
-        pezzo = sorgente.split("density = \" cover-airy\"", 1)[0]
-        numeri = re.findall(r"tallest <= (\d+)", sorgente)
-        self.assertEqual(len(numeri), 2, "le soglie del respiro non sono piu' due")
-        return [int(n) for n in numeri]
+        # [AGGIORNATO 2026-08-13 — task #209] Prima qui si cercava
+        # `tallest <= N`, con i due numeri scritti in chiaro nel confronto.
+        # Da quando la copertina puo' avere una fotografia in cima, le soglie
+        # sono DUE COPPIE — una per la copertina illustrata, una per quella
+        # spoglia — e stanno in una riga sola.
+        #
+        # L'aggiornamento non e' cosmetico: cercando la forma vecchia questo
+        # metodo non troverebbe piu' niente e farebbe fallire tutto con «le
+        # soglie non sono piu' due», mandando chi legge a cercare un guasto
+        # che non c'e'. Qui si leggono tutte e quattro, e si restituiscono le
+        # PIU' LARGHE: sono quelle che, se sbagliate, fanno sbordare.
+        coppie = re.findall(r"\((\d+),\s*(\d+)\)", sorgente)
+        self.assertTrue(coppie, "le soglie del respiro non si leggono piu'")
+        numeri = [(int(a), int(b)) for a, b in coppie]
+        return [max(n[0] for n in numeri), max(n[1] for n in numeri)]
 
     def test_le_soglie_sono_piu_strette_di_quelle_che_hanno_sbordato(self):
         """Il caso vero: Bologna, due giorni, indice alto 6, nota sbordata.
@@ -87,6 +98,28 @@ class TestLaCopertinaNonSbordaMai(unittest.TestCase):
                         "con questa soglia il viaggio di Bologna riprende il "
                         "respiro massimo e la nota torna a sbordare")
         self.assertLess(roomy, 8)
+
+    def test_con_la_fotografia_in_cima_le_soglie_sono_ancora_piu_strette(self):
+        """[AGGIUNTO 2026-08-13] La fascia fotografica occupa piu' o meno
+        quanto tre voci d'indice: con le stesse soglie di prima la copertina
+        del campione sfondava sul foglio dopo, lasciandolo bianco per nove
+        decimi. E' lo stesso difetto dell'11 agosto entrato da un'altra porta,
+        e questo controllo esiste perche' non rientri da una terza."""
+        import inspect
+        import re
+
+        from src import pdf_renderer
+
+        sorgente = inspect.getsource(pdf_renderer._render_cover)
+        self.assertIn("foto_copertina else", sorgente,
+                      "le soglie non distinguono piu' la copertina illustrata "
+                      "da quella spoglia: una delle due sbordera'")
+        coppie = [(int(a), int(b))
+                  for a, b in re.findall(r"\((\d+),\s*(\d+)\)", sorgente)]
+        self.assertGreaterEqual(len(coppie), 2)
+        con_foto, senza_foto = coppie[0], coppie[1]
+        self.assertLess(con_foto[0], senza_foto[0])
+        self.assertLess(con_foto[1], senza_foto[1])
 
     def test_il_respiro_massimo_resta_il_piu_raro(self):
         # Le due soglie devono restare ordinate: se si invertissero, un indice
