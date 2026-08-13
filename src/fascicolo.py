@@ -319,7 +319,39 @@ def allega(dati: bytes, allegati) -> bytes:
         return dati
 
 
-def cuci(principale: bytes, capitoli=None, allegati=None) -> tuple[bytes, dict]:
+def pagine_di_partenza(principale: bytes, capitoli, ancore) -> dict:
+    """`{nome_ancora: indice della prima pagina del suo capitolo}`.
+
+    [AGGIUNTO 2026-08-13] Serve a non dipendere piu' dai segnaposto per sapere
+    dove atterra un collegamento. Il conto e' banale — le pagine del documento
+    principale, poi quelle di ogni capitolo in fila — ed e' un'informazione
+    che abbiamo per COSTRUZIONE: siamo noi a decidere l'ordine in cui i
+    capitoli vengono cuciti.
+
+    Fino a oggi la stessa informazione veniva dedotta guardando il PDF finito,
+    cercando un'ancora invisibile larga due pixel. Funzionava in sviluppo e in
+    produzione no, perche' il motore di stampa la' non la disegnava affatto:
+    sette capitoli, zero collegamenti, e nessuno se ne accorgeva.
+
+    Non solleva mai: se il conto non riesce, si torna una mappa vuota e il
+    meccanismo dei segnaposto resta l'unico, esattamente come prima.
+    """
+    try:
+        from pypdf import PdfReader
+
+        mappa = {}
+        pagina = len(PdfReader(io.BytesIO(principale)).pages)
+        for pezzo, ancora in zip(capitoli or [], ancore or []):
+            quante = len(PdfReader(io.BytesIO(pezzo)).pages)
+            if isinstance(ancora, str) and ancora:
+                mappa[ancora] = pagina
+            pagina += quante
+        return mappa
+    except Exception:  # noqa: BLE001 — una mappa mancante non e' un guasto
+        return {}
+
+
+def cuci(principale: bytes, capitoli=None, allegati=None, ancore=None) -> tuple[bytes, dict]:
     """Il fascicolo completo: cuci le pagine, infila gli allegati, ripara i
     rimandi.
 
@@ -371,7 +403,9 @@ def cuci(principale: bytes, capitoli=None, allegati=None) -> tuple[bytes, dict]:
 
         from src import pdf_links
 
-        riparato, rapporto = pdf_links.repair_internal_links_bytes(dati)
+        note = pagine_di_partenza(principale, pezzi, ancore) if pezzi else {}
+        riparato, rapporto = pdf_links.repair_internal_links_bytes(
+            dati, ancore_note=note)
         resoconto["collegamenti"] = rapporto
         dati = riparato
     except Exception as exc:  # pragma: no cover - rete di sicurezza
