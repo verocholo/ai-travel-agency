@@ -404,6 +404,35 @@ def salute_lavori():
     })
 
 
+@app.route("/prova-collegamenti", methods=["GET"])
+def prova_collegamenti():
+    """I rimandi interni sopravvivono al motore di stampa DI QUESTA macchina?
+
+    [AGGIUNTO 2026-08-13 — richiesta di Lorenzo: «ho la necessita' che tu
+    trovi un modo per avere la certezza matematica».]
+
+    E' l'unica domanda di questo progetto a cui in sviluppo non si puo'
+    rispondere, perche' in sviluppo il difetto non esiste: il binario di
+    `wkhtmltopdf` di produzione ha le patch, quello della sandbox no, e la
+    differenza fra i due ha azzerato per una settimana tutta la navigazione
+    del documento venduto senza che nessuna prova diventasse rossa.
+
+    Qui la domanda viene posta al motore che sta girando adesso, su questa
+    macchina, con le stesse identiche parole con cui si stampa il documento
+    vero (`pdf_renderer.COMANDO_STAMPA`). Si legge la riga `verdetto`.
+
+    Senza chiave, come `/salute-lavori`, e per lo stesso motivo: e' una
+    diagnosi che deve poter fare Lorenzo da telefono con un tocco, e qui non
+    passa niente di nessuno — due paginette bianche fatte in casa, nessun
+    dato, nessuna rete, nessuna chiamata a pagamento.
+    """
+    from src import prova_stampa
+
+    if not prova_stampa.prova_abilitata():
+        return jsonify({"errore": "prova spenta da PROVA_STAMPA_SPENTA"}), 403
+    return jsonify(prova_stampa.prova_collegamenti())
+
+
 @app.route("/v1/itinerary", methods=["POST"])
 def create_itinerary():
     """La strada di sempre: si chiede, si aspetta, si riceve.
