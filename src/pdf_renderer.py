@@ -4338,6 +4338,20 @@ def render_pdf(
     # File da infilare dentro il PDF come veri allegati: `{nome: byte}`.
     # Serve al foglio della valigia.
     allegati: dict | None = None,
+    # [AGGIUNTO 2026-08-13] Un dizionario che chi chiama puo' passare per
+    # RICEVERE il resoconto della riparazione dei collegamenti interni.
+    #
+    # Nasce da un difetto arrivato fino al cliente. Nel documento consegnato
+    # l'11 agosto non c'era **nemmeno una** destinazione interna: i pulsanti
+    # «Apri la guida» e le zone cliccabili sulle cartine erano tutti morti. Il
+    # resoconto che lo diceva esisteva gia' — veniva stampato nei log di
+    # Render — e non lo leggeva nessuno. E' la stessa lezione del 5xx che
+    # nascondeva il messaggio: un'informazione che arriva dove nessuno guarda
+    # non e' un'informazione.
+    #
+    # Passandolo qui, quel numero risale fino alla risposta di `/v1/pdf` e
+    # quindi fino a Make, dove si vede senza aprire niente.
+    resoconto_collegamenti: dict | None = None,
 ) -> str:
     """
     Converte l'HTML di `render_html()` in un vero file PDF usando
@@ -4526,6 +4540,9 @@ def render_pdf(
                 )
         else:
             link_report = pdf_links.repair_internal_links(tmp_pdf_path)
+
+        if isinstance(resoconto_collegamenti, dict):
+            resoconto_collegamenti.update(link_report or {})
 
         if link_report.get("errore") or link_report.get("non_risolte"):
             print(
