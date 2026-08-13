@@ -52,11 +52,62 @@ class TestLaCartaNonSembraUnCruscotto(unittest.TestCase):
         più grande, ed è anche quella che rientrerebbe per prima al primo
         pezzo di stile copiato da un'altra parte.
         """
-        arrotondati = re.findall(r"border-radius:\s*([^;]+);", _documento())
-        cattivi = [v.strip() for v in arrotondati
-                   if v.strip() not in ("0", "0px")]
+        # [RISTRETTO 2026-08-13 — task #215, e va spiegato, perche' allentare
+        # una regola e' il modo classico di perderla.]
+        #
+        # La regola nasce contro il RETTANGOLO STONDATO: quello dice
+        # «pulsante», ed e' il segnale numero uno di interfaccia. Resta
+        # vietato ovunque.
+        #
+        # Il CERCHIO PIENO e' un'altra cosa: e' un segno tipografico da
+        # stampa — il medaglione col numero della giornata, che sta nelle
+        # locandine di viaggio da sempre ed e' nel prototipo approvato da
+        # Lorenzo. Un cerchio non somiglia a un pulsante: somiglia a un
+        # bollo.
+        #
+        # La distinzione non e' un cavillo, ed e' verificabile: un cerchio
+        # vero e' un elemento QUADRATO con raggio esattamente meta' del lato.
+        # Un rettangolo stondato non puo' passare da qui — se le due misure
+        # non coincidono, o il raggio non e' la meta', resta vietato.
+        cattivi = []
+        for regola in re.findall(r"\{[^{}]*border-radius[^{}]*\}", _documento()):
+            raggio = re.search(r"border-radius:\s*([\d.]+)px", regola)
+            if raggio is None:
+                if not re.search(r"border-radius:\s*0(px)?\s*;", regola):
+                    cattivi.append(regola.strip()[:70])
+                continue
+            valore = float(raggio.group(1))
+            if valore == 0:
+                continue
+            larghezza = re.search(r"(?<![-\w])width:\s*([\d.]+)px", regola)
+            altezza = re.search(r"(?<![-\w])height:\s*([\d.]+)px", regola)
+            quadrato = (larghezza and altezza
+                        and float(larghezza.group(1)) == float(altezza.group(1)))
+            cerchio = quadrato and abs(float(larghezza.group(1)) / 2 - valore) < 0.6
+            if not cerchio:
+                cattivi.append(regola.strip()[:70])
         self.assertEqual(cattivi, [],
-                         f"angoli arrotondati rimasti: {cattivi}")
+                         f"angoli arrotondati che non sono cerchi pieni: {cattivi}")
+
+    def test_un_rettangolo_stondato_verrebbe_preso(self):
+        """La rete sotto al controllo qui sopra.
+
+        Averlo ristretto ai cerchi pieni ha senso solo se un rettangolo
+        stondato continua a essere respinto. Senza questa riga, «cerchio
+        pieno» diventerebbe la parola d'ordine per far passare qualunque cosa.
+        """
+        finto = "<style>.pulsante { width: 120px; height: 40px; border-radius: 8px; }</style>"
+        cattivi = []
+        for regola in re.findall(r"\{[^{}]*border-radius[^{}]*\}", finto):
+            raggio = re.search(r"border-radius:\s*([\d.]+)px", regola)
+            larghezza = re.search(r"(?<![-\w])width:\s*([\d.]+)px", regola)
+            altezza = re.search(r"(?<![-\w])height:\s*([\d.]+)px", regola)
+            quadrato = (larghezza and altezza
+                        and float(larghezza.group(1)) == float(altezza.group(1)))
+            if not (quadrato and abs(float(larghezza.group(1)) / 2
+                                     - float(raggio.group(1))) < 0.6):
+                cattivi.append(regola)
+        self.assertTrue(cattivi, "un rettangolo stondato passerebbe il controllo")
 
     def test_i_titoli_hanno_le_grazie(self):
         # Il carattere con le grazie è quello dei libri. È metà del

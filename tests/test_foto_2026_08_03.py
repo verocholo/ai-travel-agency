@@ -328,10 +328,27 @@ class TestImmaginiNelDocumento(unittest.TestCase):
         )
 
     def test_una_fotografia_vera_apre_la_giornata(self):
+        """[AGGIORNATO 2026-08-13 — task #214.]
+
+        Prima qui c'era `assertIn("class='day-foto'")`, cioe' la classe CSS
+        dell'unico modo in cui una giornata poteva aprirsi. Da oggi i modi
+        sono tre — fotografia centrata, banda a tutta larghezza, mosaico — e
+        quale tocchi a questa giornata lo decide il compositore.
+
+        La proprieta' da difendere pero' non era mai stata «quella classe»:
+        era **una fotografia vera in apertura, col suo credito**. Scritta
+        cosi' la prova vale per tutte e tre le aperture invece che per una,
+        cioe' copre piu' di prima e non meno.
+        """
         out = self._html({"A": {"png": foto.copertina_interna("Duomo", "museum"),
                                 "credito": "Foto: Mario Rossi / Google",
                                 "reale": True}})
-        self.assertIn("class='day-foto'", out)
+        aperture = ("class='day-foto'", "class='day-banda'",
+                    "class='day-striscia'")
+        self.assertTrue(
+            any(a in out for a in aperture),
+            "la giornata non si apre con nessuna fotografia: nessuna delle "
+            f"aperture {aperture} compare nel documento")
         self.assertIn("Mario Rossi", out)
 
     def test_la_grafica_interna_NON_apre_la_giornata(self):

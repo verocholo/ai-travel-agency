@@ -342,3 +342,73 @@ class TestLIntegritaDelCatalogo(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLeApertureDiGiornata(unittest.TestCase):
+    """Il primo pezzo del compositore che entra davvero nel documento.
+
+    Sono le aperture che si IMPILANO — non ridisegnano la pagina in colonne —
+    perche' cambiare tutta la struttura della giornata in una volta vorrebbe
+    dire rimettere in gioco insieme sette controlli di impaginazione. Questa
+    settimana ha gia' mostrato due volte cosa succede: una singola immagine in
+    piu' fa sfondare una pagina.
+    """
+
+    def test_mai_la_stessa_apertura_due_giornate_di_fila(self):
+        for viaggio in VIAGGI:
+            precedente, sequenza = None, []
+            for giorno in range(1, 13):
+                modo = compositore.scegli_apertura(viaggio, giorno, 4, precedente)
+                sequenza.append(modo)
+                precedente = modo
+            gemelle = [i for i, (a, b) in enumerate(zip(sequenza, sequenza[1:]))
+                       if a == b]
+            with self.subTest(viaggio=viaggio):
+                self.assertEqual([], gemelle, sequenza)
+
+    def test_il_mosaico_non_esce_se_non_ci_sono_tre_fotografie(self):
+        # Tre riquadri di cui due vuoti non sono un mosaico piu' povero: sono
+        # una pagina rotta.
+        for viaggio in VIAGGI:
+            for disponibili in (1, 2):
+                for giorno in range(1, 12):
+                    with self.subTest(viaggio=viaggio, foto=disponibili, g=giorno):
+                        self.assertNotEqual("mosaico", compositore.scegli_apertura(
+                            viaggio, giorno, disponibili))
+
+    def test_senza_fotografie_non_si_apre_niente(self):
+        # La giornata torna a com'era prima: solo il titolo. E' il ripiego, ed
+        # e' una cosa gia' vista funzionare.
+        for viaggio in VIAGGI:
+            with self.subTest(viaggio=viaggio):
+                self.assertEqual("", compositore.scegli_apertura(viaggio, 1, 0))
+
+    def test_con_le_fotografie_un_apertura_c_e_sempre(self):
+        for viaggio in VIAGGI:
+            for disponibili in (1, 2, 3, 8):
+                for giorno in range(1, 12):
+                    with self.subTest(viaggio=viaggio, foto=disponibili, g=giorno):
+                        self.assertTrue(compositore.scegli_apertura(
+                            viaggio, giorno, disponibili))
+
+    def test_un_viaggio_lungo_le_usa_tutte(self):
+        # Senza questo, «mai due di fila» si soddisfa alternandone sempre due.
+        usate = set()
+        precedente = None
+        for giorno in range(1, 16):
+            modo = compositore.scegli_apertura("Siena", giorno, 4, precedente)
+            usate.add(modo)
+            precedente = modo
+        self.assertEqual({a["nome"] for a in compositore.APERTURE}, usate)
+
+    def test_e_ripetibile(self):
+        uno = [compositore.scegli_apertura("Siena", g, 4) for g in range(1, 9)]
+        due = [compositore.scegli_apertura("Siena", g, 4) for g in range(1, 9)]
+        self.assertEqual(uno, due)
+
+    def test_ogni_apertura_dichiara_quante_foto_vuole(self):
+        for apertura in compositore.APERTURE:
+            with self.subTest(apertura=apertura.get("nome")):
+                self.assertTrue(apertura.get("nome"))
+                self.assertTrue(apertura.get("descrizione"))
+                self.assertGreaterEqual(apertura.get("foto"), 1)
