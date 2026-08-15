@@ -515,7 +515,7 @@ def build_guide_html(
     # esattamente il difetto segnalato («una sola foto centrale che non mi
     # piace»), non la sua riparazione.
     fila = []
-    for scatto in (foto_extra or [])[:3]:
+    for scatto in (foto_extra or [])[:4]:
         if not isinstance(scatto, dict):
             continue
         png = scatto.get("png")
@@ -530,8 +530,20 @@ def build_guide_html(
             f"<td><img src='data:{foto.mime_immagine(png)};base64,{b64}' alt=''>"
             f"<div class='credito'>{_esc(credito)}</div></td>")
     if len(fila) >= 2:
-        parti.append("<table class='guida-fila'><tr>" + "".join(fila)
-                     + "</tr></table>")
+        # [ESTESO 2026-08-13 — task #221, misurato.] Due fotografie in fila
+        # riempivano la seconda pagina della scheda fino al 30-47%: il resto
+        # restava bianco. La causa e' strutturale e non si toglie limando —
+        # ogni guida e' stampata come file a se' e cucita dopo, quindi
+        # comincia sempre su una pagina nuova, e una scheda lunga una pagina e
+        # mezza lascia per forza mezza pagina vuota.
+        #
+        # Comprimere avrebbe voluto dire togliere un terzo del contenuto.
+        # Riempire invece costa niente e risolve due cose insieme: la pagina
+        # smette di essere mezza vuota e la guida guadagna le fotografie che
+        # Lorenzo aveva chiesto. Due per riga, fino a quattro.
+        righe = ["<tr>" + "".join(fila[i:i + 2]) + "</tr>"
+                 for i in range(0, len(fila), 2)]
+        parti.append("<table class='guida-fila'>" + "".join(righe) + "</table>")
 
     parti.append("</body></html>")
 
@@ -613,7 +625,7 @@ def _altre_foto(tutte, escluso: str, giro: int) -> list:
     if len(elenco) < 2:
         return []
     taglio = giro % len(elenco)
-    return (elenco[taglio:] + elenco[:taglio])[:2]
+    return (elenco[taglio:] + elenco[:taglio])[:4]
 
 
 def costruisci_capitoli(
