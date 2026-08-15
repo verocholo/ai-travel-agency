@@ -897,7 +897,7 @@ _CSS_MODELLO = """
       page-break-inside: avoid;
     }
     .vad-climate-head {
-      background: {{scuro}}; color: #ffffff; padding: 7px 14px;
+      background: {{scuro}}; color: #ffffff; padding: 5px 14px;
       font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
     }
     .vad-climate-head .vad-zone { color: {{accento_su_scuro}}; }
@@ -906,7 +906,7 @@ _CSS_MODELLO = """
     }
     .vad-nums { width: 100%; border-collapse: collapse; }
     .vad-nums td {
-      width: 33%; text-align: center; padding: 10px 6px;
+      width: 33%; text-align: center; padding: 7px 6px;
       border-right: 1px solid {{sfondo_tenue}}; vertical-align: middle;
     }
     .vad-nums td:last-child { border-right: none; }
@@ -915,17 +915,17 @@ _CSS_MODELLO = """
     .vad-num-cold { color: {{primario}}; }
     .vad-num-label {
       font-size: 9px; text-transform: uppercase; letter-spacing: .07em;
-      color: #8a97a3; margin-top: 3px;
+      color: #8a97a3; margin-top: 2px;
     }
     .vad-num-small { font-size: 13px; font-weight: bold; color: {{scuro}}; line-height: 1.2; }
     .vad-note {
-      font-size: 11px; color: #4a5b6b; padding: 8px 14px;
+      font-size: 11px; color: #4a5b6b; padding: 6px 14px;
       border-top: 1px solid {{sfondo_tenue}}; text-align: justify;
     }
-    .vad-forecast { font-size: 11px; padding: 8px 14px; border-top: 1px solid {{sfondo_tenue}}; }
+    .vad-forecast { font-size: 11px; padding: 6px 14px; border-top: 1px solid {{sfondo_tenue}}; }
     .vad-forecast a {
       display: inline-block; color: #ffffff; background: {{primario}};
-      text-decoration: none; border-radius: 0; padding: 2px 10px;
+      text-decoration: none; border-radius: 0; padding: 1px 10px;
     }
     .vad-forecast-when { color: #8a97a3; margin-left: 6px; }
 
@@ -940,46 +940,57 @@ _CSS_MODELLO = """
     .vad-choice td.vad-choice-badge { width: 132px; padding-right: 14px; }
     .vad-badge {
       display: block; text-align: center; color: #ffffff; background: {{primario}};
-      border-radius: 0; padding: 10px 6px; font-size: 15px; font-weight: bold;
+      border-radius: 0; padding: 7px 6px; font-size: 15px; font-weight: bold;
       text-transform: uppercase; letter-spacing: .04em;
     }
     .vad-badge-hold { background: {{accento}}; }
     .vad-badge-sub {
       display: block; font-size: 9px; font-weight: normal; letter-spacing: .06em;
-      text-transform: uppercase; margin-top: 2px; color: {{chiaro_su_scuro}};
+      text-transform: uppercase; margin-top: 1px; color: {{chiaro_su_scuro}};
     }
     .vad-reason { font-size: 12px; color: {{scuro}}; text-align: justify; }
     .vad-total {
       font-size: 12px; color: {{accento_testo}}; background: {{sfondo_caldo}};
-      border-left: 3px solid {{accento}}; padding: 6px 10px; margin-top: 6px;
+      border-left: 3px solid {{accento}}; padding: 4px 10px; margin-top: 4px;
     }
 
     /* Il listino delle compagnie: una tabella vera, perché sono numeri da
        confrontare in colonna e qualunque altra forma li renderebbe illeggibili. */
-    .vad-fares { width: 100%; border-collapse: collapse; font-size: 11px; margin: 6px 0; }
+    /* [CORRETTO 2026-08-13 — task #220, difetto ISOLATO col misuratore.]
+       Il listino sbordava di due-tre righe sulla pagina dopo, che restava
+       vuota per l'80%: era la pagina 9 che il misuratore segnalava al 19,8%.
+       E' lo stesso difetto delle schede di guida — un blocco lungo che non ci
+       sta e trascina un pezzetto sul foglio successivo — cioe' esattamente
+       cio' che Lorenzo ha segnalato («poche righe e poi bianco»).
+       `page-break-inside: avoid` da solo non basterebbe: se la tabella fosse
+       piu' alta di una pagina il motore lo ignora e spezza lo stesso. Quindi
+       si fa stare: righe piu' strette e corpo leggermente minore. I numeri
+       restano perfettamente leggibili — erano larghi, non necessari. */
+    .vad-fares { width: 100%; border-collapse: collapse; font-size: 10px;
+                 margin: 6px 0; page-break-inside: avoid; }
     .vad-fares th {
       text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: .05em;
-      color: #6b7a89; border-bottom: 2px solid {{bordo_caldo}}; padding: 5px 4px;
+      color: #6b7a89; border-bottom: 2px solid {{bordo_caldo}}; padding: 2px 4px;
     }
-    .vad-fares td { padding: 5px 4px; border-bottom: 1px solid {{sfondo_tenue}}; vertical-align: top; }
+    .vad-fares td { padding: 2px 4px; border-bottom: 1px solid {{sfondo_tenue}}; vertical-align: top; }
     .vad-fares td.vad-carrier { font-weight: bold; color: {{scuro}}; white-space: nowrap; }
     .vad-fares td.num { text-align: right; white-space: nowrap; }
-    .vad-caveat { font-size: 10px; color: #8a97a3; text-align: justify; margin-bottom: 8px; }
-    .vad-notes { font-size: 11px; margin: 0 0 8px 0; padding-left: 18px; color: #4a5b6b; }
-    .vad-notes li { margin-bottom: 3px; }
+    .vad-caveat { font-size: 9.5px; line-height: 1.3; color: #8a97a3; text-align: justify; margin-bottom: 6px; }
+    .vad-notes { font-size: 10.5px; line-height: 1.35; margin: 0 0 8px 0; padding-left: 18px; color: #4a5b6b; }
+    .vad-notes li { margin-bottom: 2px; }
 
     /* La lista della valigia su DUE colonne: la stessa quantità di voci su
        metà delle pagine. È il rimedio diretto ai "troppi spazi vuoti
        dispersivi" — una lista di spunte a colonna singola sprecava due terzi
        della larghezza del foglio. */
-    .vad-group { margin-bottom: 10px; page-break-inside: avoid; }
+    .vad-group { margin-bottom: 7px; page-break-inside: avoid; }
     .vad-group-title {
       font-size: 12px; font-weight: bold; color: {{scuro}};
-      border-left: 4px solid {{accento}}; padding-left: 10px; margin-bottom: 5px;
+      border-left: 4px solid {{accento}}; padding-left: 10px; margin-bottom: 4px;
     }
     .vad-items { width: 100%; border-collapse: collapse; }
     .vad-items td {
-      width: 50%; vertical-align: top; padding: 3px 10px 3px 0;
+      width: 50%; vertical-align: top; padding: 2px 10px 3px 0;
       font-size: 11px; color: {{scuro}};
     }
     .vad-tick { color: {{accento_testo}}; font-weight: bold; }
@@ -987,7 +998,7 @@ _CSS_MODELLO = """
     /* I passi di come si riempie: numerati, perché è una sequenza e l'ordine
        è metà dell'informazione. */
     .vad-step { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
-    .vad-step td { padding: 5px 4px; border-bottom: 1px solid {{sfondo_tenue}}; vertical-align: top; }
+    .vad-step td { padding: 4px 4px; border-bottom: 1px solid {{sfondo_tenue}}; vertical-align: top; }
     .vad-step td.vad-step-n { width: 26px; }
     .vad-step-num {
       display: inline-block; width: 20px; height: 20px; line-height: 20px;
@@ -995,7 +1006,7 @@ _CSS_MODELLO = """
       color: #ffffff; font-size: 11px; font-weight: bold;
     }
     .vad-step-title { font-size: 12px; font-weight: bold; color: {{scuro}}; }
-    .vad-step-detail { font-size: 11px; color: #6b7a89; margin-top: 2px; text-align: justify; }
+    .vad-step-detail { font-size: 11px; color: #6b7a89; margin-top: 1px; text-align: justify; }
     .vad-sub {
       font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
       color: {{accento_testo}}; margin: 14px 0 5px 0; font-weight: bold;
@@ -1011,13 +1022,13 @@ _CSS_MODELLO = """
       page-break-inside: avoid;
       background: {{sfondo_tenue}}; border-left: 4px solid {{scuro}};
     }
-    .vad-sheet td { padding: 10px 12px; vertical-align: top; }
+    .vad-sheet td { padding: 7px 12px; vertical-align: top; }
     .vad-sheet-title {
-      font-size: 12px; font-weight: bold; color: {{scuro}}; margin-bottom: 4px;
+      font-size: 12px; font-weight: bold; color: {{scuro}}; margin-bottom: 3px;
     }
     .vad-sheet-body { font-size: 11px; color: #4a5b6b; text-align: justify; }
     .vad-sheet-how {
-      font-size: 10px; color: #6b7a89; margin-top: 6px;
+      font-size: 10px; color: #6b7a89; margin-top: 4px;
       border-top: 1px solid {{bordo_caldo}}; padding-top: 5px;
     }
     .vad-sheet-file {
@@ -1238,6 +1249,12 @@ _CSS_MODELLO = """
     .day-tonda { text-align: center; margin: 8px 0; page-break-inside: avoid; }
     .day-tonda img { width: 190px; }
     .day-tonda .didascalia { font-size: 8px; color: #98a4b0; margin-top: 2px; }
+    /* L'apertura a colonna piena: niente `max-height` di proposito. Le
+       proporzioni le decide il ritaglio in Python, e width + max-height
+       insieme sono la coppia che l'11 agosto ha prodotto le fotografie
+       schiacciate. */
+    .day-larga { margin: 4px 0 10px 0; page-break-inside: avoid; }
+    .day-larga .didascalia { font-size: 8px; color: #98a4b0; margin-top: 2px; }
 """
 
 
@@ -3206,9 +3223,27 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
             scelta = "foto-sola"
 
     if scelta == "foto-sola":
-        figura = _figura(disponibili[0][0], "", 1.5)
+        # [CORRETTO 2026-08-13 — task #219, segnalato DUE volte da Lorenzo:
+        # «filla gli spazi bianchi» e poi «a pagina 5 c'e' sempre una sola
+        # foto centrale che non mi piace».]
+        #
+        # La fotografia era centrata dentro la colonna con margini bianchi ai
+        # lati: non un'apertura, un francobollo in mezzo alla pagina.
+        #
+        # La riparazione NON e' togliere questa apertura — provato, e con due
+        # sole aperture piu' la regola «mai due volte di fila» la sequenza
+        # diventa un'alternanza fissa: due viaggi diversi finiscono con la
+        # stessa identica sequenza di pagine. L'ha preso una prova.
+        #
+        # La riparazione e' toglierle i margini: la stessa fotografia,
+        # ritagliata piu' larga, che occupa la colonna per intero. Il ritaglio
+        # governa le proporzioni, quindi il foglio di stile puo' dire solo
+        # `width` e non serve nessun `max-height` — cioe' non si ricrea la
+        # coppia che l'11 agosto aveva schiacciato le immagini.
+        figura = _figura(disponibili[0][0],
+                         "style='width:100%; display:block;'", 2.9)
         if figura:
-            pezzi.append(f"<div class='day-foto'>{figura}</div>")
+            pezzi.append(f"<div class='day-larga'>{figura}</div>")
 
     # --- il nastro coi numeri della giornata ------------------------------
     if "nastro" in ornamenti and blocks:

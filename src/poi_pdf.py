@@ -90,6 +90,11 @@ TIMEOUT_S = 30
 # tabelle.
 # ---------------------------------------------------------------------------
 _CSS_MODELLO = """
+    .guida-fila { width: 100%; border-collapse: separate; border-spacing: 6px;
+                  margin: 14px -6px 0 -6px; page-break-inside: avoid; }
+    .guida-fila td { vertical-align: top; }
+    .guida-fila img { width: 100%; display: block; }
+
     @page { size: A4; margin: 1.6cm 1.6cm; }
     * { box-sizing: border-box; }
     body {
@@ -320,6 +325,9 @@ def build_guide_html(
     # [AGGIUNTO 2026-08-13 — task #209] I colori del posto. `None` = quelli
     # di sempre, cioe' il capitolo esattamente com'era ieri.
     tavolozza: dict | None = None,
+    # [AGGIUNTO 2026-08-13 — task #217] Altre fotografie del viaggio, per la
+    # fila in fondo alla scheda. Lista di `{"png", "credito"}`.
+    foto_extra=None,
 ) -> str:
     """L'HTML di UNA guida, completo e autonomo.
 
@@ -490,6 +498,41 @@ def build_guide_html(
             "torna al documento principale che hai ricevuto per email.</div>"
         )
 
+    # [AGGIUNTO 2026-08-13 — task #217] La fila di fotografie in fondo.
+    #
+    # Nasce da DUE cose che si sono rivelate la stessa. Lorenzo: «vorrei che
+    # incastrassi nella guida turistica alcune foto». E il misuratore
+    # dell'impaginazione, alla prima esecuzione: otto pagine mezze vuote,
+    # tutte le SECONDE pagine dei capitoli delle guide, ferme fra il 14% e il
+    # 32% del foglio.
+    #
+    # Erano lo stesso difetto visto da due parti: la scheda sbordava di poco
+    # e lasciava la pagina dopo quasi bianca. Riempirla di parole sarebbe
+    # stato peggio del bianco; riempirla di fotografie del posto e' cio' che
+    # era gia' stato chiesto.
+    #
+    # Servono almeno DUE fotografie: una sola in mezzo a una pagina vuota e'
+    # esattamente il difetto segnalato («una sola foto centrale che non mi
+    # piace»), non la sua riparazione.
+    fila = []
+    for scatto in (foto_extra or [])[:3]:
+        if not isinstance(scatto, dict):
+            continue
+        png = scatto.get("png")
+        credito = str(scatto.get("credito") or "").strip()
+        if not png or not credito:
+            continue
+        try:
+            b64 = base64.b64encode(png).decode("ascii")
+        except (TypeError, ValueError):
+            continue
+        fila.append(
+            f"<td><img src='data:{foto.mime_immagine(png)};base64,{b64}' alt=''>"
+            f"<div class='credito'>{_esc(credito)}</div></td>")
+    if len(fila) >= 2:
+        parti.append("<table class='guida-fila'><tr>" + "".join(fila)
+                     + "</tr></table>")
+
     parti.append("</body></html>")
 
     # [AGGIUNTO 2026-08-03 - task #183] La stessa passata di impaginazione del
@@ -549,6 +592,28 @@ def nome_file_guida(guide: dict, indice: int) -> str:
     if not pulito:
         return f"guida-{indice + 1}"
     return f"guida-{pulito}"[:60]
+
+
+def _altre_foto(tutte, escluso: str, giro: int) -> list:
+    """Fotografie di ALTRE tappe del viaggio, per la fila in fondo alla scheda.
+
+    Si esclude quella del luogo di cui parla la scheda: e' gia' stampata in
+    cima, e ripeterla a otto centimetri di distanza e' il difetto che Lorenzo
+    ha gia' segnalato una volta.
+
+    Si ruota sull'indice del capitolo invece di prendere sempre le prime:
+    altrimenti tutte le schede del fascicolo chiuderebbero con le stesse due
+    immagini, e sfogliandolo si vedrebbe subito.
+    """
+    if not isinstance(tutte, dict):
+        return []
+    elenco = [scatto for chiave, scatto in tutte.items()
+              if chiave != escluso and isinstance(scatto, dict)
+              and scatto.get("png") and scatto.get("credito")]
+    if len(elenco) < 2:
+        return []
+    taglio = giro % len(elenco)
+    return (elenco[taglio:] + elenco[:taglio])[:2]
 
 
 def costruisci_capitoli(
@@ -617,6 +682,7 @@ def costruisci_capitoli(
                 ancora_capitolo=fascicolo.ancora_capitolo(poi_id),
                 ritorni=ritorni.get(poi_id),
                 tavolozza=tinte,
+                foto_extra=_altre_foto(foto, poi_id, len(capitoli)),
             )
             blob = render_guide_pdf(html)
         except Exception:
