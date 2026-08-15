@@ -90,6 +90,12 @@ TIMEOUT_S = 30
 # tabelle.
 # ---------------------------------------------------------------------------
 _CSS_MODELLO = """
+    /* Le due colonne del corpo della scheda. Tabella e non CSS: il motore di
+       stampa le colonne non le conosce. */
+    .guida-colonne { width: 100%; border-collapse: separate;
+                     border-spacing: 14px 0; margin: 0 -14px; }
+    .guida-colonne td { vertical-align: top; width: 50%; }
+
     .guida-fila { width: 100%; border-collapse: separate; border-spacing: 6px;
                   margin: 14px -6px 0 -6px; page-break-inside: avoid; }
     .guida-fila td { vertical-align: top; }
@@ -311,6 +317,56 @@ def _sonda(nome: str) -> str:
     )
 
 
+def _due_colonne(pezzi) -> str:
+    """Il corpo della scheda su due colonne, bilanciate per altezza.
+
+    [AGGIUNTO 2026-08-13 — task #223.] Ogni guida era lunga circa una pagina e
+    mezza, quindi ne occupava due e la seconda restava al 44-62%: otto guide,
+    otto mezze pagine bianche. Misurato, e segnalato da Lorenzo.
+
+    Le due strade ovvie erano peggiori. Accorciare la scheda voleva dire
+    togliere un terzo del contenuto pagato. Attaccare le guide una dopo
+    l'altra faceva sparire il bianco ma anche la reperibilita': una scheda che
+    comincia a meta' foglio non si trova piu' sfogliando, e queste guide si
+    usano sul posto, col telefono in mano davanti al luogo.
+
+    Due colonne risolvono senza togliere niente: lo stesso testo si dimezza in
+    altezza e la scheda sta in una pagina. E si legge meglio — una riga larga
+    quanto un A4 e' faticosa, l'occhio si perde tornando a capo. E' il motivo
+    per cui guide e riviste sono impaginate in colonne da un secolo e mezzo.
+
+    Si usa una TABELLA perche' il motore di stampa non conosce le colonne CSS:
+    vincolo noto di questo progetto, gia' aggirato cosi' per la lista della
+    valigia nel vademecum.
+
+    Il bilanciamento e' sulla LUNGHEZZA del testo, non sul numero di blocchi:
+    i pezzi hanno altezze molto diverse (una riga di orario contro tre
+    paragrafi di storia), e dividerli a meta' per conteggio produrrebbe una
+    colonna piena e una vuota — lo stesso difetto, spostato di dieci
+    centimetri.
+    """
+    pieni = [x for x in (pezzi or []) if isinstance(x, str) and x.strip()]
+    if not pieni:
+        return ""
+    if len(pieni) == 1:
+        return pieni[0]
+    meta = sum(len(x) for x in pieni) / 2.0
+    corrente, taglio = 0.0, len(pieni)
+    for indice, pezzo in enumerate(pieni):
+        corrente += len(pezzo)
+        if corrente >= meta:
+            # Si taglia DOPO il pezzo che supera la meta', non prima: cosi' la
+            # colonna di sinistra e' la piu' piena e il bianco eventuale cade
+            # in fondo a destra, dove si legge come margine invece che come
+            # buco.
+            taglio = indice + 1
+            break
+    taglio = max(1, min(taglio, len(pieni) - 1))
+    return ("<table class='guida-colonne'><tr>"
+            f"<td>{''.join(pieni[:taglio])}</td>"
+            f"<td>{''.join(pieni[taglio:])}</td></tr></table>")
+
+
 def build_guide_html(
     guide: dict,
     *,
@@ -402,28 +458,31 @@ def build_guide_html(
     if storia:
         parti.append(f"<div class='corpo'>{_paragraphs(storia, 'corpo')}</div>")
 
-    parti.append(_righe_nominate(guide.get("highlights"), "Cosa cercare, una volta dentro"))
+    # [AGGIUNTO 2026-08-13 — task #223] Il corpo della scheda si
+    # raccoglie qui e si stampa su DUE COLONNE (vedi `_due_colonne`).
+    corpo: list[str] = []
+    corpo.append(_righe_nominate(guide.get("highlights"), "Cosa cercare, una volta dentro"))
 
     curiosita = [str(c).strip() for c in (guide.get("curiosita") or []) if str(c).strip()]
     if curiosita:
-        parti.append("<div class='sottotitolo'>Da sapere</div><ul>")
+        corpo.append("<div class='sottotitolo'>Da sapere</div><ul>")
         parti.extend(f"<li>{_esc(c)}</li>" for c in curiosita)
-        parti.append("</ul>")
+        corpo.append("</ul>")
 
     consigli = [str(t).strip() for t in (guide.get("practical_tips") or []) if str(t).strip()]
     if consigli:
-        parti.append("<div class='riquadro'><strong>Consigli pratici</strong><ul>")
+        corpo.append("<div class='riquadro'><strong>Consigli pratici</strong><ul>")
         parti.extend(f"<li>{_esc(t)}</li>" for t in consigli)
-        parti.append("</ul></div>")
+        corpo.append("</ul></div>")
 
     errore = str(guide.get("errore_da_evitare") or "").strip()
     if errore:
-        parti.append(
+        corpo.append(
             f"<div class='avviso'><strong>L'errore che fanno quasi tutti:</strong> "
             f"{_esc(errore)}</div>"
         )
 
-    parti.append(_righe_nominate(guide.get("dintorni"), "A due passi da qui"))
+    corpo.append(_righe_nominate(guide.get("dintorni"), "A due passi da qui"))
 
     # --- Il blocco "micro": orari, biglietti, contatti, come arrivare ----
     # È la parte che Lorenzo ha elencato per nome («orari, biglietti, info,
@@ -452,11 +511,11 @@ def build_guide_html(
         righe.append(_riga_pratica("Come arrivare", come_arrivare))
     righe = [r for r in righe if r]
     if righe:
-        parti.append("<div class='sottotitolo'>Informazioni pratiche</div>")
-        parti.append("<table class='pratico'>" + "".join(righe) + "</table>")
+        corpo.append("<div class='sottotitolo'>Informazioni pratiche</div>")
+        corpo.append("<table class='pratico'>" + "".join(righe) + "</table>")
 
     if guide.get("disclaimer"):
-        parti.append(f"<div class='nota'>{_esc(guide['disclaimer'])}</div>")
+        corpo.append(f"<div class='nota'>{_esc(guide['disclaimer'])}</div>")
 
     # --- I bottoni di ritorno --------------------------------------------
     # [RIFATTO 2026-08-05 — task #191] Prima ce n'era uno solo e portava
@@ -466,6 +525,8 @@ def build_guide_html(
         v for v in (ritorni or [])
         if isinstance(v, dict) and v.get("ancora")
     ]
+    parti.append(_due_colonne(corpo))
+
     if voci_ritorno:
         parti.append("<div class='sottotitolo'>Torna dove eri</div>")
         for voce in voci_ritorno:
@@ -515,7 +576,7 @@ def build_guide_html(
     # esattamente il difetto segnalato («una sola foto centrale che non mi
     # piace»), non la sua riparazione.
     fila = []
-    for scatto in (foto_extra or [])[:3]:
+    for scatto in (foto_extra or [])[:4]:
         if not isinstance(scatto, dict):
             continue
         png = scatto.get("png")
@@ -530,8 +591,20 @@ def build_guide_html(
             f"<td><img src='data:{foto.mime_immagine(png)};base64,{b64}' alt=''>"
             f"<div class='credito'>{_esc(credito)}</div></td>")
     if len(fila) >= 2:
-        parti.append("<table class='guida-fila'><tr>" + "".join(fila)
-                     + "</tr></table>")
+        # [ESTESO 2026-08-13 — task #221, misurato.] Due fotografie in fila
+        # riempivano la seconda pagina della scheda fino al 30-47%: il resto
+        # restava bianco. La causa e' strutturale e non si toglie limando —
+        # ogni guida e' stampata come file a se' e cucita dopo, quindi
+        # comincia sempre su una pagina nuova, e una scheda lunga una pagina e
+        # mezza lascia per forza mezza pagina vuota.
+        #
+        # Comprimere avrebbe voluto dire togliere un terzo del contenuto.
+        # Riempire invece costa niente e risolve due cose insieme: la pagina
+        # smette di essere mezza vuota e la guida guadagna le fotografie che
+        # Lorenzo aveva chiesto. Due per riga, fino a quattro.
+        righe = ["<tr>" + "".join(fila[i:i + 2]) + "</tr>"
+                 for i in range(0, len(fila), 2)]
+        parti.append("<table class='guida-fila'>" + "".join(righe) + "</table>")
 
     parti.append("</body></html>")
 
@@ -613,6 +686,10 @@ def _altre_foto(tutte, escluso: str, giro: int) -> list:
     if len(elenco) < 2:
         return []
     taglio = giro % len(elenco)
+    # [RIPORTATO A DUE, 2026-08-13 — task #223.] Le quattro fotografie erano
+    # servite a riempire la seconda pagina della scheda. Con il corpo su due
+    # colonne quel bianco non esiste piu, e sono diventate loro a sfondare:
+    # la cura di ieri e il difetto di oggi. Due bastano.
     return (elenco[taglio:] + elenco[:taglio])[:2]
 
 
