@@ -52,7 +52,7 @@ from .directions import describe_leg_duration, summarize_day_travel
 from .price_display import price_level_symbol
 # [AGGIUNTO 2026-08-01 — punto 6 del feedback "da investitore"] Testi legali
 # rivolti al cliente, tenuti in un solo posto: vedi src/legal_notices.py.
-from . import foto
+from . import compositore, foto
 from . import legal_notices
 # [AGGIUNTO 2026-08-05 — task #190] La cucitura dei capitoli staccati dentro
 # un unico file, e i nomi delle ancore di ritorno. Il modulo non importa
@@ -168,7 +168,7 @@ def _paragraphs(text, css_class: str = "guide-para") -> str:
 # Questo commento resta fuori dalla stringa `_CSS` qui sotto perché
 # `test_header_uses_solid_background_color_no_gradient` verifica che le
 # PAROLE "linear-gradient"/"opacity" non compaiano nell'HTML generato.
-_CSS = """
+_CSS_MODELLO = """
     @page { size: A4; margin: 2cm 1.8cm; }
     * { box-sizing: border-box; }
     body {
@@ -178,14 +178,14 @@ _CSS = """
       margin: 0;
     }
     .header {
-      background-color: #1a3b5c;
+      background-color: {{scuro}};
       color: #ffffff;
       padding: 28px 32px;
       border-radius: 0;
       margin-bottom: 24px;
     }
     .header h1 { margin: 0 0 8px 0; font-size: 26px; }
-    .header .meta { font-size: 13px; color: #d7e6f5; }
+    .header .meta { font-size: 13px; color: {{chiaro_su_scuro}}; }
     /* [RIFATTO 2026-08-05 — task #195] Con le grazie e piu' grande, sopra
        un filetto da un pixel invece che da due. Il carattere con le grazie
        e' quello dei libri: dice «questo si legge». Il filetto sottile
@@ -196,20 +196,20 @@ _CSS = """
       font-size: 21px;
       font-weight: normal;
       color: #16212f;
-      border-bottom: 1px solid #e2ded6;
+      border-bottom: 1px solid {{bordo_caldo}};
       padding-bottom: 8px;
       margin: 26px 0 12px 0;
     }
     .summary-box {
-      background: #faf7f1;
-      border-left: 4px solid #2f6690;
+      background: {{sfondo_caldo}};
+      border-left: 4px solid {{primario}};
       padding: 14px 18px;
       border-radius: 0;
       font-size: 13px;
     }
     .budget-alert {
       background: #fdf1e8;
-      border-left: 4px solid #b08d4f;
+      border-left: 4px solid {{accento}};
       padding: 14px 18px;
       border-radius: 0;
       font-size: 13px;
@@ -244,9 +244,9 @@ _CSS = """
       font-size: 19px; font-weight: normal; color: #16212f;
       margin-bottom: 12px;
     }
-    .block { padding: 8px 0; border-top: 1px solid #eef2f6; page-break-inside: avoid; }
+    .block { padding: 8px 0; border-top: 1px solid {{sfondo_tenue}}; page-break-inside: avoid; }
     .block:first-child { border-top: none; }
-    .block-time { font-weight: bold; color: #2f6690; font-size: 12px; display: inline-block; min-width: 52px; }
+    .block-time { font-weight: bold; color: {{primario}}; font-size: 12px; display: inline-block; min-width: 52px; }
     .block-activity { font-size: 13px; }
     .block-logistics { font-size: 11px; color: #6b7a89; font-style: italic; margin-top: 2px; }
     /* [AGGIUNTO 2026-08-02 — task #166] La riga del margine. Colore e bordo
@@ -257,9 +257,9 @@ _CSS = """
        CSS, per questo qui non si possono nemmeno nominare). */
     .block-margin {
       font-size: 11px;
-      color: #7a6320;
-      background: #fdf8e8;
-      border-left: 3px solid #d9b64a;
+      color: {{accento_testo}};
+      background: {{sfondo_caldo}};
+      border-left: 3px solid {{accento}};
       padding: 3px 8px;
       margin-top: 3px;
     }
@@ -288,7 +288,7 @@ _CSS = """
        .block-logistics (stessa gerarchia visiva: informazione di
        contorno, non il testo principale del blocco). */
     .block-maps-link { font-size: 11px; margin-top: 2px; }
-    .block-maps-link a { color: #2f6690; text-decoration: none; }
+    .block-maps-link a { color: {{primario}}; text-decoration: none; }
     .tips-box {
       background: #eef6f0;
       border-left: 4px solid #3f8f5f;
@@ -304,8 +304,8 @@ _CSS = """
     .cta-box {
       width: 100%;
       border-collapse: collapse;
-      background: #f4f1e8;
-      border: 2px solid #b08d3f;
+      background: {{sfondo_caldo}};
+      border: 2px solid {{accento}};
       border-radius: 0;
       margin: 14px 0;
       page-break-inside: avoid;
@@ -314,11 +314,11 @@ _CSS = """
     .cta-title {
       font-size: 14px;
       font-weight: bold;
-      color: #7a5c14;
+      color: {{accento_testo}};
       margin-bottom: 6px;
     }
     .cta-link { font-size: 12px; word-wrap: break-word; }
-    .cta-link a { color: #1a5f8f; }
+    .cta-link a { color: {{primario}}; }
     .cta-note { font-size: 11px; color: #555555; margin-top: 6px; }
     .platforms-box { font-size: 12px; }
     .platforms-box .hotel-row { margin-bottom: 6px; }
@@ -332,7 +332,7 @@ _CSS = """
       display: inline-block;
       font-size: 11px;
       color: #ffffff;
-      background: #2f6690;
+      background: {{primario}};
       padding: 3px 10px;
       border-radius: 0;
       text-decoration: none;
@@ -394,26 +394,26 @@ _CSS = """
        E' la forma del viaggio, non la sua ripetizione. */
     .glance-days { width: 100%; border-collapse: collapse; margin: 12px 0 0 0; }
     .glance-days td {
-      border-top: 1px solid #e7edf3;
+      border-top: 1px solid {{bordo}};
       padding: 8px 8px 8px 0;
       vertical-align: top;
       font-size: 11.5px;
       color: #4a5b6b;
     }
     .glance-days tr:first-child td { border-top: none; }
-    .glance-n { width: 92px; color: #1a3b5c; font-weight: bold; white-space: nowrap; }
+    .glance-n { width: 92px; color: {{scuro}}; font-weight: bold; white-space: nowrap; }
     .glance-date {
       font-size: 9px; font-weight: normal; color: #7b8896;
       letter-spacing: .1em; text-transform: uppercase; margin-top: 3px;
     }
-    .glance-t { color: #1a3b5c; }
+    .glance-t { color: {{scuro}}; }
     .glance-m {
       width: 126px; text-align: right; white-space: nowrap;
       font-size: 10.5px; color: #6b7a89;
     }
-    .glance-m b { color: #1a3b5c; font-weight: bold; }
+    .glance-m b { color: {{scuro}}; font-weight: bold; }
     .map-image { text-align: center; margin: 16px 0 4px 0; }
-    .map-image img { max-width: 100%; border-radius: 0; border: 1px solid #e2ded6; }
+    .map-image img { max-width: 100%; border-radius: 0; border: 1px solid {{bordo_caldo}}; }
     /* [AGGIUNTO 2026-08-03 - richiesta di Lorenzo: "la cartina deve essere
        interattiva, ci puoi cliccare e li trovi tutto quello inerente a
        quello ... come se fosse uno zoom out dal macro al micro"]
@@ -443,8 +443,8 @@ _CSS = """
        intrattenimento", "segnare ogni costo"] */
     .curated-grid { width: 100%; border-collapse: collapse; }
     .curated-grid td { width: 50%; vertical-align: top; padding: 0 14px 0 0; }
-    .curated-item { padding: 5px 0; border-bottom: 1px solid #eef2f6; font-size: 12.5px; }
-    .price-badge { color: #2f6690; font-weight: bold; margin-left: 6px; font-size: 11px; }
+    .curated-item { padding: 5px 0; border-bottom: 1px solid {{sfondo_tenue}}; font-size: 12.5px; }
+    .price-badge { color: {{primario}}; font-weight: bold; margin-left: 6px; font-size: 11px; }
     /* [AGGIUNTO 2026-07-13 — audit di revisione completa, miglioramento
        di prodotto richiesto esplicitamente da Lorenzo: "grafico di
        contenuto... per rendere il lavoro ancor più completo"]
@@ -478,7 +478,7 @@ _CSS = """
       vertical-align: middle;
     }
     .energy-chip.energy-high { color: #a3423a; border-bottom: 2px solid #a3423a; }
-    .energy-chip.energy-medium { color: #b08d4f; border-bottom: 2px solid #b08d4f; }
+    .energy-chip.energy-medium { color: {{accento_testo}}; border-bottom: 2px solid {{accento}}; }
     .energy-chip.energy-low { color: #55705f; border-bottom: 2px solid #55705f; }
     .energy-legend { font-size: 10px; color: #6b7a89; margin: -6px 0 16px 0; }
     .energy-legend .energy-chip { margin-left: 0; margin-right: 10px; }
@@ -547,19 +547,19 @@ _CSS = """
       background-color: #ffffff;
       color: #16212f;
       padding: 26px 0 34px 0;
-      border-top: 3px solid #b08d4f;
+      border-top: 3px solid {{accento}};
       margin-bottom: 26px;
     }
     .cover-kicker {
       font-size: 10px; letter-spacing: .22em; text-transform: uppercase;
-      color: #b08d4f; margin-bottom: 30px; font-weight: bold;
+      color: {{accento_testo}}; margin-bottom: 30px; font-weight: bold;
     }
     .cover-title {
       font-family: Georgia, 'Times New Roman', serif;
       font-size: 66px; line-height: 1.02; color: #16212f;
       margin: 0 0 20px 0; font-weight: normal;
     }
-    .cover-rule { border-top: 1px solid #e2ded6; width: 100%; margin: 0 0 18px 0; }
+    .cover-rule { border-top: 3px solid {{accento}}; margin: 0 0 14px 0; width: 90px; }}; width: 100%; margin: 0 0 18px 0; }
     .cover-sub {
       font-family: Georgia, 'Times New Roman', serif;
       font-size: 15.5px; font-style: italic; color: #6c7683;
@@ -570,7 +570,7 @@ _CSS = """
        dove non può sfuggirgli. Sfondo a tinta piatta, mai trasparenze. */
     .cover-hero-strip { width: 100%; border-collapse: separate; border-spacing: 0; }
     .cover-hero-strip td {
-      border-top: 1px solid #e2ded6;
+      border-top: 1px solid {{bordo_caldo}};
       padding: 16px 0 0 0; vertical-align: top; width: 50%;
     }
     .cover-hero-k {
@@ -600,7 +600,7 @@ _CSS = """
        scatola attorno a chiedere attenzione. */
     .cover-fact {
       background-color: #ffffff;
-      border-top: 1px solid #e2ded6;
+      border-top: 1px solid {{bordo_caldo}};
       padding: 12px 0 4px 0;
     }
     .cover-fact-k {
@@ -621,44 +621,44 @@ _CSS = """
     .cover-how { margin-top: 26px; }
     .cover-how-title {
       font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
-      color: #2f6690; margin-bottom: 9px;
+      color: {{primario}}; margin-bottom: 9px;
     }
     .cover-how table { width: 100%; border-collapse: separate; border-spacing: 7px; margin: 0 -7px; }
     .cover-how td { width: 33%; vertical-align: top; padding: 0; }
     .cover-how-cell {
       background-color: #ffffff;
-      border: 1px solid #e2ded6;
+      border: 1px solid {{bordo_caldo}};
       border-radius: 0;
       padding: 14px 14px;
       font-size: 10.5px;
       color: #4a5b6b;
       line-height: 1.4;
     }
-    .cover-how-cell b { color: #1a3b5c; }
-    .cover-toc { margin-top: 26px; border-top: 2px solid #e2ded6; padding-top: 18px; }
+    .cover-how-cell b { color: {{scuro}}; }
+    .cover-toc { margin-top: 26px; border-top: 2px solid {{bordo_caldo}}; padding-top: 18px; }
     .cover-toc-title {
       font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
-      color: #2f6690; margin-bottom: 10px;
+      color: {{primario}}; margin-bottom: 10px;
     }
     .cover-toc table { width: 100%; border-collapse: collapse; }
     .cover-toc td.col { width: 50%; vertical-align: top; padding: 0 14px 0 0; }
     .cover-toc-item {
-      font-size: 12px; color: #1a3b5c; padding: 9px 0;
-      border-bottom: 1px solid #eef2f6;
+      font-size: 12px; color: {{scuro}}; padding: 9px 0;
+      border-bottom: 1px solid {{sfondo_tenue}};
     }
     /* Le voci di copertina sono link, ma non devono SEMBRARE link: la
        copertina e' l'unica pagina in cui la grafica viene prima della
        segnaletica. Restano cliccabili, in nero come il resto. */
-    .cover-toc-item a { color: #1a3b5c; text-decoration: none; }
+    .cover-toc-item a { color: {{scuro}}; text-decoration: none; }
     .cover-toc-num {
       display: inline-block; width: 22px;
-      color: #b08d4f; font-weight: bold; font-size: 11px;
+      color: {{accento_testo}}; font-weight: bold; font-size: 11px;
     }
     /* I giorni annidati sotto "Il programma": rientrati, più piccoli, senza
        numero proprio — sono un dettaglio del capitolo 4, non un capitolo. */
     .cover-toc-sub {
       font-size: 11px; color: #4a5b6b; padding: 7px 0 7px 22px;
-      border-bottom: 1px solid #faf7f1;
+      border-bottom: 1px solid {{sfondo_caldo}};
     }
     .cover-toc-sub a { color: #4a5b6b; text-decoration: none; }
     .cover-note {
@@ -668,8 +668,8 @@ _CSS = """
          stampa lo rispetta sulle tabelle e sui blocchi semplici come questo. */
       page-break-inside: avoid;
       font-size: 9.5px; color: #6b7a89; margin-top: 26px;
-      background-color: #faf7f1;
-      border-left: 3px solid #2f6690;
+      background-color: {{sfondo_caldo}};
+      border-left: 3px solid {{primario}};
       border-radius: 0;
       padding: 15px 16px;
       line-height: 1.45;
@@ -731,7 +731,7 @@ _CSS = """
 
     /* --- Cartina del giorno ------------------------------------------- */
     .day-map { margin: 12px 0 6px 0; page-break-inside: avoid; }
-    .day-map img { max-width: 100%; border-radius: 0; border: 1px solid #dbe3ec; }
+    .day-map img { max-width: 100%; border-radius: 0; border: 1px solid {{bordo}}; }
     /* Cartina a sinistra, legenda numerata a destra: vedi la nota in
        `_render_day_map()` per il perché (il blocco impilato occupava più di
        metà pagina e sprecava tre pagine su quattordici). */
@@ -752,9 +752,9 @@ _CSS = """
       font-size: 10px; font-weight: bold; margin-right: 7px; vertical-align: middle;
     }
     .map-pin.pin-red { background: #b23a3a; }
-    .map-pin.pin-orange { background: #b08d4f; }
+    .map-pin.pin-orange { background: {{accento}}; }
     .map-pin.pin-green { background: #3f8f5f; }
-    .map-pin.pin-blue { background: #2f6690; }
+    .map-pin.pin-blue { background: {{primario}}; }
     .map-pin.pin-purple { background: #6b4a8f; }
     .map-pin.pin-yellow { background: #a8871f; }
     .map-legend-type { color: #6b7a89; font-size: 10px; }
@@ -765,15 +765,15 @@ _CSS = """
 
     /* --- Cartina e come arrivare -------------------------------------- */
     .legs { font-size: 12px; margin: 6px 0 2px 0; }
-    .leg-row { padding: 7px 0; border-top: 1px solid #eef2f6; page-break-inside: avoid; }
+    .leg-row { padding: 7px 0; border-top: 1px solid {{sfondo_tenue}}; page-break-inside: avoid; }
     .leg-row:first-child { border-top: none; }
-    .leg-arrow { color: #2f6690; font-weight: bold; }
+    .leg-arrow { color: {{primario}}; font-weight: bold; }
     .leg-meta { font-size: 11px; color: #6b7a89; margin-top: 2px; }
-    .leg-meta a { color: #2f6690; text-decoration: none; }
+    .leg-meta a { color: {{primario}}; text-decoration: none; }
     .leg-unknown { color: #8a97a3; font-style: italic; }
     /* [AGGIUNTO 2026-08-01] L'ora di uscita e' l'unica riga azionabile della
        sezione: deve staccarsi dal grigio dei metadati. */
-    .leg-depart { color: #1a3b5c; }
+    .leg-depart { color: {{scuro}}; }
 
     /* [AGGIUNTO 2026-08-03 — task #179] Lo spostamento dentro il programma.
        Grigio e piccolo di proposito: e' la riga che si legge alzandosi dal
@@ -781,12 +781,12 @@ _CSS = """
        page-break-inside: avoid, quindi non puo' separarsi dalla tappa a cui
        si riferisce. */
     .leg-inline { font-size: 10.5px; color: #6b7a89; margin: 0 0 3px 0; }
-    .leg-inline a { color: #2f6690; text-decoration: none; }
+    .leg-inline a { color: {{primario}}; text-decoration: none; }
     .leg-inline-head { color: #8a97a3; }
     /* [AGGIUNTO 2026-08-03 — task #179] I chilometri della giornata, sotto al
        titolo del giorno. Non e' un metadato: e' il numero che dice se quella
        giornata e' fattibile con le scarpe che uno ha messo. */
-    .day-total { font-size: 11px; color: #2f6690; font-weight: bold;
+    .day-total { font-size: 11px; color: {{primario}}; font-weight: bold;
                  margin: -6px 0 8px 0; }
 
     /* [AGGIUNTO 2026-08-03 — task #181, richiesta di Lorenzo: «inserisci
@@ -828,7 +828,7 @@ _CSS = """
       font-size: 8px; color: #98a4b0; margin-top: 3px; line-height: 1.3;
     }
     .day-foto { margin: 0 0 10px 0; text-align: center; }
-    .day-foto img { max-width: 100%; max-height: 190px; }
+    .day-foto img { max-width: 100%; max-height: 250px; }
     .day-foto .didascalia { font-size: 9px; color: #8a97a5; margin-top: 2px; }
 
     /* [AGGIUNTO 2026-08-03 — task #181] L'immagine in testa alla scheda di
@@ -853,27 +853,27 @@ _CSS = """
        la scheda del paese e i fatti di copertina sono la stessa cosa — dati
        secchi da leggere in un colpo d'occhio — e devono sembrarlo. */
     .pre-facts { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0 18px 0; }
-    .pre-facts td { padding: 7px 4px; border-bottom: 1px solid #eef2f6; vertical-align: top; }
+    .pre-facts td { padding: 7px 4px; border-bottom: 1px solid {{sfondo_tenue}}; vertical-align: top; }
     .pre-facts td.k {
       color: #6b7a89; width: 34%; text-transform: uppercase;
       font-size: 10px; letter-spacing: .05em;
     }
-    .pre-facts td.v { color: #1a3b5c; font-weight: bold; }
+    .pre-facts td.v { color: {{scuro}}; font-weight: bold; }
     .pre-facts tr.emergency td.v { color: #b23a3a; font-size: 14px; }
     /* Una tabella PER RIGA e non una tabella sola: `page-break-inside` in
        questo motore vale sulle righe di tabella, quindi una voce con il suo
        dettaglio non si spezza mai a metà tra due pagine. */
     .check-row { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
-    .check-row td { padding: 8px 4px; border-bottom: 1px solid #eef2f6; vertical-align: top; }
+    .check-row td { padding: 8px 4px; border-bottom: 1px solid {{sfondo_tenue}}; vertical-align: top; }
     .check-row td.check-mark { width: 24px; }
     /* Una casella davvero vuota, disegnata col bordo: i caratteri di casella
        Unicode non esistono nei font di sistema del renderer e uscirebbero
        come rettangoli vuoti — cioè come un errore di stampa. */
     .check-box {
       display: inline-block; width: 11px; height: 11px;
-      border: 2px solid #b08d4f; border-radius: 0;
+      border: 2px solid {{accento}}; border-radius: 0;
     }
-    .check-text { font-size: 12px; color: #1a3b5c; }
+    .check-text { font-size: 12px; color: {{scuro}}; }
     .check-detail { font-size: 11px; color: #6b7a89; margin-top: 3px; }
 
     /* --- Vademecum: clima, valigia, bagagli ---------------------------- */
@@ -897,35 +897,35 @@ _CSS = """
       page-break-inside: avoid;
     }
     .vad-climate-head {
-      background: #1a3b5c; color: #ffffff; padding: 7px 14px;
+      background: {{scuro}}; color: #ffffff; padding: 5px 14px;
       font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
     }
-    .vad-climate-head .vad-zone { color: #f0c987; }
+    .vad-climate-head .vad-zone { color: {{accento_su_scuro}}; }
     .vad-climate-body {
-      border: 1px solid #dbe3ec; border-top: none; padding: 0;
+      border: 1px solid {{bordo}}; border-top: none; padding: 0;
     }
     .vad-nums { width: 100%; border-collapse: collapse; }
     .vad-nums td {
-      width: 33%; text-align: center; padding: 10px 6px;
-      border-right: 1px solid #eef2f6; vertical-align: middle;
+      width: 33%; text-align: center; padding: 7px 6px;
+      border-right: 1px solid {{sfondo_tenue}}; vertical-align: middle;
     }
     .vad-nums td:last-child { border-right: none; }
-    .vad-num { font-size: 22px; font-weight: bold; color: #1a3b5c; line-height: 1.1; }
+    .vad-num { font-size: 22px; font-weight: bold; color: {{scuro}}; line-height: 1.1; }
     .vad-num-hot { color: #b23a3a; }
-    .vad-num-cold { color: #2f6690; }
+    .vad-num-cold { color: {{primario}}; }
     .vad-num-label {
       font-size: 9px; text-transform: uppercase; letter-spacing: .07em;
-      color: #8a97a3; margin-top: 3px;
+      color: #8a97a3; margin-top: 2px;
     }
-    .vad-num-small { font-size: 13px; font-weight: bold; color: #1a3b5c; line-height: 1.2; }
+    .vad-num-small { font-size: 13px; font-weight: bold; color: {{scuro}}; line-height: 1.2; }
     .vad-note {
-      font-size: 11px; color: #4a5b6b; padding: 8px 14px;
-      border-top: 1px solid #eef2f6; text-align: justify;
+      font-size: 11px; color: #4a5b6b; padding: 6px 14px;
+      border-top: 1px solid {{sfondo_tenue}}; text-align: justify;
     }
-    .vad-forecast { font-size: 11px; padding: 8px 14px; border-top: 1px solid #eef2f6; }
+    .vad-forecast { font-size: 11px; padding: 6px 14px; border-top: 1px solid {{sfondo_tenue}}; }
     .vad-forecast a {
-      display: inline-block; color: #ffffff; background: #2f6690;
-      text-decoration: none; border-radius: 0; padding: 2px 10px;
+      display: inline-block; color: #ffffff; background: {{primario}};
+      text-decoration: none; border-radius: 0; padding: 1px 10px;
     }
     .vad-forecast-when { color: #8a97a3; margin-left: 6px; }
 
@@ -939,66 +939,77 @@ _CSS = """
     .vad-choice td { vertical-align: top; padding: 0; }
     .vad-choice td.vad-choice-badge { width: 132px; padding-right: 14px; }
     .vad-badge {
-      display: block; text-align: center; color: #ffffff; background: #2f6690;
-      border-radius: 0; padding: 10px 6px; font-size: 15px; font-weight: bold;
+      display: block; text-align: center; color: #ffffff; background: {{primario}};
+      border-radius: 0; padding: 7px 6px; font-size: 15px; font-weight: bold;
       text-transform: uppercase; letter-spacing: .04em;
     }
-    .vad-badge-hold { background: #b08d4f; }
+    .vad-badge-hold { background: {{accento}}; }
     .vad-badge-sub {
       display: block; font-size: 9px; font-weight: normal; letter-spacing: .06em;
-      text-transform: uppercase; margin-top: 2px; color: #dce8f2;
+      text-transform: uppercase; margin-top: 1px; color: {{chiaro_su_scuro}};
     }
-    .vad-reason { font-size: 12px; color: #1a3b5c; text-align: justify; }
+    .vad-reason { font-size: 12px; color: {{scuro}}; text-align: justify; }
     .vad-total {
-      font-size: 12px; color: #7a6320; background: #fdf8e8;
-      border-left: 3px solid #d9b64a; padding: 6px 10px; margin-top: 6px;
+      font-size: 12px; color: {{accento_testo}}; background: {{sfondo_caldo}};
+      border-left: 3px solid {{accento}}; padding: 4px 10px; margin-top: 4px;
     }
 
     /* Il listino delle compagnie: una tabella vera, perché sono numeri da
        confrontare in colonna e qualunque altra forma li renderebbe illeggibili. */
-    .vad-fares { width: 100%; border-collapse: collapse; font-size: 11px; margin: 6px 0; }
+    /* [CORRETTO 2026-08-13 — task #220, difetto ISOLATO col misuratore.]
+       Il listino sbordava di due-tre righe sulla pagina dopo, che restava
+       vuota per l'80%: era la pagina 9 che il misuratore segnalava al 19,8%.
+       E' lo stesso difetto delle schede di guida — un blocco lungo che non ci
+       sta e trascina un pezzetto sul foglio successivo — cioe' esattamente
+       cio' che Lorenzo ha segnalato («poche righe e poi bianco»).
+       `page-break-inside: avoid` da solo non basterebbe: se la tabella fosse
+       piu' alta di una pagina il motore lo ignora e spezza lo stesso. Quindi
+       si fa stare: righe piu' strette e corpo leggermente minore. I numeri
+       restano perfettamente leggibili — erano larghi, non necessari. */
+    .vad-fares { width: 100%; border-collapse: collapse; font-size: 10px;
+                 margin: 6px 0; page-break-inside: avoid; }
     .vad-fares th {
       text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: .05em;
-      color: #6b7a89; border-bottom: 2px solid #e2ded6; padding: 5px 4px;
+      color: #6b7a89; border-bottom: 2px solid {{bordo_caldo}}; padding: 2px 4px;
     }
-    .vad-fares td { padding: 5px 4px; border-bottom: 1px solid #eef2f6; vertical-align: top; }
-    .vad-fares td.vad-carrier { font-weight: bold; color: #1a3b5c; white-space: nowrap; }
+    .vad-fares td { padding: 2px 4px; border-bottom: 1px solid {{sfondo_tenue}}; vertical-align: top; }
+    .vad-fares td.vad-carrier { font-weight: bold; color: {{scuro}}; white-space: nowrap; }
     .vad-fares td.num { text-align: right; white-space: nowrap; }
-    .vad-caveat { font-size: 10px; color: #8a97a3; text-align: justify; margin-bottom: 8px; }
-    .vad-notes { font-size: 11px; margin: 0 0 8px 0; padding-left: 18px; color: #4a5b6b; }
-    .vad-notes li { margin-bottom: 3px; }
+    .vad-caveat { font-size: 9.5px; line-height: 1.3; color: #8a97a3; text-align: justify; margin-bottom: 6px; }
+    .vad-notes { font-size: 10.5px; line-height: 1.35; margin: 0 0 8px 0; padding-left: 18px; color: #4a5b6b; }
+    .vad-notes li { margin-bottom: 2px; }
 
     /* La lista della valigia su DUE colonne: la stessa quantità di voci su
        metà delle pagine. È il rimedio diretto ai "troppi spazi vuoti
        dispersivi" — una lista di spunte a colonna singola sprecava due terzi
        della larghezza del foglio. */
-    .vad-group { margin-bottom: 10px; page-break-inside: avoid; }
+    .vad-group { margin-bottom: 7px; page-break-inside: avoid; }
     .vad-group-title {
-      font-size: 12px; font-weight: bold; color: #1a3b5c;
-      border-left: 4px solid #b08d4f; padding-left: 10px; margin-bottom: 5px;
+      font-size: 12px; font-weight: bold; color: {{scuro}};
+      border-left: 4px solid {{accento}}; padding-left: 10px; margin-bottom: 4px;
     }
     .vad-items { width: 100%; border-collapse: collapse; }
     .vad-items td {
-      width: 50%; vertical-align: top; padding: 3px 10px 3px 0;
-      font-size: 11px; color: #1a3b5c;
+      width: 50%; vertical-align: top; padding: 2px 10px 3px 0;
+      font-size: 11px; color: {{scuro}};
     }
-    .vad-tick { color: #b08d4f; font-weight: bold; }
+    .vad-tick { color: {{accento_testo}}; font-weight: bold; }
 
     /* I passi di come si riempie: numerati, perché è una sequenza e l'ordine
        è metà dell'informazione. */
     .vad-step { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
-    .vad-step td { padding: 5px 4px; border-bottom: 1px solid #eef2f6; vertical-align: top; }
+    .vad-step td { padding: 4px 4px; border-bottom: 1px solid {{sfondo_tenue}}; vertical-align: top; }
     .vad-step td.vad-step-n { width: 26px; }
     .vad-step-num {
       display: inline-block; width: 20px; height: 20px; line-height: 20px;
-      text-align: center; border-radius: 0; background: #1a3b5c;
+      text-align: center; border-radius: 0; background: {{scuro}};
       color: #ffffff; font-size: 11px; font-weight: bold;
     }
-    .vad-step-title { font-size: 12px; font-weight: bold; color: #1a3b5c; }
-    .vad-step-detail { font-size: 11px; color: #6b7a89; margin-top: 2px; text-align: justify; }
+    .vad-step-title { font-size: 12px; font-weight: bold; color: {{scuro}}; }
+    .vad-step-detail { font-size: 11px; color: #6b7a89; margin-top: 1px; text-align: justify; }
     .vad-sub {
       font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-      color: #b08d4f; margin: 14px 0 5px 0; font-weight: bold;
+      color: {{accento_testo}}; margin: 14px 0 5px 0; font-weight: bold;
     }
 
     /* Il riquadro del foglio da spuntare. Tabella e non div: deve restare
@@ -1009,33 +1020,33 @@ _CSS = """
     .vad-sheet {
       width: 100%; border-collapse: collapse; margin: 10px 0 6px 0;
       page-break-inside: avoid;
-      background: #f4f8fb; border-left: 4px solid #1a3b5c;
+      background: {{sfondo_tenue}}; border-left: 4px solid {{scuro}};
     }
-    .vad-sheet td { padding: 10px 12px; vertical-align: top; }
+    .vad-sheet td { padding: 7px 12px; vertical-align: top; }
     .vad-sheet-title {
-      font-size: 12px; font-weight: bold; color: #1a3b5c; margin-bottom: 4px;
+      font-size: 12px; font-weight: bold; color: {{scuro}}; margin-bottom: 3px;
     }
     .vad-sheet-body { font-size: 11px; color: #4a5b6b; text-align: justify; }
     .vad-sheet-how {
-      font-size: 10px; color: #6b7a89; margin-top: 6px;
-      border-top: 1px solid #e2ded6; padding-top: 5px;
+      font-size: 10px; color: #6b7a89; margin-top: 4px;
+      border-top: 1px solid {{bordo_caldo}}; padding-top: 5px;
     }
     .vad-sheet-file {
       font-family: 'DejaVu Sans Mono', monospace; font-size: 10px;
-      color: #1a3b5c; font-weight: bold;
+      color: {{scuro}}; font-weight: bold;
     }
 
     /* --- Costi e budget ------------------------------------------------ */
     .cost-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0; }
     .cost-table th {
       text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
-      color: #6b7a89; border-bottom: 2px solid #e2ded6; padding: 6px 4px;
+      color: #6b7a89; border-bottom: 2px solid {{bordo_caldo}}; padding: 6px 4px;
     }
-    .cost-table td { padding: 6px 4px; border-bottom: 1px solid #eef2f6; vertical-align: top; }
+    .cost-table td { padding: 6px 4px; border-bottom: 1px solid {{sfondo_tenue}}; vertical-align: top; }
     .cost-table td.num { text-align: right; white-space: nowrap; }
     .cost-table tr.total td {
-      border-top: 2px solid #1a3b5c; border-bottom: none;
-      font-weight: bold; color: #1a3b5c; font-size: 13px; padding-top: 8px;
+      border-top: 2px solid {{scuro}}; border-bottom: none;
+      font-weight: bold; color: {{scuro}}; font-size: 13px; padding-top: 8px;
     }
     .cost-detail { font-size: 10px; color: #8a97a3; }
     .verdict {
@@ -1043,33 +1054,33 @@ _CSS = """
       padding: 3px 10px; border-radius: 0; margin-top: 6px;
     }
     .verdict.v-within { background: #3f8f5f; }
-    .verdict.v-tight { background: #b08d4f; }
+    .verdict.v-tight { background: {{accento}}; }
     .verdict.v-over { background: #b23a3a; }
 
     /* --- Consigli dell'Architetto -------------------------------------- */
     .tip-group { margin-bottom: 14px; page-break-inside: avoid; }
     .tip-group-title {
-      font-size: 13px; font-weight: bold; color: #1a3b5c;
-      border-left: 4px solid #b08d4f; padding-left: 10px; margin-bottom: 6px;
+      font-size: 13px; font-weight: bold; color: {{scuro}};
+      border-left: 4px solid {{accento}}; padding-left: 10px; margin-bottom: 6px;
     }
     .tip-group ul { margin: 0; padding-left: 20px; font-size: 12px; }
     .tip-group li { margin-bottom: 4px; }
 
     /* --- Piani B se piove ---------------------------------------------- */
     .rain-card {
-      border: 1px solid #dbe3ec; border-left: 4px solid #2f6690; border-radius: 0;
+      border: 1px solid {{bordo}}; border-left: 4px solid {{primario}}; border-radius: 0;
       padding: 12px 16px; margin-bottom: 10px; font-size: 12px; page-break-inside: avoid;
     }
-    .rain-day { font-weight: bold; color: #1a3b5c; margin-bottom: 4px; }
-    .rain-swap { padding: 4px 0; border-top: 1px solid #eef2f6; }
+    .rain-day { font-weight: bold; color: {{scuro}}; margin-bottom: 4px; }
+    .rain-swap { padding: 4px 0; border-top: 1px solid {{sfondo_tenue}}; }
     .rain-swap:first-child { border-top: none; }
-    .rain-arrow { color: #2f6690; font-weight: bold; }
+    .rain-arrow { color: {{primario}}; font-weight: bold; }
 
     /* --- Schede luogo (menù / info ristoranti) ------------------------- */
     .place-links { font-size: 11px; margin-top: 3px; }
     .place-links a {
-      display: inline-block; color: #2f6690; text-decoration: none;
-      border: 1px solid #cfdae5; border-radius: 0;
+      display: inline-block; color: {{primario}}; text-decoration: none;
+      border: 1px solid {{bordo}}; border-radius: 0;
       padding: 1px 9px; margin: 2px 5px 0 0;
     }
     .place-meta { font-size: 10px; color: #8a97a3; margin-top: 2px; }
@@ -1077,7 +1088,7 @@ _CSS = """
     /* --- Guida turistica tascabile ------------------------------------- */
     .guide-link { font-size: 11px; margin-top: 3px; }
     .guide-link a {
-      display: inline-block; color: #ffffff; background: #1a3b5c; text-decoration: none;
+      display: inline-block; color: #ffffff; background: {{scuro}}; text-decoration: none;
       border-radius: 0; padding: 2px 10px;
     }
     /* [CAMBIATO 2026-08-02 (quinquies)] La scheda NON porta più `.page-break`.
@@ -1107,7 +1118,7 @@ _CSS = """
        questi valori verso l'alto rimette il bianco: `tests/
        test_standard_qualita.py` misura la densità e lo dice. */
     .guide-card {
-      border: 1px solid #dbe3ec; border-radius: 0; padding: 10px 14px;
+      border: 1px solid {{bordo}}; border-radius: 0; padding: 10px 14px;
       margin-bottom: 8px;
       /* L'interlinea generale del documento è 1.5, giusta per un testo che
          si legge di seguito. Dentro la scheda il testo è fatto di righe
@@ -1115,12 +1126,12 @@ _CSS = """
          respiro: 1.38 toglie l'8% dell'altezza senza che si veda. */
       line-height: 1.38;
     }
-    .guide-card h3 { font-size: 15px; color: #1a3b5c; margin: 0 0 3px 0; }
-    .guide-eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #b08d4f; }
+    .guide-card h3 { font-size: 15px; color: {{scuro}}; margin: 0 0 3px 0; }
+    .guide-eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: {{accento_testo}}; }
     .guide-body { font-size: 12px; margin-top: 5px; }
     .guide-facts { font-size: 11px; color: #4a5b6b; margin-top: 5px; }
     .guide-back { font-size: 10px; margin-top: 5px; }
-    .guide-back a { color: #2f6690; text-decoration: none; }
+    .guide-back a { color: {{primario}}; text-decoration: none; }
     /* Gli elenchi puntati dentro la scheda: il margine verticale di 1em e il
        rientro di 40px sono i valori con cui WebKit disegna un `<ul>` quando
        nessuno glieli dice. Su una scheda con due elenchi sono quasi tre
@@ -1138,16 +1149,16 @@ _CSS = """
     }
     .guide-card .guide-warn { page-break-inside: avoid; }
     .guide-card .highlight-row { padding: 2px 0; }
-    .highlight-row { padding: 4px 0; border-top: 1px solid #eef2f6; font-size: 12px; }
+    .highlight-row { padding: 4px 0; border-top: 1px solid {{sfondo_tenue}}; font-size: 12px; }
     .highlight-row:first-child { border-top: none; }
-    .highlight-name { font-weight: bold; color: #1a3b5c; }
+    .highlight-name { font-weight: bold; color: {{scuro}}; }
     /* [AGGIUNTI 2026-08-02] Sottotitoli interni alla scheda e i due blocchi
        nuovi. Nessun gradiente, nessuna trasparenza: il motore di stampa è
        WebKit del 2014 e li ignora in silenzio, che è il modo peggiore di
        sbagliare — vedi la nota in cima a questo foglio di stile. */
     .guide-sub {
       font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-      color: #b08d4f; margin-top: 8px; font-weight: bold;
+      color: {{accento_testo}}; margin-top: 8px; font-weight: bold;
     }
     /* Margini scritti per esteso e non lasciati al default: il `<p>` di
        WebKit porta un margine verticale di 1em sopra E sotto, che fra due
@@ -1158,7 +1169,7 @@ _CSS = """
     .guide-para:last-child { margin-bottom: 0; }
     .guide-warn {
       font-size: 12px; margin-top: 7px; padding: 6px 10px;
-      border-left: 3px solid #b08d4f; background: #fdf6ef;
+      border-left: 3px solid {{accento}}; background: {{sfondo_caldo}};
     }
 
     /* --- Varie --------------------------------------------------------- */
@@ -1193,7 +1204,99 @@ _CSS = """
        da entrambi i lati: la riga respira sopra e sotto. */
     .mid-intro { font-size: 11px; color: #6b7a89; margin: 10px 0 8px 0; }
     .day-open { page-break-inside: avoid; }
+    /* [AGGIUNTO 2026-08-13 — task #209] La fascia fotografica in cima alla
+       copertina. Niente `object-fit` (il motore la ignora) e niente altezza
+       forzata: solo un tetto, cosi' l'immagine sceglie le proprie proporzioni
+       dentro il limite e nessuna fotografia esce schiacciata — e' la stessa
+       lezione che era costata le foto stirate dell'11 agosto. */
+    .cover-foto { text-align: center; margin: 0 0 18px 0; page-break-inside: avoid; }
+    .cover-foto img { width: 100%; }
+    .cover-foto .didascalia { font-size: 8px; color: #98a4b0; margin-top: 3px; }
+    /* [AGGIUNTO 2026-08-13 — task #214] La fotografia che esce dai margini e
+       arriva al bordo del foglio: e' la mossa che distingue una rivista da una
+       relazione. E' anche l'unica forma che il motore accetta — `@page {
+       margin: 0 }` sposterebbe anche tutto il testo.
+       Questi due numeri valgono ESATTAMENTE quanto i margini di `@page` in
+       cima al foglio: se un domani cambiano li', vanno cambiati anche qui,
+       altrimenti la fotografia sborda dal foglio o si ferma prima del bordo.
+       C'e' un controllo che lo verifica, perche' e' il tipo di disallineamento
+       che non da' nessun errore e si vede solo sulla carta. */
+    .day-banda { margin-left: -1.8cm; margin-right: -1.8cm; margin-bottom: 10px;
+                 page-break-inside: avoid; }
+    .day-banda .didascalia { font-size: 8px; color: #98a4b0;
+                             margin-top: 2px; margin-left: 1.8cm; }
+    /* [AGGIUNTO 2026-08-13 — task #215] Gli ornamenti della giornata.
+       Colori pieni e nessuna sfumatura: il motore non le sa fare e le stampa
+       piatte o non le stampa affatto. Il tondo del bollo si ottiene con
+       `border-radius` su un blocco COLORATO, che il motore regge — e' solo
+       sulle IMMAGINI che si rompe (misurato: mezzo tondo, mezzo quadrato). */
+    .day-bollo { width: 74px; height: 74px; border-radius: 37px;
+                 background: {{accento}}; color: #ffffff; text-align: center;
+                 float: right; margin: 0 0 6px 10px; page-break-inside: avoid; }
+    .day-bollo .n { font-family: Georgia, 'Times New Roman', serif;
+                    font-size: 26px; line-height: 1; padding-top: 16px; }
+    .day-bollo .e { font-size: 7px; letter-spacing: 0.13em;
+                    text-transform: uppercase; }
+    .day-capolettera { font-family: Georgia, 'Times New Roman', serif;
+                       font-size: 72px; line-height: 0.8; color: {{sfondo_tenue}};
+                       float: right; margin: 0 0 4px 12px; }
+    /* Il nastro storto. Uno per pagina: due lo fanno sembrare un volantino di
+       sconti, e questo documento si vende a 4,90 non a 0,90. */
+    .day-nastro { -webkit-transform: rotate(-2deg); background: {{scuro}};
+                  color: #ffffff; display: inline-block; padding: 4px 14px;
+                  font-size: 9px; letter-spacing: 0.15em;
+                  text-transform: uppercase; margin: 4px 0 8px 0; }
+    .day-tonda { text-align: center; margin: 8px 0; page-break-inside: avoid; }
+    .day-tonda img { width: 190px; }
+    .day-tonda .didascalia { font-size: 8px; color: #98a4b0; margin-top: 2px; }
+    /* L'apertura a colonna piena: niente `max-height` di proposito. Le
+       proporzioni le decide il ritaglio in Python, e width + max-height
+       insieme sono la coppia che l'11 agosto ha prodotto le fotografie
+       schiacciate. */
+    .day-larga { margin: 4px 0 10px 0; page-break-inside: avoid; }
+    .day-larga .didascalia { font-size: 8px; color: #98a4b0; margin-top: 2px; }
 """
+
+
+def _css(tavolozza: dict | None = None) -> str:
+    """Il foglio di stile con dentro i colori del posto (task #209).
+
+    [CAMBIATO 2026-08-13 — richiesta di Lorenzo: «mi piacerebbe che l'estetica
+    si adattasse al posto in cui il cliente vuole andare».]
+
+    Prima i colori stavano scritti dentro il foglio di stile, uno per uno: lo
+    stesso blu navy e lo stesso oro per Bologna, per Santorini e per
+    Marrakech. Adesso il foglio e' un MODELLO con dei segnaposto, e i colori
+    arrivano da `src/tavolozza.py`, che sceglie la tavolozza guardando le
+    fotografie vere del luogo.
+
+    Cambia solo la parte cromatica: i grigi del testo, il nero e le distanze
+    restano identici in ogni tavolozza. Un documento di trenta pagine si legge
+    grazie ai neutri, e farli girare insieme al colore vorrebbe dire rimettere
+    in gioco la leggibilita' a ogni destinazione.
+
+    Restano fissi anche i colori che vogliono dire QUALCOSA: il rosso degli
+    avvisi, il verde delle conferme, i colori dei pallini che distinguono le
+    giornate sulla cartina. Quelli non sono decorazione — se cambiassero col
+    posto cambierebbe il significato, che e' un difetto peggiore del grigiore.
+    """
+    from src import tavolozza as _tav
+
+    piena = _tav.completa(tavolozza) if tavolozza else _tav.completa(_tav.PREDEFINITA)
+    foglio = _CSS_MODELLO
+    for ruolo, colore in piena.items():
+        if isinstance(colore, str) and colore.startswith("#"):
+            foglio = foglio.replace("{{" + ruolo + "}}", colore)
+    return foglio
+
+
+# Il foglio di stile di sempre: il modello con la tavolozza predefinita.
+#
+# Resta esposto con questo nome perche' meta' dei controlli di questo progetto
+# lo leggono da qui — e soprattutto perche' un documento senza fotografie deve
+# continuare a uscire ESATTAMENTE come usciva prima. Il ripiego dev'essere una
+# cosa gia' vista funzionare, non una cosa nuova.
+_CSS = _css()
 
 # Prefisso delle sonde d'ancoraggio (vedi `_anchor()`). La costante vive in
 # src/pdf_links.py perche' e' un contratto fra chi scrive l'HTML e chi ripara
@@ -1201,6 +1304,37 @@ _CSS = """
 # refactoring, e il sintomo sarebbe stato — di nuovo — un collegamento che non
 # fa niente e non dice niente.
 _ANCHOR_PROBE_PREFIX = pdf_links.PROBE_PREFIX
+
+# Quanto e' larga la fascia fotografica di copertina rispetto alla sua
+# altezza. Non e' un gusto: e' altezza di pagina. A 2,6 la copertina del
+# campione sfondava sul foglio dopo; a 3,2 ci sta, e come banda sta pure
+# meglio — una striscia larga si legge come un'apertura, un rettangolo alto
+# si legge come una figura messa li'.
+_RAPPORTO_FASCIA = 3.2
+
+
+# Il comando esatto con cui si stampa. UNA definizione sola, e il motivo e'
+# preciso.
+#
+# [ESTRATTO 2026-08-13] Serve a `src/prova_stampa.py`, la prova che chiede al
+# motore di stampa VERO — quello di produzione, con le patch — che cosa fa dei
+# rimandi interni. Se quella prova costruisse un comando suo, misurerebbe il
+# comportamento di un comando che nessuno esegue: risposta precisa alla
+# domanda sbagliata, cioe' il modo piu' elegante di prendersi in giro. Da qui
+# in poi chi misura e chi stampa eseguono le stesse identiche parole.
+#
+# `--enable-internal-links` resta acceso di proposito anche adesso che i
+# rimandi interni non passano piu' di li': toglierlo cambierebbe il
+# comportamento del motore su un documento che gia' funziona, e non abbiamo
+# modo di provare qui che cosa succede. Si tocca una cosa alla volta.
+COMANDO_STAMPA = (
+    "wkhtmltopdf", "--quiet",
+    "--enable-internal-links",
+    "--outline",
+    "--footer-center", "[page] / [topage]",
+    "--footer-font-size", "8",
+    "--footer-spacing", "5",
+)
 
 
 # [AGGIUNTO 2026-07-12 — richiesta di Lorenzo: "aggiungerli al pdf che si
@@ -1403,7 +1537,7 @@ def _render_guide_section(
         parts.append(f"<div class='disclaimer'>{_esc(guide['disclaimer'])}</div>")
     parts.append(
         "<div class='guide-back'>"
-        "<a href='#giorno-per-giorno'>Torna al programma giorno per giorno</a></div>"
+        "<a href='" + pdf_links.LINK_PREFIX + "giorno-per-giorno'>Torna al programma giorno per giorno</a></div>"
     )
     parts.append("</div>")
     return "".join(parts)
@@ -1704,7 +1838,7 @@ def _costruisci_pin_targets(
         if not isinstance(poi_id, str) or not nome:
             continue
         bersagli[poi_id] = {
-            "href": f"#{nome}", "titolo": _titolo(poi_id), "modo": "capitolo",
+            "href": f"{pdf_links.LINK_PREFIX}{nome}", "titolo": _titolo(poi_id), "modo": "capitolo",
         }
 
     for poi_id, url in (guide_urls or {}).items():
@@ -1721,7 +1855,7 @@ def _costruisci_pin_targets(
         if not isinstance(poi_id, str) or not anchor or poi_id in bersagli:
             continue
         bersagli[poi_id] = {
-            "href": f"#{anchor}", "titolo": _titolo(poi_id), "modo": "interno",
+            "href": f"{pdf_links.LINK_PREFIX}{anchor}", "titolo": _titolo(poi_id), "modo": "interno",
         }
     return bersagli
 
@@ -2195,6 +2329,10 @@ def _render_cover(
     day_entries: list[tuple[str, str]] | None = None,
     guide_count: int = 0,
     leg_count: int = 0,
+    # [AGGIUNTO 2026-08-13 — task #209] La fotografia vera del posto, in cima
+    # alla copertina. `None` = copertina come prima: un documento senza
+    # immagini non deve peggiorare, deve solo restare quello di ieri.
+    foto_copertina: tuple[bytes, str] | None = None,
 ) -> str:
     """Prima pagina dedicata: il documento che il cliente riceve dopo aver
     pagato deve *sembrare* un prodotto, non l'output di uno script. È
@@ -2325,15 +2463,46 @@ def _render_cover(
     # piu' compatta e una seconda pagina quasi vuota, vince sempre la prima.**
     # Il bianco in fondo a una pagina e' respiro; il bianco sotto due righe e'
     # un errore.
-    if tallest <= 4:
+    # [CORRETTO 2026-08-13 — task #209, e il difetto e' stato visto sulla
+    # pagina prima di essere riparato.] Le soglie qui sotto erano tarate su
+    # una copertina SENZA fotografia. Appena la fascia in cima e' comparsa, la
+    # copertina del campione ha sfondato sulla seconda pagina lasciandola
+    # bianca per nove decimi: esattamente cio' che Lorenzo aveva segnalato
+    # l'11 agosto («non voglio una pagina iniziata per due righe e poi
+    # lasciata bianca»), ricomparso da un'altra porta.
+    #
+    # La fascia occupa piu' o meno quanto tre voci d'indice. Quindi, quando
+    # c'e', il respiro scala di un livello: e' l'unico modo di aggiungere
+    # un'immagine senza rimettere in gioco l'impaginazione.
+    limite_arioso, limite_comodo = (2, 4) if foto_copertina else (4, 7)
+    if tallest <= limite_arioso:
         density = " cover-airy"
-    elif tallest <= 7:
+    elif tallest <= limite_comodo:
         density = " cover-roomy"
     else:
         density = ""
 
+    apertura = ""
+    if foto_copertina:
+        try:
+            byte_foto, credito = foto_copertina
+            byte_foto = foto.ritaglia_panoramica(byte_foto, _RAPPORTO_FASCIA) or byte_foto
+            b64 = base64.b64encode(byte_foto).decode("ascii")
+            tipo = foto.mime_immagine(byte_foto)
+            didascalia = (f"<div class='didascalia'>Foto: {_esc(credito)}</div>"
+                          if str(credito or "").strip() else "")
+            apertura = (f"<div class='cover-foto'>"
+                        f"<img src='data:{tipo};base64,{b64}' alt=''/>"
+                        f"{didascalia}</div>")
+        except (TypeError, ValueError, AttributeError):
+            # Una fotografia illeggibile non deve costare il documento: al
+            # massimo costa la fotografia. Vale per tutte le immagini di
+            # questo progetto, e vale a maggior ragione per la prima pagina.
+            apertura = ""
+
     parts = [
         f"<div class='cover{density}'>",
+        apertura,
         "<div class='cover-hero'>",
         "<div class='cover-kicker'>Itinerario su misura</div>",
         f"<h1 class='cover-title'>{_esc(destination)}</h1>",
@@ -2387,7 +2556,7 @@ def _render_cover(
             parts.append("<td class='col'>")
             for index, (anchor, title) in enumerate(column):
                 label = (
-                    f"<a href='#{_esc(anchor)}'>{_esc(title)}</a>" if anchor
+                    f"<a href='{pdf_links.LINK_PREFIX}{_esc(anchor)}'>{_esc(title)}</a>" if anchor
                     else _esc(title)
                 )
                 parts.append(
@@ -2399,7 +2568,7 @@ def _render_cover(
                     for day_anchor, day_title in subs:
                         parts.append(
                             f"<div class='cover-toc-sub'>"
-                            f"<a href='#{_esc(day_anchor)}'>{_esc(day_title)}</a></div>"
+                            f"<a href='{pdf_links.LINK_PREFIX}{_esc(day_anchor)}'>{_esc(day_title)}</a></div>"
                         )
             parts.append("</td>")
             offset += len(column)
@@ -2837,6 +3006,33 @@ def _render_day_travel_total(legs) -> str:
     return f"<div class='day-total'>{_esc(testo)}</div>"
 
 
+def _foto_di_apertura(days, photos: dict | None) -> tuple[bytes, str] | None:
+    """La fotografia che apre il documento: la prima tappa vera del viaggio.
+
+    [AGGIUNTO 2026-08-13 — task #209] La copertina era l'unica pagina del
+    documento senza una sola immagine: il cliente pagava, apriva, e trovava
+    del testo. Adesso apre e vede il posto dove sta andando.
+
+    Si sceglie la PRIMA tappa in ordine di visita, non «la piu' bella»: non
+    abbiamo modo di sapere quale sia la piu' bella, e qualunque criterio ce lo
+    facesse credere sarebbe un dato inventato. La prima tappa ha per giunta un
+    senso narrativo — e' da li' che il viaggio comincia davvero.
+
+    Deterministica di proposito: lo stesso viaggio, rigenerato, deve dare la
+    stessa copertina. Una prima pagina che cambia fra due esecuzioni identiche
+    e' un difetto che nessuno riesce a riprodurre.
+    """
+    for giorno in days or []:
+        if not isinstance(giorno, dict):
+            continue
+        candidate = _foto_vere_della_giornata(giorno.get("blocks"), photos)
+        for _poi_id, scatto, _nome in candidate:
+            dati = scatto.get("png")
+            if isinstance(dati, (bytes, bytearray)) and dati:
+                return bytes(dati), str(scatto.get("credito") or "")
+    return None
+
+
 def _foto_vere_della_giornata(blocks, photos: dict | None) -> list:
     """Le fotografie VERE delle tappe di una giornata, nell'ordine di visita.
 
@@ -2907,6 +3103,162 @@ def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "") -> s
     if len(celle) < 2:
         return ""
     return ("<table class='day-striscia'><tr>" + "".join(celle) + "</tr></table>")
+
+
+def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
+                          riserva_viaggio, apertura_precedente):
+    """Come si apre questa giornata: l'HTML e il nome dell'apertura scelta.
+
+    [AGGIUNTO 2026-08-13 — task #214, primo pezzo del compositore che entra
+    davvero nel documento venduto.]
+
+    Prima ogni giornata si apriva allo stesso identico modo: una fotografia
+    centrata sotto il titolo. Con un viaggio di cinque giorni erano cinque
+    pagine gemelle, ed e' la richiesta di Lorenzo: «non devono essere una
+    uguale all'altra».
+
+    Qui cambia UN pezzo di HTML, nello stesso punto in cui prima ce n'era uno
+    solo: le tre aperture si impilano tutte allo stesso modo, quindi la
+    struttura della giornata — titolo, cartina, programma, legenda — resta
+    intatta e con lei i controlli di impaginazione che la difendono. Gli
+    impianti a colonne arrivano dopo, quando questa parte e' collaudata in
+    produzione. Questa settimana ha gia' mostrato due volte cosa succede a
+    cambiare tutto insieme: una singola immagine in piu' fa sfondare una
+    pagina.
+
+    Torna anche il nome dell'apertura perche' chi chiama deve poterlo passare
+    alla giornata dopo: senza, «mai due volte di fila» non e' verificabile.
+    """
+    proprie = [(scatto, nome) for _poi, scatto, nome
+               in _foto_vere_della_giornata(blocks, photos)]
+    disponibili, _provenienza = compositore.foto_della_giornata(
+        proprie, riserva_viaggio, None, giorno_numero)
+    apertura = compositore.scegli_apertura(
+        chiave, giorno_numero, len(disponibili), apertura_precedente)
+    if not apertura or not disponibili:
+        return "", ""
+
+    # [ESTESO 2026-08-13 — task #215, e nasce da una bocciatura.]
+    # La prima versione portava dentro SOLO l'apertura e lasciava fuori tutto
+    # cio' che nei provini faceva il lavoro. Lorenzo, confrontando il
+    # documento vero col prototipo: «ci sono meno foto e anche la grafica e'
+    # diversa [...] PIU' DINAMISMO E FOTO».
+    #
+    # Aveva ragione: un'apertura che cambia e tutto il resto identico non e'
+    # una pagina diversa, e' la stessa pagina con un cappello diverso. Qui
+    # entrano anche gli ORNAMENTI — bollo, nastro, capolettera, foto tonda —
+    # scelti dal compositore con i suoi vincoli, e le fotografie in piu'.
+    ricetta = compositore.componi(
+        chiave, giorno_numero, len(disponibili),
+        {"impianto": {"nome": apertura_precedente or ""}, "ornamenti": []})
+    ornamenti = ricetta["ornamenti"]
+
+    def _figura(scatto, larghezza_html, rapporto, sfumata=False):
+        png = scatto.get("png") if isinstance(scatto, dict) else None
+        credito = str((scatto or {}).get("credito") or "").strip()
+        if not png or not credito:
+            return ""
+        ritagliata = foto.ritaglia_panoramica(png, rapporto) or png
+        if sfumata:
+            ritagliata = foto.sfuma_in_basso(ritagliata) or ritagliata
+        try:
+            b64 = base64.b64encode(ritagliata).decode("ascii")
+        except (TypeError, ValueError):
+            return ""
+        tipo = foto.mime_immagine(ritagliata)
+        return (f"<img src='data:{tipo};base64,{b64}' alt='' {larghezza_html}>"
+                f"<div class='didascalia'>Foto: {_esc(credito)}</div>")
+
+    def _tonda(scatto):
+        png = scatto.get("png") if isinstance(scatto, dict) else None
+        credito = str((scatto or {}).get("credito") or "").strip()
+        if not png or not credito:
+            return ""
+        # Il ritaglio tondo si fa sui PIXEL: in CSS esce mezzo tondo e mezzo
+        # quadrato, misurato sul motore di stampa.
+        ritagliata = foto.ritaglia_tondo(png, 380)
+        if not ritagliata:
+            return ""
+        try:
+            b64 = base64.b64encode(ritagliata).decode("ascii")
+        except (TypeError, ValueError):
+            return ""
+        return (f"<div class='day-tonda'><img src='data:image/png;base64,{b64}' "
+                f"alt=''><div class='didascalia'>Foto: {_esc(credito)}</div></div>")
+
+    pezzi = []
+
+    # --- il segno che apre: bollo tondo col numero, oppure capolettera ----
+    # Sono alternativi per regola (due numeroni si contendono l'occhio) e il
+    # compositore non li mette mai insieme: qui si stampa quello scelto.
+    if "bollo" in ornamenti:
+        pezzi.append(f"<div class='day-bollo'><div class='n'>{_esc(giorno_numero)}</div>"
+                     "<div class='e'>giorno</div></div>")
+    elif "capolettera" in ornamenti:
+        try:
+            numero = f"{int(giorno_numero):02d}"
+        except (TypeError, ValueError):
+            numero = str(giorno_numero or "")
+        pezzi.append(f"<div class='day-capolettera'>{numero}</div>")
+
+    # --- l'apertura fotografica -------------------------------------------
+    scelta = apertura
+    if apertura == "mosaico":
+        celle = []
+        for scatto, _nome in disponibili[:3]:
+            figura = _figura(scatto, "style='width:100%; display:block;'", 1.35)
+            if figura:
+                celle.append(f"<td style='width:33%'>{figura}</td>")
+        if len(celle) >= 3:
+            pezzi.append("<table class='day-striscia'><tr>" + "".join(celle)
+                         + "</tr></table>")
+        else:
+            scelta = "banda"
+
+    if scelta == "banda":
+        figura = _figura(disponibili[0][0], "style='width:100%; display:block;'", 3.1)
+        if figura:
+            pezzi.append(f"<div class='day-banda'>{figura}</div>")
+        else:
+            scelta = "foto-sola"
+
+    if scelta == "foto-sola":
+        # [CORRETTO 2026-08-13 — task #219, segnalato DUE volte da Lorenzo:
+        # «filla gli spazi bianchi» e poi «a pagina 5 c'e' sempre una sola
+        # foto centrale che non mi piace».]
+        #
+        # La fotografia era centrata dentro la colonna con margini bianchi ai
+        # lati: non un'apertura, un francobollo in mezzo alla pagina.
+        #
+        # La riparazione NON e' togliere questa apertura — provato, e con due
+        # sole aperture piu' la regola «mai due volte di fila» la sequenza
+        # diventa un'alternanza fissa: due viaggi diversi finiscono con la
+        # stessa identica sequenza di pagine. L'ha preso una prova.
+        #
+        # La riparazione e' toglierle i margini: la stessa fotografia,
+        # ritagliata piu' larga, che occupa la colonna per intero. Il ritaglio
+        # governa le proporzioni, quindi il foglio di stile puo' dire solo
+        # `width` e non serve nessun `max-height` — cioe' non si ricrea la
+        # coppia che l'11 agosto aveva schiacciato le immagini.
+        figura = _figura(disponibili[0][0],
+                         "style='width:100%; display:block;'", 2.9)
+        if figura:
+            pezzi.append(f"<div class='day-larga'>{figura}</div>")
+
+    # --- il nastro coi numeri della giornata ------------------------------
+    if "nastro" in ornamenti and blocks:
+        quante = len(blocks)
+        pezzi.append(f"<span class='day-nastro'>{quante} "
+                     f"{'tappa' if quante == 1 else 'tappe'}</span>")
+
+    # --- una fotografia in piu', tonda ------------------------------------
+    # E' l'ornamento che alza di piu' la densita' di immagini, ed e' anche il
+    # motivo per cui il compositore lo esclude quando le fotografie sono meno
+    # di due: se se la prendesse lui, l'apertura resterebbe senza.
+    if "tonda" in ornamenti and len(disponibili) >= 2:
+        pezzi.append(_tonda(disponibili[1][0]))
+
+    return "".join(x for x in pezzi if x), scelta
 
 
 def _render_day_photo(blocks, photos: dict | None) -> str:
@@ -3907,10 +4259,19 @@ def render_html(
         for day in days
     ]
 
+    # [AGGIUNTO 2026-08-13 — task #209] I colori del documento li sceglie il
+    # POSTO, guardando le fotografie vere che abbiamo gia' scaricato per lui.
+    # Senza fotografie si resta sulla tavolozza di sempre: un documento senza
+    # immagini non ha nessuna informazione sul luogo, e inventargli un colore
+    # sarebbe la stessa cosa che inventargli un prezzo.
+    from src import tavolozza as _tav
+
+    tinte = _tav.scegli(photos)
+
     parts = [
         "<!DOCTYPE html><html lang='it'><head><meta charset='utf-8'>",
         f"<title>Itinerario — {destination}</title>",
-        f"<style>{_CSS}</style></head><body>",
+        f"<style>{_css(tinte)}</style></head><body>",
         _render_cover(
             itinerary, trip, hotels, list(toc_entries), day_toc,
             len(guide_list),
@@ -3918,6 +4279,7 @@ def render_html(
                 len(e.get("legs") or [])
                 for e in directions_by_day.values() if isinstance(e, dict)
             ),
+            foto_copertina=_foto_di_apertura(days, photos),
         ),
         "<div class='header'>",
         f"<h1>Itinerario Ottimizzato: {destination}</h1>",
@@ -4042,6 +4404,27 @@ def render_html(
             + _render_criterio()
         ))
 
+    # [AGGIUNTO 2026-08-13 — task #214] Le due cose che il ciclo delle
+    # giornate si deve ricordare da una all'altra.
+    #
+    # La RISERVA e' l'insieme delle fotografie vere di TUTTO il viaggio, ed
+    # esiste per la richiesta di Lorenzo «ogni giornata deve avere le foto».
+    # Quando per le tappe di una giornata Google non ha restituito niente si
+    # prende in prestito da un'altra tappa dello stesso viaggio: stessa
+    # citta', luogo dichiarato nella didascalia, nessuno ci legge una
+    # promessa. Non si inventa niente — e' la regola su cui e' costruito
+    # tutto questo prodotto.
+    #
+    # L'APERTURA PRECEDENTE serve a non ripetersi: senza, «mai due giornate
+    # uguali di fila» non sarebbe nemmeno verificabile.
+    _riserva_foto_viaggio = [
+        (scatto, nome)
+        for giorno_qualunque in days
+        for _poi, scatto, nome in _foto_vere_della_giornata(
+            (giorno_qualunque.get("blocks") or []), photos)
+    ]
+    _apertura_precedente = ""
+
     for day in days:
         # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
         # il rendering PDF NON è gated sull'esito PASS del Nodo 9 (main.py e
@@ -4122,7 +4505,10 @@ def render_html(
         # giornata. Calcolata qui, fuori dal ciclo dei tronchi, perche' va
         # stampata UNA volta: dentro il ciclo verrebbe ripetuta a ogni
         # "(continua)", cioe' tre volte nella stessa giornata lunga.
-        _foto_html = _render_day_photo(blocks, photos)
+        _foto_html, _apertura_usata = _apertura_di_giornata(
+            destination, day_number, blocks, photos,
+            _riserva_foto_viaggio, _apertura_precedente)
+        _apertura_precedente = _apertura_usata or _apertura_precedente
         # La fotografia in apertura ne usa una; la fila in chiusura prende le
         # altre. Passare qui quale e' gia' stata usata evita di stamparla due
         # volte nella stessa pagina, che e' il modo piu' rapido di far
@@ -4602,15 +4988,7 @@ def render_pdf(
         # - `--footer-center`: numeri di pagina. Un documento che il cliente
         #   stampa senza numeri di pagina è ingestibile se cade per terra.
         result = subprocess.run(
-            [
-                "wkhtmltopdf", "--quiet",
-                "--enable-internal-links",
-                "--outline",
-                "--footer-center", "[page] / [topage]",
-                "--footer-font-size", "8",
-                "--footer-spacing", "5",
-                tmp_html_path, tmp_pdf_path,
-            ],
+            [*COMANDO_STAMPA, tmp_html_path, tmp_pdf_path],
             capture_output=True,
             text=True,
             timeout=60,

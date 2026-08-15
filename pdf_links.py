@@ -55,8 +55,60 @@ from urllib.parse import unquote
 #
 # Il nome è in italiano di proposito: se un giorno finisse per sbaglio in un
 # PDF consegnato, si capirebbe al volo da dove arriva.
+# [CAMBIATO 2026-08-13 — e il cambio nasce da un difetto che in produzione
+# ha azzerato TUTTA la navigazione interna del documento, mentre in sviluppo
+# non si vedeva.]
+#
+# Era `ancora-interna:`, uno schema inventato da noi. La logica era buona: uno
+# schema che non esiste non lo interpreta nessuno. Sbagliata l'ipotesi che ne
+# stava sotto — che il motore di stampa lasciasse in pace cio' che non
+# capisce.
+#
+# Cosa si e' misurato sul PDF venduto: 42 collegamenti verso l'esterno, tutti
+# perfetti; 26 annotazioni completamente vuote, rettangolo [0,0,0,0] e nessuna
+# azione; zero destinazioni interne. Il taglio e' netto — **tutto cio' che
+# punta fuori sopravvive, tutto cio' che punta dentro diventa un guscio
+# vuoto.** Il binario di produzione ha le patch e `--enable-internal-links`
+# funziona davvero: cerca il bersaglio, non lo trova (sta in un capitolo che
+# verra' cucito DOPO) e butta via il collegamento. Il binario di sviluppo,
+# senza patch, ignora quel flag e lascia tutto intatto: per questo qui non si
+# e' mai visto niente.
+#
+# Quindi si usa l'unica forma che in produzione arriva intatta: un indirizzo
+# `https://`. `.invalid` e' un dominio riservato dallo standard e non risolve
+# MAI — se un giorno un collegamento sfuggisse alla riparazione, il cliente
+# troverebbe un link morto invece del sito di qualcun altro, che e' il modo
+# giusto di sbagliare.
+#
+# Due sentieri diversi perche' sono due cose diverse: `sonda/` marca DOVE si
+# atterra, `vai/` e' il collegamento che ci porta.
+HOST_INTERNO = "https://ancora-interna.invalid/"
+_HOST_INTERNO = HOST_INTERNO  # nome vecchio, tenuto per non rompere niente
 PROBE_SCHEME = "ancora-interna"
-PROBE_PREFIX = f"{PROBE_SCHEME}:"
+PROBE_PREFIX = f"{HOST_INTERNO}sonda/"
+LINK_PREFIX = f"{HOST_INTERNO}vai/"
+
+
+def href_interno(ancora: str) -> str:
+    """L'indirizzo da mettere in un `href` per saltare DENTRO il documento.
+
+    Esiste per un motivo preciso, imparato il 13 agosto 2026: la forma di
+    questo indirizzo e' gia' cambiata una volta (`#ancora` → `ancora-interna:`
+    → `https://…/vai/`) e ogni cambio ha lasciato in giro decine di posti
+    scritti a mano, fra codice e controlli. Chi scrive un rimando interno
+    chiama questa funzione; chi lo cerca usa `RIFERIMENTI_NELL_HTML`. Cosi' un
+    eventuale terzo cambio si fa in due righe invece che in quaranta.
+    """
+    return f"{LINK_PREFIX}{ancora}"
+
+
+# Con che cosa si ritrovano, dentro l'HTML, i rimandi interni.
+#
+# Serve ai controlli e alla diagnostica: cercare `href='#…'` a mano — cioe'
+# quello che facevano tutti i controlli fino a ieri — non trova piu' niente,
+# e un controllo che non trova niente NON diventa rosso: diventa verde a
+# vuoto. E' il modo piu' silenzioso che conosciamo di perdere una garanzia.
+RIFERIMENTI_NELL_HTML = re.compile(re.escape(LINK_PREFIX) + r"([^'\"\s>]+)")
 
 _OBJ_RE = re.compile(rb"(?m)^(\d+)\s+(\d+)\s+obj\b")
 _URI_APERTURA_RE = re.compile(rb"/URI\s*\(")
@@ -223,6 +275,14 @@ def _anchor_of_uri(uri: str) -> str | None:
     """Nome dell'ancora se l'URI è un link interno tradotto male, altrimenti
     `None`. Solo `file:`: un `https://…#sezione` verso un sito vero è un link
     esterno legittimo e non va toccato."""
+    # La forma nuova: un indirizzo sentinella che il motore di stampa tratta
+    # come un normale link esterno e quindi non tocca.
+    if uri.startswith(LINK_PREFIX):
+        return unquote(uri[len(LINK_PREFIX):]).strip("/") or None
+    # La forma vecchia, `file:...#ancora`: resta riconosciuta perche' e' cio'
+    # che produce il motore di stampa SENZA le patch, cioe' quello di
+    # sviluppo. Toglierla renderebbe il campione locale diverso dal venduto,
+    # ed e' esattamente la differenza che ci e' costata questa settimana.
     if not uri.startswith("file:"):
         return None
     if "#" not in uri:
