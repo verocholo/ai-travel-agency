@@ -78,15 +78,28 @@ def _documento(giorni=5, tappe_per_giorno=3, scoperti=(), destinazione="Siena"):
                        photos=photos)
 
 
+# I nomi delle aperture, come compaiono nell'HTML consegnato.
+#
+# [ESTESI 2026-08-15 — task #219, quando sono entrate le due aperture a
+# colonne.] Questo elenco NON e' un dettaglio della prova: se resta indietro,
+# una giornata aperta con un'apertura nuova risulta «senza apertura», la
+# ricerca scivola sulla fila di chiusura della giornata e la prova segnala
+# giornate gemelle che non esistono. E' successo, ed e' il motivo per cui sta
+# scritto qui in cima invece che dentro l'espressione.
+CLASSI_DI_APERTURA = ("day-larga", "day-banda", "day-striscia", "day-eroe",
+                      "day-numerone")
+_QUALUNQUE_APERTURA = "class='(" + "|".join(CLASSI_DI_APERTURA) + ")'"
+
+
 def _aperture(html: str) -> list:
     """Le aperture nell'ordine in cui compaiono nel documento."""
-    trovate = re.findall(r"class='(day-foto|day-banda|day-striscia)'", html)
+    trovate = re.findall(_QUALUNQUE_APERTURA, html)
     # `day-striscia` e' usata sia dal mosaico d'apertura sia dalla fila di
     # chiusura della giornata: qui contano solo quelle in apertura, cioe' le
     # prime di ogni giornata. Si separa il documento per titolo di giornata.
     fuori = []
     for pezzo in html.split("class='day-title'")[1:]:
-        m = re.search(r"class='(day-foto|day-banda|day-striscia)'", pezzo)
+        m = re.search(_QUALUNQUE_APERTURA, pezzo)
         if m:
             fuori.append(m.group(1))
     return fuori or trovate
