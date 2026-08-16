@@ -133,12 +133,36 @@ class TestLaFilaNonRovinaLImpaginazione(unittest.TestCase):
         self.assertIn("<table class='day-striscia'>", html)
         self.assertNotIn("display: flex", html)
 
-    def test_le_immagini_della_fila_hanno_un_tetto_d_altezza(self):
-        # Senza, una fotografia verticale si prende mezza pagina e la fila
-        # diventa il contrario di cio' per cui e' nata.
+    def test_l_altezza_della_fila_la_governa_il_RITAGLIO(self):
+        """[RISCRITTA 2026-08-16, e la vecchia versione difendeva il difetto.]
+
+        Diceva: «le immagini della fila devono avere un tetto d'altezza»,
+        cioe' `max-height` insieme a `max-width`. La preoccupazione era giusta
+        — una fotografia verticale che si prende mezza pagina — ma il rimedio
+        era sbagliato due volte: quella coppia e' la stessa che l'11 agosto
+        aveva schiacciato le immagini, e teneva le fotografie a centoventi
+        pixel qualunque spazio ci fosse attorno. Sei delle nove pagine
+        segnalate da Lorenzo il 16 agosto nascono da quel numero.
+
+        Il modo giusto di limitare l'altezza e' RITAGLIARE, sui pixel, prima
+        di stampare: cosi' nel foglio di stile resta una misura sola, e con
+        una misura sola non si puo' deformare niente.
+        """
         regola = _CSS.split(".day-striscia img {", 1)[1].split("}", 1)[0]
-        self.assertIn("max-height", regola)
-        self.assertIn("max-width", regola)
+        self.assertNotIn("max-height", regola,
+                         "il tetto in altezza tiene le fotografie piccole: "
+                         "l'altezza la governa il ritaglio")
+        self.assertIn("width: 100%", regola)
+
+    def test_le_fotografie_della_fila_sono_ritagliate_prima_di_stampare(self):
+        from src.pdf_renderer import RAPPORTO_FILA
+
+        # Se un domani qualcuno togliesse il ritaglio, il foglio di stile non
+        # avrebbe piu' niente che limiti l'altezza e una foto verticale si
+        # prenderebbe mezza pagina — il difetto che la vecchia prova temeva,
+        # a ragione.
+        self.assertGreater(RAPPORTO_FILA, 1.0)
+        self.assertLess(RAPPORTO_FILA, 3.0)
 
 
 class TestLaFilaArrivaDAVVERONELDOCUMENTO(unittest.TestCase):
