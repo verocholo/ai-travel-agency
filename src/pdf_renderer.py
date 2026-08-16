@@ -48,6 +48,7 @@ from datetime import date as _date, timedelta as _timedelta
 from pathlib import Path
 
 from .affiliate_links import build_search_links
+from . import impaginazione
 from .directions import describe_leg_duration, summarize_day_travel
 from .price_display import price_level_symbol
 # [AGGIUNTO 2026-08-01 — punto 6 del feedback "da investitore"] Testi legali
@@ -1263,6 +1264,11 @@ _CSS_MODELLO = """
        altrove, e il misuratore delle pagine e' diventato rosso. Qui si
        decora l'apertura, non si tocca il flusso. */
     .cap { page-break-inside: avoid; margin: 17px 0 10px 0; }
+    /* [AGGIUNTA 2026-08-15 — task #221] Il capitolo comincia su una pagina
+       nuova. La classe la mette la seconda stampa, e solo sui capitoli la cui
+       testata, alla prima, era caduta in fondo al foglio: `page-break-before`
+       questo motore lo onora, `page-break-after: avoid` no — misurato. */
+    .cap-a-capo { page-break-before: always; margin-top: 0; }
     .cap .section-title { margin: 0; }
     /* L'occhiello: due parole in maiuscoletto sopra il titolo. Serve a dare
        alla testata una seconda riga su cui variare — senza, "fascia" e
@@ -1559,6 +1565,15 @@ def _anchor(name: str) -> str:
 # La distinzione sta QUI e non dentro `compositore.py` di proposito: il
 # compositore sa comporre pagine, non sa quali capitoli abbia questo prodotto.
 # --------------------------------------------------------------------------
+# Tutti i capitoli del documento, nell'ordine in cui possono comparire. Serve
+# alla seconda stampa per sapere quali ancore sono testate di capitolo e quali
+# no (vedi `src/impaginazione.py`).
+CAPITOLI_DEL_DOCUMENTO = (
+    "colpo-docchio", "alloggio", "selezione", "giorno-per-giorno", "costi",
+    "consigli", "piani-b", "guide", "prima-di-partire", "vademecum",
+    "numeri-utili", "recensione",
+)
+
 CAPITOLI_DI_RACCONTO = frozenset(
     {"colpo-docchio", "selezione", "giorno-per-giorno", "guide"}
 )
@@ -1590,7 +1605,8 @@ _RE_TITOLO_DI_CAPITOLO = re.compile(
 )
 
 
-def _disegna_testata(modo: str, nome: str, dentro: str, numero: int) -> str:
+def _disegna_testata(modo: str, nome: str, dentro: str, numero: int,
+                     a_capo: bool = False) -> str:
     """Il vestito di UNA testata. Quattro modi, tutti fatti degli stessi pezzi.
 
     Non c'e' un `else` che ricade su un modo qualunque: se il compositore
@@ -1598,23 +1614,28 @@ def _disegna_testata(modo: str, nome: str, dentro: str, numero: int) -> str:
     nasconderebbe e il documento uscirebbe con dieci testate uguali senza che
     nessuna prova diventi rossa.
     """
+    # [AGGIUNTO 2026-08-15 — task #221] Il capitolo comincia su una pagina
+    # nuova SOLO quando la prima stampa ha mostrato che la sua testata cadeva
+    # in fondo al foglio. Vedi `src/impaginazione.py`: non e' una regola per
+    # tutti i capitoli, e' una riparazione per quelli che ne hanno bisogno.
+    salto = " cap-a-capo" if a_capo else ""
     occhiello = f"<div class='cap-occhiello'>Capitolo {numero}</div>"
     titolo = f"<div class='section-title' data-capitolo='{_esc(nome)}'>{dentro}</div>"
     if modo == "fascia":
-        return f"<div class='cap cap-fascia'>{occhiello}{titolo}</div>"
+        return f"<div class='cap{salto} cap-fascia'>{occhiello}{titolo}</div>"
     if modo == "laterale":
-        return f"<div class='cap cap-laterale'>{occhiello}{titolo}</div>"
+        return f"<div class='cap{salto} cap-laterale'>{occhiello}{titolo}</div>"
     if modo == "blocco":
-        return (f"<div class='cap cap-blocco'><div class='cap-linguetta'></div>"
+        return (f"<div class='cap{salto} cap-blocco'><div class='cap-linguetta'></div>"
                 f"{titolo}</div>")
     if modo == "numero":
-        return (f"<table class='cap cap-numero'><tr>"
+        return (f"<table class='cap{salto} cap-numero'><tr>"
                 f"<td class='cap-cifra'>{numero:02d}</td>"
                 f"<td>{titolo}</td></tr></table>")
     raise ValueError(f"testata sconosciuta: {modo!r}")
 
 
-def _testate_dei_capitoli(documento: str, chiave: str) -> str:
+def _testate_dei_capitoli(documento: str, chiave: str, a_capo=()) -> str:
     """Passata finale: veste ogni capitolo, mai due di fila allo stesso modo.
 
     [AGGIUNTA 2026-08-15 — task #216.]
@@ -1643,7 +1664,8 @@ def _testate_dei_capitoli(documento: str, chiave: str) -> str:
             forte=nome in CAPITOLI_DI_RACCONTO,
         )
         stato["precedente"] = modo
-        return _disegna_testata(modo, nome, dentro, stato["numero"])
+        return _disegna_testata(modo, nome, dentro, stato["numero"],
+                                a_capo=nome in (a_capo or ()))
 
     return _RE_TITOLO_DI_CAPITOLO.sub(_sostituisci, documento)
 
@@ -3913,31 +3935,16 @@ def _render_predeparture(predeparture: dict | None) -> str:
     if not country and not checklist:
         return ""
 
+    # [SPOSTATA 2026-08-15 — task #220] La scheda del paese stava qui dentro,
+    # in coda a un capitolo che si legge LA SERA PRIMA. Ma il numero di
+    # emergenza, la valuta e le prese si cercano DURANTE il viaggio, e
+    # cercarli dentro «Prima di partire» vuol dire non trovarli: nessuno apre
+    # la lista della sera prima mentre e' in giro con un problema.
+    #
+    # Adesso hanno un capitolo loro (`_render_numeri_utili`), in fondo al
+    # documento, dove si arriva aprendo il fascicolo dall'ultima pagina — che
+    # e' il gesto naturale quando si cerca un numero.
     parts: list[str] = []
-    if country:
-        rows = [
-            ("emergency", "Numero di emergenza", country.get("emergency")),
-            ("", "Valuta", country.get("currency")),
-            ("", "Prese elettriche", country.get("plug")),
-            ("", "Acqua del rubinetto", country.get("tap_water")),
-            ("", "Mancia", country.get("tipping")),
-        ]
-        rows = [(cls, k, v) for cls, k, v in rows if v]
-        if rows:
-            parts.append("<table class='pre-facts'>")
-            if country.get("country"):
-                parts.append(
-                    f"<tr><td class='k'>Paese</td>"
-                    f"<td class='v'>{_esc(country['country'])}</td></tr>"
-                )
-            for cls, key, value in rows:
-                css = f" class='{cls}'" if cls else ""
-                parts.append(
-                    f"<tr{css}><td class='k'>{_esc(key)}</td>"
-                    f"<td class='v'>{_esc(value)}</td></tr>"
-                )
-            parts.append("</table>")
-
     for item in checklist:
         detail = item.get("detail")
         parts.append(
@@ -3948,6 +3955,161 @@ def _render_predeparture(predeparture: dict | None) -> str:
             + "</td></tr></table>"
         )
     return "".join(parts)
+
+
+def _camminate_in_due_colonne(voci) -> str:
+    """Le giornate a due a due, invece che una per riga.
+
+    [MISURATO, 2026-08-15.] In colonna sola l'elenco era alto quanto mezza
+    pagina: non ci stava in fondo al capitolo, scendeva tutto intero sulla
+    pagina dopo (viaggia dentro un guscio, quindi o entra o scende) e quella
+    pagina restava piena all'undici per cento. A due a due ci sta, e un
+    elenco di numeri corti su due colonne si legge anche meglio.
+    """
+    righe = []
+    for i in range(0, len(voci), 2):
+        coppia = voci[i:i + 2]
+        celle = "".join(f"<td class='k'>{k}</td><td class='v'>{v}</td>"
+                        for k, v in coppia)
+        if len(coppia) == 1:
+            # Senza le celle vuote l'ultima voce si allargherebbe a tutta la
+            # riga e sembrerebbe piu' importante delle altre.
+            celle += "<td></td><td></td>"
+        righe.append(f"<tr>{celle}</tr>")
+    return "<table class='pre-facts'>" + "".join(righe) + "</table>"
+
+
+def _render_numeri_utili(predeparture: dict | None, hotels=None,
+                        directions_by_day: dict | None = None,
+                        days=None) -> str:
+    """Il capitolo che si cerca quando qualcosa va storto (task #220).
+
+    [AGGIUNTO 2026-08-15. Lorenzo: «manca ancora qualcosa».]
+
+    ## Perche' esiste un capitolo suo
+
+    Il numero di emergenza, la valuta e le prese erano gia' nel documento, in
+    coda a «Prima di partire». Ma quello e' il capitolo che si legge la sera
+    prima di partire, e queste righe servono DURANTE il viaggio: nessuno apre
+    la lista della valigia mentre e' in giro con un problema. Un dato messo
+    dove non lo si cerca e' un dato che non c'e'.
+
+    In fondo al documento, per giunta, si arriva sfogliando dall'ultima
+    pagina — che e' il gesto naturale quando si cerca un numero.
+
+    ## Da dove arriva ogni riga, e cosa NON c'e' dentro
+
+    Tutto qui e' deterministico: **nessuna riga di questo capitolo e' mai
+    passata per un modello linguistico**, ed e' deliberato. Il numero di
+    emergenza e' il dato in cui un errore fa il danno piu' grave e piu'
+    veloce, quindi viene stampato tale e quale dalla tabella scritta a mano
+    di `src/local_info.py`; se il paese non e' in tabella, la riga non esce —
+    mai un numero plausibile.
+
+    I chilometri a piedi sono quelli gia' misurati sui tragitti veri del
+    programma, non una stima.
+
+    ## Cosa manca di proposito: i biglietti dei mezzi
+
+    Sarebbe il pezzo piu' utile di un capitolo intitolato «come muoversi», e
+    non c'e'. I prezzi dei trasporti cambiano, non abbiamo una fonte che si
+    aggiorni, e un modello che li ricorda a memoria li sbaglia. Un cliente
+    che arriva al tornello con il prezzo sbagliato e' peggio di un cliente
+    che non ha letto niente: la seconda volta non si fida piu' nemmeno delle
+    parti giuste. Quando ci sara' una fonte vera, entrera' qui.
+    """
+    dati = predeparture if isinstance(predeparture, dict) else {}
+    paese = dati.get("country") if isinstance(dati.get("country"), dict) else None
+
+    righe_paese = []
+    if paese:
+        for classe, etichetta, valore in (
+            ("emergency", "Numero di emergenza", paese.get("emergency")),
+            ("", "Valuta", paese.get("currency")),
+            ("", "Prese elettriche", paese.get("plug")),
+            ("", "Acqua del rubinetto", paese.get("tap_water")),
+            ("", "Mancia", paese.get("tipping")),
+        ):
+            if valore:
+                righe_paese.append((classe, etichetta, valore))
+
+    # --- dove si dorme, in chiaro -----------------------------------------
+    # E' la riga che si mostra a un tassista, o che si legge al telefono a
+    # qualcuno che ti viene a prendere. Vale la pena averla senza doverla
+    # cercare in mezzo al capitolo dell'alloggio.
+    base = next((h for h in (hotels or []) if isinstance(h, dict)), None)
+    indirizzo = str((base or {}).get("address") or "").strip()
+    nome_base = str((base or {}).get("name") or "").strip()
+
+    # --- quanto si cammina davvero ----------------------------------------
+    # E' la meta' onesta di «come muoversi»: non i biglietti, che non
+    # sappiamo, ma i metri, che abbiamo misurato tragitto per tragitto.
+    camminate = []
+    for giorno in (days or []):
+        if not isinstance(giorno, dict):
+            continue
+        numero = giorno.get("day")
+        tratte = ((directions_by_day or {}).get(numero) or {}).get("legs") or []
+        sintesi = summarize_day_travel(tratte)
+        if not sintesi or not sintesi.get("walking_text"):
+            continue
+        minuti = sintesi.get("walking_minutes")
+        camminate.append((
+            f"Giorno {_esc(numero)}",
+            f"{sintesi['walking_text']}"
+            + (f" (~{minuti} min)" if minuti else ""),
+        ))
+
+    if not righe_paese and not indirizzo and not camminate:
+        return ""
+
+    pezzi: list[str] = []
+    if righe_paese:
+        # [COMPATTATA 2026-08-15, MISURANDO.] Una riga per voce faceva un
+        # capitolo alto mezza pagina che non stava mai in fondo a quella
+        # prima: scendeva intero e lasciava la pagina piena al nove per cento.
+        # A due a due ci sta, e le voci sono corte — si leggono anche meglio.
+        #
+        # Il numero di emergenza resta da solo sulla sua riga, sempre: e' la
+        # riga che qualcuno cerchera' con le mani che tremano, e non deve
+        # dividere l'occhio con la valuta.
+        emergenza = [r for r in righe_paese if r[0] == "emergency"]
+        altre = [r for r in righe_paese if r[0] != "emergency"]
+        righe = []
+        if paese.get("country"):
+            altre = [("", "Paese", paese["country"])] + altre
+        for classe, etichetta, valore in emergenza:
+            righe.append(f"<tr class='{classe}'><td class='k'>{_esc(etichetta)}</td>"
+                         f"<td class='v' colspan='3'>{_esc(valore)}</td></tr>")
+        for i in range(0, len(altre), 2):
+            coppia = altre[i:i + 2]
+            celle = "".join(f"<td class='k'>{_esc(e)}</td>"
+                            f"<td class='v'>{_esc(v)}</td>"
+                            for _c, e, v in coppia)
+            if len(coppia) == 1:
+                celle += "<td></td><td></td>"
+            righe.append(f"<tr>{celle}</tr>")
+        pezzi.append(_keep_together(
+            "<table class='pre-facts'>" + "".join(righe) + "</table>"))
+
+    if indirizzo:
+        # Su una riga sola, dentro lo stesso guscio del resto: e' la riga che
+        # si mostra a un tassista, non un capitolo a se'.
+        pezzi.append(_keep_together(
+            f"<div class='summary-box'><strong>Dove dormi:</strong> "
+            f"{_esc(nome_base)} — {_esc(indirizzo)}</div>"))
+
+    if camminate:
+        # Dentro il guscio: senza, l'elenco si spezza fra due pagine e
+        # l'ultima giornata resta da sola in cima al foglio dopo, con sotto
+        # una pagina bianca. Misurato — la pagina si fermava al 6%.
+        pezzi.append(_keep_together(
+            "<div class='mid-intro'>Quanto si cammina, giorno per giorno — "
+            "misurato sui tragitti veri del tuo programma, non stimato. "
+            "E' il numero che decide le scarpe.</div>"
+            + _camminate_in_due_colonne(camminate)
+        ))
+    return "".join(pezzi)
 
 
 def _render_checklist_sheet_box(sheet: dict | None) -> str:
@@ -4375,6 +4537,11 @@ def render_html(
     predeparture: dict | None = None,
     vademecum: dict | None = None,
     checklist_sheet: dict | None = None,
+    # [AGGIUNTO 2026-08-15 — task #221] I capitoli che devono cominciare su una
+    # pagina nuova, decisi MISURANDO la prima stampa (vedi
+    # `src/impaginazione.py`). Vuoto = documento che scorre, cioe' il
+    # comportamento di sempre.
+    capitoli_a_capo=(),
 ) -> str:
     """
     Funzione pura (nessuna chiamata di rete/subprocess) — costruisce
@@ -4552,6 +4719,11 @@ def render_html(
 
     costs_html = _render_costs(cost_summary)
     predeparture_html = _render_predeparture(predeparture)
+    # [AGGIUNTO 2026-08-15 — task #220] Il capitolo che si cerca quando
+    # qualcosa va storto: emergenze, valuta, prese, dove dormi, quanto si
+    # cammina. Tutto da dati che abbiamo gia': non costa una chiamata.
+    numeri_utili_html = _render_numeri_utili(
+        predeparture, hotels, directions_by_day, days)
     vademecum_html = _render_vademecum(vademecum, checklist_sheet)
     tips_html = _render_tips(tips, itinerary.get("architect_tips"))
     rain_html = _render_rain_plans(tips)
@@ -4600,6 +4772,8 @@ def render_html(
         toc_entries.append(("prima-di-partire", "Prima di partire"))
     if vademecum_html:
         toc_entries.append(("vademecum", "Vademecum: clima, valigia, bagagli"))
+    if numeri_utili_html:
+        toc_entries.append(("numeri-utili", "Numeri utili e quanto si cammina"))
     # [CORRETTO 2026-08-03] La voce d'indice segue la sezione: senza una URL
     # a cui rispondere la sezione non esce, e un indice che punta a un
     # capitolo inesistente è un link morto in copertina.
@@ -5145,6 +5319,23 @@ def render_html(
         )
         parts.append(vademecum_html)
 
+    # [AGGIUNTO 2026-08-15 — task #220] Ultimo capitolo prima della
+    # recensione, e la posizione e' il punto: e' quello che si cerca DURANTE
+    # il viaggio, e in fondo ci si arriva aprendo il fascicolo dall'ultima
+    # pagina — il gesto naturale di chi cerca un numero.
+    if numeri_utili_html:
+        parts.append(
+            _titolo_capitolo("numeri-utili", "Numeri utili e quanto si cammina")
+        )
+        parts.append(
+            "<div class='section-intro'>Il capitolo da cercare quando serve qualcosa "
+            "subito: il numero di emergenza, come si paga, che prese servono, "
+            "l'indirizzo di dove dormi e quanta strada fai a piedi ogni giorno. "
+            "Niente qui è stato scritto da un'intelligenza artificiale: sono dati "
+            "verificati a mano e misure prese sul tuo programma.</div>"
+        )
+        parts.append(numeri_utili_html)
+
     # [AGGIORNATO 2026-08-01] La sezione esce anche se la generazione del
     # messaggio personalizzato e' fallita, purche' ci sia un link a cui
     # rispondere: il ciclo di dati non deve dipendere da una chiamata al
@@ -5188,7 +5379,8 @@ def render_html(
     # smetterebbe di funzionare il giorno in cui una testata contiene una riga
     # di testo — cioe' senza che nessuno se ne accorga.
     return _tieni_uniti_i_paragrafi(
-        _testate_dei_capitoli("".join(parts), str(destination or ""))
+        _testate_dei_capitoli("".join(parts), str(destination or ""),
+                              capitoli_a_capo)
     )
 
 
@@ -5312,17 +5504,21 @@ def render_pdf(
     ]
     mappa_capitoli = {c["poi_id"]: c["ancora"] for c in capitoli_pronti}
 
-    html_content = render_html(
-        itinerary, trip, hotels=hotels, guides=guides, guide_urls=guide_urls,
-        capitoli=mappa_capitoli,
-        photos=photos, feedback=feedback,
-        poi=poi, map_png_bytes=map_png_bytes, overview_map=overview_map,
-        day_maps=day_maps,
-        directions=directions, cost_summary=cost_summary, tips=tips,
-        place_cards=place_cards, feedback_link=feedback_link,
-        predeparture=predeparture, vademecum=vademecum,
-        checklist_sheet=checklist_sheet,
-    )
+    def _componi(a_capo=()):
+        return render_html(
+            itinerary, trip, hotels=hotels, guides=guides, guide_urls=guide_urls,
+            capitoli=mappa_capitoli,
+            photos=photos, feedback=feedback,
+            poi=poi, map_png_bytes=map_png_bytes, overview_map=overview_map,
+            day_maps=day_maps,
+            directions=directions, cost_summary=cost_summary, tips=tips,
+            place_cards=place_cards, feedback_link=feedback_link,
+            predeparture=predeparture, vademecum=vademecum,
+            checklist_sheet=checklist_sheet,
+            capitoli_a_capo=a_capo,
+        )
+
+    html_content = _componi()
 
     if output_path is None:
         output_path = tempfile.mktemp(suffix=".pdf")
@@ -5376,6 +5572,48 @@ def render_pdf(
                 "segnalato su stderr. Verificare i permessi della directory "
                 f"'{output_dir}'."
             )
+
+        # [AGGIUNTO 2026-08-15 — task #221. Segnalazione di Lorenzo: «si
+        # spezzano i capitoli. cerca di fare terminare i capitoli a fine
+        # pagina».]
+        #
+        # LA SECONDA STAMPA. Il motore di stampa non sa dire, prima di
+        # stampare, dove cadranno le cose — e `page-break-after: avoid`, che
+        # servirebbe, lo ignora in silenzio. Quindi si stampa, si GUARDA dove
+        # sono finite le testate (le sonde lo dicono gia', vedi
+        # `src/impaginazione.py`), si mandano a capo SOLO quelle cadute in
+        # fondo al foglio, e si ristampa.
+        #
+        # Solo quelle, e non tutte, e' l'intera differenza fra un
+        # miglioramento e uno scambio: mandare a capo ogni capitolo su questo
+        # prodotto e' gia' costato sette pagine con il 40% di bianco, ed e'
+        # scritto nello standard di qualita'.
+        #
+        # Una passata sola in piu': se anche la seconda lasciasse una testata
+        # in basso, ci si ferma. Un ciclo che insegue l'impaginazione perfetta
+        # non converge — sposta il problema di un capitolo ogni volta — e
+        # costerebbe secondi di stampa dentro un tetto di tempo che e' gia'
+        # stretto.
+        try:
+            da_spostare = impaginazione.capitoli_da_mandare_a_capo(
+                Path(tmp_pdf_path).read_bytes(), CAPITOLI_DEL_DOCUMENTO)
+        except Exception:
+            da_spostare = set()
+        if da_spostare:
+            with open(tmp_html_path, "w", encoding="utf-8") as rifatto:
+                rifatto.write(_componi(da_spostare))
+            seconda = subprocess.run(
+                [*COMANDO_STAMPA, tmp_html_path, tmp_pdf_path],
+                capture_output=True, text=True, timeout=60,
+            )
+            # Se la seconda stampa non riesce si tiene la prima: un documento
+            # con un capitolo impaginato male e' molto meglio di nessun
+            # documento.
+            if seconda.returncode != 0 or not Path(tmp_pdf_path).stat().st_size:
+                with open(tmp_html_path, "w", encoding="utf-8") as indietro:
+                    indietro.write(html_content)
+                subprocess.run([*COMANDO_STAMPA, tmp_html_path, tmp_pdf_path],
+                               capture_output=True, text=True, timeout=60)
 
         # [AGGIUNTO 2026-08-02 — segnalazione di Lorenzo: «i collegamenti non
         # funzionano»] wkhtmltopdf, con il Qt non patchato, ignora in silenzio
