@@ -60,8 +60,13 @@ def _documento(destinazione="Siena"):
 
 def _testate(html: str) -> list:
     """(capitolo, modo) nell'ordine in cui stanno sulla carta."""
+    # `cap-a-capo` e' facoltativa e sta in mezzo: da quando ogni capitolo
+    # comincia su una pagina nuova, una ricerca che pretende il nome del modo
+    # SUBITO dopo `cap` legge «a-capo» come se fosse il modo. Ci sono cascato:
+    # sette prove rosse tutte insieme, e nessuna che dicesse la cosa vera.
     return [(m.group(2), m.group(1)) for m in re.finditer(
-        r"class='cap cap-(\w+)'.*?data-capitolo='([^']*)'", html, re.S)]
+        r"class='cap(?: cap-a-capo)? cap-(\w+)'.*?data-capitolo='([^']*)'",
+        html, re.S)]
 
 
 class TestLaVarietaArrivaDAVVERONELDOCUMENTO(unittest.TestCase):
