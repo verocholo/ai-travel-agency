@@ -83,6 +83,14 @@ BUCO_MASSIMO = 18.0
 _SOGLIA_INCHIOSTRO = 245
 
 
+# Quanta parte del foglio, in fondo, e' riservata al numero di pagina e non
+# va misurata. Il numero sta a 28 punti dal bordo su una pagina alta 842: il
+# sette per cento tiene dentro il numero con un margine di sicurezza, e resta
+# largamente sotto la soglia di riempimento (70%), quindi non nasconde niente
+# di cio' che questo strumento deve trovare.
+QUOTA_DEL_PIEDE = 0.07
+
+
 def misura(percorso_pdf: str, risoluzione: int = 60) -> list[dict]:
     """Una riga per pagina: dove arriva il contenuto e dov'e' il buco piu' grande.
 
@@ -110,6 +118,26 @@ def misura(percorso_pdf: str, risoluzione: int = 60) -> list[dict]:
             for numero, percorso in enumerate(immagini, start=1):
                 quadro = numpy.array(Image.open(percorso).convert("L"))
                 altezza = quadro.shape[0]
+                # [AGGIUNTO 2026-08-15 — E' UN DIFETTO DEL MISURATORE, TROVATO
+                # MISURANDO.] Dal 15 agosto ogni pagina porta il numero in
+                # fondo, dentro il margine bianco. Per questo misuratore
+                # quello e' inchiostro, e le conseguenze erano due, entrambe
+                # gravi e silenziose:
+                #
+                #   - il RIEMPIMENTO diventava sempre ~96%, perche' l'ultima
+                #     riga con inchiostro era il numero: una pagina piena a
+                #     meta' risultava piena;
+                #   - il BUCO diventava enorme, perche' fra la fine del
+                #     contenuto e il numero c'e' tutto il margine.
+                #
+                # Cioe' il controllo che difende l'impaginazione avrebbe detto
+                # di si' a qualunque cosa, e avrebbe segnalato buchi
+                # inventati. Un misuratore che sbaglia e' peggio di nessun
+                # misuratore, perche' lo si crede.
+                #
+                # La fascia del numero si toglie dalla misura: li' non ci va
+                # mai contenuto, quindi non c'e' niente da misurare.
+                quadro = quadro[:max(1, int(altezza * (1.0 - QUOTA_DEL_PIEDE)))]
                 righe = numpy.where((quadro < _SOGLIA_INCHIOSTRO).any(axis=1))[0]
                 if not len(righe):
                     fuori.append({"pagina": numero, "arrivo": 0.0,
@@ -157,15 +185,47 @@ def figure_per_pagina(dati: bytes) -> list[int]:
     fuori = []
     for pagina in lettore.pages:
         try:
-            risorse = pagina.get("/Resources")
-            risorse = risorse.get_object() if risorse is not None else {}
-            xo = (risorse or {}).get("/XObject")
-            xo = xo.get_object() if xo is not None else {}
-            fuori.append(sum(1 for k in xo
-                             if xo[k].get_object().get("/Subtype") == "/Image"))
+            fuori.append(_conta_immagini(pagina.get("/Resources")))
         except Exception:
             fuori.append(0)
     return fuori
+
+
+# Quanto in fondo si va a cercare le immagini dentro i disegni annidati. Tre
+# livelli sono molti piu' di quelli che questo prodotto usa (uno solo), e il
+# limite esiste solo perche' un PDF costruito male puo' contenere un anello
+# che si richiama da solo: senza tetto, il conteggio non finirebbe mai.
+PROFONDITA_MASSIMA = 3
+
+
+def _conta_immagini(risorse, profondita: int = 0) -> int:
+    """Le immagini di una pagina, comprese quelle dentro i disegni annidati.
+
+    [ESTESO 2026-08-15 — task #217.] Prima si guardava solo il primo livello,
+    e andava bene finche' le immagini stavano attaccate alla pagina. Da quando
+    il corpo della pagina viaggia dentro un disegno a se' (vedi
+    `fascicolo.numera`), le fotografie stanno un piano piu' sotto: questa
+    funzione contava ZERO su un documento pieno di fotografie, e il
+    misuratore giudicava «pagina mezza vuota senza figure» una pagina occupata
+    da una fotografia grande. Un misuratore che sbaglia di la' e' peggio di
+    nessun misuratore, perche' lo si crede.
+    """
+    if risorse is None or profondita > PROFONDITA_MASSIMA:
+        return 0
+    risorse = risorse.get_object() or {}
+    disegni = risorse.get("/XObject")
+    if disegni is None:
+        return 0
+    disegni = disegni.get_object() or {}
+    quante = 0
+    for chiave in disegni:
+        oggetto = disegni[chiave].get_object()
+        tipo = oggetto.get("/Subtype")
+        if tipo == "/Image":
+            quante += 1
+        elif tipo == "/Form":
+            quante += _conta_immagini(oggetto.get("/Resources"), profondita + 1)
+    return quante
 
 
 def problemi(percorso_pdf: str, dati: bytes | None = None,
