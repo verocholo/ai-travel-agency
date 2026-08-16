@@ -900,7 +900,15 @@ _CSS_MODELLO = """
       margin: 10px -6px 4px -6px; page-break-inside: avoid;
     }
     .day-striscia td { vertical-align: top; padding: 0; text-align: center; }
-    .day-striscia img { max-width: 100%; max-height: 120px; }
+    /* [TOLTO IL TETTO 2026-08-16.] Qui c'era `max-height: 120px` insieme a
+       `max-width: 100%`: e' la coppia che l'11 agosto aveva gia' schiacciato
+       le fotografie, e da allora era rimasta a tenerle piccole — un
+       francobollo in mezzo alla pagina qualunque spazio ci fosse attorno.
+       Sei delle nove pagine segnalate da Lorenzo il 16 agosto nascono da
+       questo numero. Adesso l'altezza la governa il RITAGLIO, sui pixel,
+       dove funziona: qui resta una misura sola, e con una misura sola non si
+       puo' deformare niente. */
+    .day-striscia img { width: 100%; display: block; }
     .day-striscia .didascalia {
       font-size: 8px; color: #98a4b0; margin-top: 3px; line-height: 1.3;
     }
@@ -1417,6 +1425,9 @@ _CSS_MODELLO = """
     .day-eroe td, .day-numerone td { padding: 0; vertical-align: middle; }
     .day-eroe-grande { width: 61%; }
     .day-eroe-lato { width: 39%; }
+    /* Le due larghezze qui sopra devono restare quelle di `LARGHEZZA_EROE`
+       in `src/pdf_renderer.py`: da li' si ricava il ritaglio che fa venire
+       le due fotografie alte uguali. C'e' un controllo che lo verifica. */
     /* Il numerone: grande abbastanza da essere un elemento grafico, non un
        numero scritto grosso. In grigio chiaro perche' deve fare da fondale
        alla fotografia accanto, non contenderle l'occhio. */
@@ -1523,6 +1534,19 @@ _ANCHOR_PROBE_PREFIX = pdf_links.PROBE_PREFIX
 # si legge come una figura messa li'.
 _RAPPORTO_FASCIA = 3.2
 
+# Il rapporto delle fotografie in fila a chiusura di giornata. Con tre celle
+# larghe un terzo del foglio, 1.5 da' figure alte poco meno di quattro
+# centimetri: si vedono, e non rubano la pagina al programma.
+RAPPORTO_FILA = 1.5
+
+# L'apertura «eroe laterale»: quanto e' larga la cella grande, in percentuale,
+# e con che rapporto si ritaglia la sua fotografia. Il rapporto della piccola
+# si RICAVA da questi due (vedi `_apertura_di_giornata`), perche' le due
+# figure devono venire alte uguali: e' l'unico modo perche' sembrino una
+# coppia e non un errore.
+LARGHEZZA_EROE = 61
+RAPPORTO_EROE = 1.25
+
 
 # Il comando esatto con cui si stampa. UNA definizione sola, e il motivo e'
 # preciso.
@@ -1616,6 +1640,12 @@ CAPITOLI_DEL_DOCUMENTO = (
     "numeri-utili", "recensione",
 )
 
+# Sotto questa lunghezza di testo un capitolo NON apre una pagina nuova:
+# riempirebbe un foglio per un decimo e il resto resterebbe bianco. Il numero
+# e' misurato sul campione — «Numeri utili» e «Il tuo alloggio» stanno sotto,
+# il programma e le guide molto sopra.
+CAPITOLO_CORTO = 1400
+
 CAPITOLI_DI_RACCONTO = frozenset(
     {"colpo-docchio", "selezione", "giorno-per-giorno", "guide"}
 )
@@ -1696,6 +1726,25 @@ def _testate_dei_capitoli(documento: str, chiave: str, a_capo=None) -> str:
     vale anche per i capitoli che verranno aggiunti domani, senza doversene
     ricordare.
     """
+    # [AGGIUNTO 2026-08-16 — «trova il modo di eliminare gli spazi bianchi».]
+    #
+    # Un capitolo CORTO mandato a pagina nuova lascia il foglio quasi vuoto:
+    # sul campione, «Numeri utili» da solo riempiva il nove per cento. Mandare
+    # a capo tutti indistintamente e' la regola che produce proprio il bianco
+    # che dobbiamo togliere.
+    #
+    # Quindi si guarda quanto e' lungo ognuno — si misura il testo che sta fra
+    # la sua testata e quella dopo — e vanno a pagina nuova solo quelli che
+    # una pagina la riempiono davvero. Gli altri scorrono dietro al
+    # precedente, che e' il comportamento giusto anche in un libro: non si
+    # apre un foglio nuovo per otto righe.
+    confini = [m.start() for m in _RE_TITOLO_DI_CAPITOLO.finditer(documento)]
+    confini.append(len(documento))
+    lunghezze = {
+        inizio: _lunghezza_visibile(documento[inizio:fine])
+        for inizio, fine in zip(confini, confini[1:])
+    }
+
     stato = {"numero": 0, "precedente": None}
 
     def _sostituisci(m: "re.Match[str]") -> str:
@@ -1719,10 +1768,13 @@ def _testate_dei_capitoli(documento: str, chiave: str, a_capo=None) -> str:
         # (spostarlo aprirebbe il documento con un foglio bianco). Si paga in
         # bianco a fondo pagina, ed e' una scelta sua: un documento che si
         # sfoglia per capitoli invece che un flusso continuo.
+        if a_capo is None:
+            abbastanza_lungo = lunghezze.get(m.start(), 0) >= CAPITOLO_CORTO
+            salta = stato["numero"] > 1 and abbastanza_lungo
+        else:
+            salta = nome in (a_capo or ())
         return _disegna_testata(modo, nome, dentro, stato["numero"],
-                                a_capo=(stato["numero"] > 1
-                                        if a_capo is None
-                                        else nome in (a_capo or ())))
+                                a_capo=salta)
 
     return _RE_TITOLO_DI_CAPITOLO.sub(_sostituisci, documento)
 
@@ -3490,11 +3542,19 @@ def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "") -> s
     larghezza = 100 // len(candidate)
     celle = []
     for _poi_id, scatto, nome in candidate:
+        grezzi = scatto.get("png") if isinstance(scatto, dict) else None
+        # [CORRETTO 2026-08-16 — segnalazione di Lorenzo su sei pagine.]
+        # Prima l'immagine entrava com'era e il foglio di stile la teneva
+        # sotto i 120 pixel: un francobollo in mezzo alla pagina, qualunque
+        # spazio ci fosse attorno. Adesso si ritaglia a un rapporto fisso e
+        # riempie la cella per intero — l'altezza la governa il ritaglio, non
+        # un tetto scritto nel foglio di stile.
+        ritagliata = foto.ritaglia_panoramica(grezzi, RAPPORTO_FILA) or grezzi
         try:
-            b64 = base64.b64encode(scatto["png"]).decode("ascii")
+            b64 = base64.b64encode(ritagliata).decode("ascii")
         except (TypeError, ValueError, KeyError):
             continue
-        tipo = foto.mime_immagine(scatto.get("png"))
+        tipo = foto.mime_immagine(ritagliata)
         celle.append(
             f"<td style='width:{larghezza}%'>"
             f"<img src='data:{tipo};base64,{b64}' alt='{_esc(nome)}'>"
@@ -3622,10 +3682,25 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
     # di stampa, si fa solo con le tabelle — `float` e `flex` li ignora in
     # silenzio, e il risultato sarebbe la colonna stretta SOTTO quella larga.
     if scelta == "eroe-laterale":
+        # [CORRETTO 2026-08-16 — pagina 4: «una foto e' troppo piu' piccola
+        # dell'altra».]
+        #
+        # Le due fotografie stavano in due celle larghe il 61% e il 39%, ed
+        # erano ritagliate con lo stesso criterio: a parita' di criterio, la
+        # cella stretta produce una figura molto piu' BASSA, e sulla pagina
+        # sembrano due immagini di importanza diversa messe li' a caso.
+        #
+        # Perche' abbiano la STESSA ALTEZZA i due rapporti devono stare fra
+        # loro come le larghezze delle celle: l'altezza di una figura larga
+        # `L` con rapporto `r` e' `L/r`, quindi 61/r1 = 39/r2. Da qui i due
+        # numeri qui sotto, che non sono a occhio: 1.25 e 1.25*39/61 = 0.80.
+        # La grande resta orizzontale, la piccola diventa verticale, e in
+        # pagina fanno una coppia invece di uno scarto.
+        piccolo = RAPPORTO_EROE * (100 - LARGHEZZA_EROE) / LARGHEZZA_EROE
         grande = _figura(disponibili[0][0],
-                         "style='width:100%; display:block;'", 1.25)
+                         "style='width:100%; display:block;'", RAPPORTO_EROE)
         piccola = (_figura(disponibili[1][0],
-                           "style='width:100%; display:block;'", 1.0)
+                           "style='width:100%; display:block;'", piccolo)
                    if len(disponibili) >= 2 else "")
         if grande and piccola:
             pezzi.append(

@@ -493,6 +493,17 @@ def solo_reali(foto: dict | None) -> dict:
     }
 
 
+# Quanta altezza si puo' togliere a una fotografia, al massimo, per farla
+# diventare piu' larga che alta. Oltre questo, l'immagine non e' piu'
+# riconoscibile: e' il difetto che Lorenzo ha chiamato «stretchate» guardando
+# le due torri ridotte a una striscia di mattoni.
+#
+# Quaranta per cento e' misurato: una foto orizzontale non ci arriva mai
+# (le serve poco o niente), una verticale ci sbatte contro subito — che e'
+# esattamente il caso da proteggere.
+TAGLIO_MASSIMO = 0.40
+
+
 def ritaglia_panoramica(grezzi: bytes, rapporto: float = 2.6) -> bytes | None:
     """La stessa fotografia, ritagliata a fascia larga. `None` se non si legge.
 
@@ -517,6 +528,28 @@ def ritaglia_panoramica(grezzi: bytes, rapporto: float = 2.6) -> bytes | None:
     Si taglia al CENTRO in altezza, non in alto: nelle fotografie di viaggio
     la meta' superiore e' quasi sempre cielo, e una fascia di solo cielo non
     racconta nessun posto.
+
+    ## QUANTO SI PUO' TAGLIARE, e perche' c'e' un limite
+
+    [AGGIUNTO 2026-08-16 — difetto segnalato da Lorenzo a pagina 6 del
+    fascicolo di Bologna: «le foto sono stretchate».]
+
+    Non erano stirate: erano **sbucciate**. Una fotografia verticale — le due
+    torri di Bologna, alte e strette — a cui si chiede un rapporto da fascia
+    perde l'ottanta per cento dell'altezza, e quello che resta e' una striscia
+    di mattoni in cui non si riconosce piu' niente. Sulla pagina si legge
+    esattamente come un'immagine deformata, anche se nessun pixel e' stato
+    stirato.
+
+    Da qui il tetto: **non si toglie mai piu' di `TAGLIO_MASSIMO` dell'altezza
+    originale.** Se il rapporto chiesto costerebbe di piu', si ritaglia fino
+    al tetto e ci si ferma. La figura esce un po' meno panoramica di quanto
+    chiesto — e questo il foglio di stile lo regge senza deformare niente,
+    perche' la larghezza resta l'unica misura dichiarata — invece di uscire
+    irriconoscibile.
+
+    E' la stessa regola di tutto il prodotto applicata alle immagini: meglio
+    una cosa vera e meno bella che una bella e falsa.
     """
     try:
         import io
@@ -533,6 +566,22 @@ def ritaglia_panoramica(grezzi: bytes, rapporto: float = 2.6) -> bytes | None:
             if not larghezza or not altezza or rapporto <= 0:
                 return None
             voluta = int(larghezza / rapporto)
+            # Il tetto al taglio vale SOLO per le fotografie verticali, ed e'
+            # una correzione della prima versione di questa regola.
+            #
+            # Applicandolo a tutte, cambiava anche il comportamento su cui il
+            # documento e' gia' tarato: la fascia della copertina, le bande
+            # delle giornate, tutte tagliate da fotografie orizzontali che
+            # quel taglio lo reggono benissimo — una foto 1200x900 ridotta a
+            # 1200x400 resta una fascia leggibile, mentre 600x1400 ridotta a
+            # 600x193 e' una striscia di mattoni. La differenza non e' quanto
+            # si toglie: e' cosa resta.
+            #
+            # Una prova gia' scritta l'ha preso subito, ed era nel giusto.
+            if altezza > larghezza:
+                minima = int(altezza * (1.0 - TAGLIO_MASSIMO))
+                if voluta < minima:
+                    voluta = minima
             if voluta >= altezza:
                 # Gia' piu' panoramica di cosi': si lascia com'e'. Allargarla
                 # vorrebbe dire aggiungere pixel che non esistono.
