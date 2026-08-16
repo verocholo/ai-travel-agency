@@ -319,6 +319,216 @@ def allega(dati: bytes, allegati) -> bytes:
         return dati
 
 
+# --------------------------------------------------------------------------
+# I NUMERI DI PAGINA (task #217)
+#
+# PERCHE' NON SI FANNO PIU' IN STAMPA
+#
+# Il piede del documento diceva «1 / 12» su un fascicolo di ventisei pagine, e
+# le pagine delle guide non avevano nessun numero. Non era un caso: il numero
+# lo scriveva il motore di stampa, e il motore di stampa vede UN file per
+# volta. Quando stampa l'itinerario il fascicolo non esiste ancora — le guide
+# sono altri file, che verranno cuciti dopo — quindi «12» era il totale vero
+# di quello che aveva in mano, e diventava una bugia dieci secondi dopo.
+#
+# Non c'e' modo di dirgli il totale prima: il totale si sa solo a cucitura
+# fatta. Quindi i numeri si mettono DOPO, sul fascicolo finito, e si mettono
+# tutti insieme — cosi' il documento e' numerato dalla prima pagina all'ultima
+# invece che a metа'.
+#
+# COME
+#
+# Si stampa un secondo documento fatto di pagine vuote — tante quante quelle
+# del fascicolo — il cui unico contenuto e' il piede con il numero giusto, e
+# lo si appoggia sopra. E' il modo piu' conservativo che esista: le pagine
+# vere non vengono ridisegnate, i collegamenti non vengono toccati, e se
+# qualcosa non torna si restituisce il file com'era.
+#
+# ALTERNATIVE SCARTATE, e perche':
+#
+#   - stampare due volte (una per contare, una per numerare): raddoppia il
+#     tempo di stampa dell'intero fascicolo per scrivere due cifre in fondo
+#     alla pagina;
+#   - disegnare i numeri con una libreria di grafica: e' una dipendenza in
+#     piu' nel contenitore, e in questo progetto ogni dipendenza non
+#     dichiarata e' gia' costata un guasto silenzioso (vedi `openpyxl` in
+#     requirements.txt).
+#
+# QUANDO NON FA NIENTE: senza `wkhtmltopdf`, senza `pypdf`, se il conteggio
+# delle pagine non combacia o se la sovrapposizione fallisce. In tutti questi
+# casi torna indietro il fascicolo intatto. Un documento senza numeri di
+# pagina e' un fastidio; un documento con i numeri sbagliati o con le pagine
+# rovinate e' un danno.
+# --------------------------------------------------------------------------
+
+# [RIFATTO DUE VOLTE IL 15 AGOSTO, E LE DUE BOCCIATURE VALGONO PIU' DEL CODICE.]
+#
+# TENTATIVO 1 — chiedere il numero al motore di stampa
+# (`--footer-center "[page] / N"`). Il motore del banco di lavoro ha risposto
+# in chiaro: «The switch --footer-center, is not support using unpatched qt,
+# and will be ignored». Cioe': di qua il piede non esiste, di la' (produzione,
+# con le patch) esiste. E' ESATTAMENTE la differenza fra i due motori che a
+# questo progetto e' gia' costata una settimana, e che nessuno vede finche'
+# non e' addosso al cliente. Scartato: non si consegna cio' che non si puo'
+# provare qui.
+#
+# TENTATIVO 2 — stampare un secondo documento con il numero scritto come
+# testo normale, e appoggiarlo sopra. Il testo normale i due motori lo
+# stampano tutti e due. Ma il numero e' finito al 74% dell'altezza invece che
+# in fondo: il motore scala le misure in millimetri di tre quarti, e per
+# rimetterlo a posto avrei dovuto moltiplicare per un fattore misurato QUI —
+# cioe' rimettere in gioco la stessa differenza fra i due motori dalla porta
+# di servizio. Scartato per la stessa ragione del primo.
+#
+# QUELLO CHE SI FA — il numero si disegna dentro il PDF, senza stampare
+# niente. Sono cinque comandi di disegno e un carattere standard (Helvetica,
+# uno dei quattordici che ogni lettore di PDF ha per obbligo: non si incorpora
+# nulla, non pesa nulla). Nessun motore di stampa in mezzo, quindi nessuna
+# differenza fra qui e la produzione, e la posizione e' quella che scrivo io
+# in punti tipografici — la stessa unita' in cui e' misurato il foglio.
+
+# Il numero sta a questa altezza dal bordo inferiore, in punti tipografici
+# (72 punti = un pollice). Ventotto punti sono un centimetro scarso: dentro il
+# margine bianco del documento, quindi non puo' finire sopra l'ultima riga di
+# una pagina piena.
+ALTEZZA_DEL_NUMERO_PT = 28.0
+CORPO_DEL_NUMERO_PT = 8.0
+# Grigio medio: si legge cercandolo, non si nota sfogliando. Un numero di
+# pagina nero come il testo sembra una nota.
+GRIGIO_DEL_NUMERO = (0.48, 0.53, 0.58)
+
+# Quanto e' larga ogni lettera in Helvetica, in millesimi di corpo. Servono
+# solo le cifre, lo spazio e la barra: e' tutto quello che c'e' in «5 / 14».
+# Senza queste misure il numero si potrebbe solo centrare a occhio, e a
+# occhio vuol dire storto su meta' delle pagine (le pagine a una cifra e
+# quelle a due hanno larghezze diverse).
+LARGHEZZE_HELVETICA = {" ": 278, "/": 278,
+                       "0": 556, "1": 556, "2": 556, "3": 556, "4": 556,
+                       "5": 556, "6": 556, "7": 556, "8": 556, "9": 556}
+
+
+def _larghezza(testo: str, corpo: float) -> float:
+    """Quanto misura questa scritta, in punti."""
+    return sum(LARGHEZZE_HELVETICA.get(c, 556) for c in testo) * corpo / 1000.0
+
+
+def _disegno_del_numero(testo: str, larghezza_foglio: float) -> bytes:
+    """I comandi di disegno del numero, centrati sul foglio."""
+    rosso, verde, blu = GRIGIO_DEL_NUMERO
+    da_sinistra = (larghezza_foglio - _larghezza(testo, CORPO_DEL_NUMERO_PT)) / 2.0
+    return (
+        f"q {rosso} {verde} {blu} rg BT /Piede {CORPO_DEL_NUMERO_PT} Tf "
+        f"1 0 0 1 {da_sinistra:.2f} {ALTEZZA_DEL_NUMERO_PT:.2f} Tm "
+        f"({testo}) Tj ET Q"
+    ).encode("ascii")
+
+
+def numera(dati: bytes) -> bytes:
+    """Il fascicolo con i numeri di pagina veri. Non solleva mai.
+
+    COME CI SI ARRIVA, e le due strade sbagliate che ho percorso prima.
+
+    1. `merge_page()` — il modo ovvio. **Rovina il documento**: ridisegna il
+       flusso di comandi della pagina, e su queste pagine il fascicolo si apre
+       BIANCO. Il testo si estrae ancora, quindi nessuna prova basata sul
+       testo se ne accorge: si vede solo guardando le pagine.
+
+    2. Aggiungere i comandi del numero in fondo alla pagina. Il numero e'
+       finito in ALTO e grande il triplo. Il motivo e' istruttivo: la pagina
+       stampata da wkhtmltopdf lascia dietro di se' una trasformazione aperta
+       — capovolge il foglio e lo scala di tre quarti — e tutto quello che
+       arriva dopo la eredita'. Ho provato a contare le parentesi del disegno
+       per convincermi che fosse a posto: tornavano, e la pagina diceva di no.
+       Ha ragione la pagina.
+
+    QUELLO CHE SI FA: il contenuto che c'era diventa un DISEGNO A SE'
+    («modulo»), e la pagina diventa due righe di comandi: «disegna il corpo»,
+    «disegna il numero». Dentro un modulo lo stato del disegno non puo'
+    uscire, quindi la trasformazione lasciata aperta dal motore di stampa
+    resta chiusa li' dentro e il numero atterra dove gli ho detto.
+
+    E il corpo non viene riscritto: si riusa lo STESSO identico blocco di
+    byte gia' compresso, aggiungendogli solo l'etichetta che lo dichiara un
+    modulo. Il documento non ingrassa e non perde niente — collegamenti,
+    fotografie e caratteri sono quelli di prima, non copie.
+    """
+    if not isinstance(dati, bytes) or not dati:
+        return dati
+    try:
+        from pypdf import PdfReader, PdfWriter
+        from pypdf.generic import (ArrayObject, DecodedStreamObject,
+                                   DictionaryObject, FloatObject, NameObject,
+                                   NumberObject)
+
+        lettore = PdfReader(io.BytesIO(dati))
+        quante = len(lettore.pages)
+        if quante < 1:
+            return dati
+
+        scrittore = PdfWriter(clone_from=lettore)
+        gia_usati: set[int] = set()
+        for indice, pagina in enumerate(scrittore.pages, start=1):
+            riquadro = pagina.mediabox
+            larghezza = float(riquadro.right) - float(riquadro.left)
+            cornice = ArrayObject([FloatObject(v) for v in riquadro])
+
+            in_pagina = pagina.raw_get("/Contents")
+            corpo = in_pagina.get_object()
+            # Due pagine che condividono lo stesso blocco di comandi
+            # diventerebbero lo stesso modulo, e il numero della prima
+            # comparirebbe su tutte. Non succede con questo motore di stampa,
+            # ma costa una riga saperlo invece di sperarlo.
+            if isinstance(corpo, ArrayObject) or id(corpo) in gia_usati:
+                return dati
+            gia_usati.add(id(corpo))
+
+            corpo[NameObject("/Type")] = NameObject("/XObject")
+            corpo[NameObject("/Subtype")] = NameObject("/Form")
+            corpo[NameObject("/FormType")] = NumberObject(1)
+            corpo[NameObject("/BBox")] = cornice
+            corpo[NameObject("/Resources")] = pagina.raw_get("/Resources")
+
+            carattere = DictionaryObject()
+            carattere[NameObject("/Type")] = NameObject("/Font")
+            carattere[NameObject("/Subtype")] = NameObject("/Type1")
+            # Helvetica e' uno dei quattordici caratteri che ogni lettore di
+            # PDF ha per obbligo: non si incorpora niente e non pesa niente.
+            carattere[NameObject("/BaseFont")] = NameObject("/Helvetica")
+            elenco = DictionaryObject()
+            elenco[NameObject("/Piede")] = carattere
+            risorse_del_numero = DictionaryObject()
+            risorse_del_numero[NameObject("/Font")] = elenco
+
+            numero = DecodedStreamObject()
+            numero.set_data(
+                _disegno_del_numero(f"{indice} / {quante}", larghezza))
+            numero[NameObject("/Type")] = NameObject("/XObject")
+            numero[NameObject("/Subtype")] = NameObject("/Form")
+            numero[NameObject("/FormType")] = NumberObject(1)
+            numero[NameObject("/BBox")] = cornice
+            numero[NameObject("/Resources")] = risorse_del_numero
+
+            disegni = DictionaryObject()
+            disegni[NameObject("/Corpo")] = in_pagina
+            disegni[NameObject("/Numero")] = scrittore._add_object(numero)
+            risorse_nuove = DictionaryObject()
+            risorse_nuove[NameObject("/XObject")] = disegni
+            pagina[NameObject("/Resources")] = risorse_nuove
+
+            comandi = DecodedStreamObject()
+            comandi.set_data(b"q /Corpo Do Q q /Numero Do Q")
+            pagina[NameObject("/Contents")] = scrittore._add_object(comandi)
+
+        fuori = io.BytesIO()
+        scrittore.write(fuori)
+        uscita = fuori.getvalue()
+        # Un file molto piu' corto dell'originale vuol dire che per strada si
+        # e' perso qualcosa: meglio il documento senza numeri.
+        return uscita if len(uscita) >= len(dati) // 2 else dati
+    except Exception:
+        return dati
+
+
 def pagine_di_partenza(principale: bytes, capitoli, ancore) -> dict:
     """`{nome_ancora: indice della prima pagina del suo capitolo}`.
 
@@ -377,6 +587,7 @@ def cuci(principale: bytes, capitoli=None, allegati=None, ancore=None) -> tuple[
         "unione_riuscita": False,
         "allegati_riusciti": False,
         "collegamenti": {},
+        "numerazione_riuscita": False,
         "errore": "",
     }
     dati = principale
@@ -388,6 +599,15 @@ def cuci(principale: bytes, capitoli=None, allegati=None, ancore=None) -> tuple[
                 resoconto["capitoli"] = len(pezzi)
                 resoconto["unione_riuscita"] = True
                 dati = unito
+
+        # [AGGIUNTO 2026-08-15 — task #217] I numeri di pagina si mettono QUI:
+        # dopo la cucitura, perche' solo adesso il totale e' quello vero, e
+        # PRIMA degli allegati e della riparazione, perche' quelli riscrivono
+        # il file e l'ultimo a scrivere deve essere la riparazione.
+        numerato = numera(dati)
+        if numerato is not dati:
+            resoconto["numerazione_riuscita"] = True
+            dati = numerato
 
         voci = {
             nome: blob for nome, blob in (allegati or {}).items()

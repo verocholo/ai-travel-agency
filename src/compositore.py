@@ -292,6 +292,20 @@ APERTURE = (
      "descrizione": "fotografia panoramica a tutta larghezza, fino al bordo"},
     {"nome": "mosaico", "foto": 3,
      "descrizione": "tre fotografie in fila"},
+    # [AGGIUNTE 2026-08-15 — task #219.] Le prime due aperture a COLONNE che
+    # entrano nel documento venduto. Sono la meta' prudente degli impianti a
+    # colonne: dividono in colonne l'APERTURA, non la giornata. Il titolo, la
+    # cartina, il programma e la legenda restano impilati esattamente come
+    # prima, e con loro i sette controlli di impaginazione che li difendono.
+    #
+    # E' la differenza fra aggiungere una pagina nuova e rifare quella che
+    # gia' regge il documento. La seconda meta' — il programma affiancato
+    # alla cartina — resta fuori di proposito: non e' che non si sappia fare,
+    # e' che ridisegna il pezzo che tiene in piedi tutto il resto.
+    {"nome": "eroe-laterale", "foto": 2,
+     "descrizione": "fotografia grande a sinistra, una piccola accanto"},
+    {"nome": "numero-gigante", "foto": 1,
+     "descrizione": "il numero del giorno in grande, la fotografia accanto"},
 )
 
 

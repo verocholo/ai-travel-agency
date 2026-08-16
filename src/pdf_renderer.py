@@ -565,6 +565,55 @@ _CSS_MODELLO = """
       font-size: 15.5px; font-style: italic; color: #6c7683;
       margin: 0 0 30px 0;
     }
+
+    /* --- Il blocco della copertina (task #218) -------------------------
+       [AGGIUNTO 2026-08-15] Fotografia tonda, titolo, bollo della durata,
+       tutti dentro un blocco di colore pieno.
+
+       Tre note su cose che con questo motore di stampa NON si possono fare,
+       e che qui sono state aggirate invece che scoperte sulla carta:
+
+       1. la fotografia tonda NON si ottiene arrotondando gli angoli col
+          foglio di stile — viene una figura mezza tonda e mezza quadrata. Si
+          ritaglia sui pixel prima (`foto.ritaglia_tondo`), e qui arriva gia'
+          rotonda;
+       2. il bollo invece SI', perche' e' un riquadro di colore vuoto: un
+          quadrato con il raggio pari a meta' del lato diventa un cerchio
+          vero. E' l'unica forma tonda che questo motore disegna;
+       3. affiancare si fa con le tabelle e basta. */
+    .cover-blocco {
+      background: {{primario}};
+      padding: 22px 26px 24px 26px;
+      margin-bottom: 8px;
+    }
+    .cover-blocco-t { width: 100%; border-collapse: collapse; }
+    .cover-blocco-t td { padding: 0; border: none; vertical-align: middle; }
+    .cover-tonda { width: 112px; padding-right: 22px !important; }
+    .cover-tonda img { width: 100px; display: block; }
+    .cover-blocco-testo .cover-kicker {
+      color: {{accento_su_scuro}}; margin-bottom: 8px;
+    }
+    .cover-blocco-testo .cover-title {
+      color: #ffffff; font-size: 52px; margin: 0 0 12px 0;
+    }
+    .cover-blocco-testo .cover-rule {
+      border-top: 3px solid {{accento_su_scuro}}; margin: 0 0 10px 0;
+    }
+    .cover-blocco-testo .cover-sub {
+      color: {{chiaro_su_scuro}}; font-size: 13.5px; margin: 0;
+    }
+    .cover-bollo-cella { width: 96px; padding-left: 18px !important; }
+    .cover-bollo {
+      width: 78px; height: 78px; border-radius: 39px;
+      background: {{accento}}; color: #ffffff; text-align: center;
+    }
+    .cover-bollo-n {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 34px; line-height: 1; padding-top: 18px;
+    }
+    .cover-bollo-t {
+      font-size: 9px; letter-spacing: .18em; text-transform: uppercase;
+    }
     /* La striscia chiara dentro la fascia scura: ripete le due informazioni
        che il cliente cerca per prime (quando parte, quanto dura) in un punto
        dove non può sfuggirgli. Sfondo a tinta piatta, mai trasparenze. */
@@ -1195,6 +1244,93 @@ _CSS_MODELLO = """
       font-size: 2px; line-height: 2px;
     }
     .section-intro { font-size: 11px; color: #6b7a89; margin: -4px 0 10px 0; }
+
+    /* --- Testate dei capitoli (task #216) --------------------------------
+       [AGGIUNTE 2026-08-15] Fino a ieri tutti e undici i capitoli si aprivano
+       con la stessa riga: carattere con le grazie e un filetto sotto. Su un
+       documento di ventisei pagine sono undici aperture identiche, ed e' il
+       difetto che Lorenzo ha nominato per primo guardando i provini: non
+       «brutto», ma «sempre uguale».
+
+       Quale delle quattro tocchi a un capitolo lo decide `compositore.testata()`,
+       che garantisce due cose: mai due di fila uguali, e lo stesso viaggio
+       rigenerato da' lo stesso documento.
+
+       REGOLA COMUNE A TUTTE E QUATTRO: la testata non si spezza (sta dentro
+       `page-break-inside: avoid`) ma NON si incolla al testo che segue. La
+       differenza e' costata cara il 13 agosto — legare il titolo al suo
+       seguito toglieva un titolo orfano e apriva due centimetri di vuoto
+       altrove, e il misuratore delle pagine e' diventato rosso. Qui si
+       decora l'apertura, non si tocca il flusso. */
+    .cap { page-break-inside: avoid; margin: 17px 0 10px 0; }
+    .cap .section-title { margin: 0; }
+    /* L'occhiello: due parole in maiuscoletto sopra il titolo. Serve a dare
+       alla testata una seconda riga su cui variare — senza, "fascia" e
+       "laterale" si distinguerebbero solo per un bordo. */
+    .cap-occhiello {
+      font-size: 9px; letter-spacing: 1.6px; text-transform: uppercase;
+      color: {{accento_testo}}; margin-bottom: 3px;
+    }
+
+    /* FASCIA — la banda piena che esce dai margini del foglio. E' l'apertura
+       piu' forte, riservata ai capitoli di racconto.
+       I due margini negativi valgono ESATTAMENTE quanto i margini laterali di
+       `@page`, e il riempimento li restituisce: cosi' il colore arriva al
+       bordo della carta ma il titolo resta incolonnato con tutto il resto del
+       documento. Se un domani cambiano i margini di pagina vanno cambiati
+       anche qui — c'e' un controllo che lo verifica, perche' e' il tipo di
+       disallineamento che non da' nessun errore e si vede solo sulla carta. */
+    .cap-fascia {
+      background: {{primario}};
+      margin-left: -1.8cm; margin-right: -1.8cm;
+      padding: 9px 1.8cm 10px 1.8cm;
+    }
+    .cap-fascia .section-title {
+      color: #ffffff; border-bottom: none; padding-bottom: 0;
+    }
+    .cap-fascia .cap-occhiello { color: {{accento_su_scuro}}; }
+
+    /* LATERALE — sbarra verticale spessa a sinistra, niente filetto sotto.
+       E' la piu' sobria delle quattro: sta bene sui capitoli di consultazione,
+       dove il titolo deve farsi trovare sfogliando ma non rubare la scena
+       alla tabella che ha sotto. */
+    .cap-laterale {
+      border-left: 7px solid {{primario}};
+      padding: 1px 0 1px 15px;
+    }
+    .cap-laterale .section-title { border-bottom: none; padding-bottom: 0; }
+
+    /* BLOCCO — riquadro pieno sul fondo caldo, con una linguetta di colore
+       sopra il titolo. La linguetta e' un div solido: nessun gradiente,
+       nessuna trasparenza, cioe' le uniche cose che questo motore di stampa
+       disegna davvero. */
+    .cap-blocco {
+      background: {{sfondo_caldo}};
+      border-left: 3px solid {{accento}};
+      padding: 9px 18px 10px 18px;
+    }
+    .cap-blocco .cap-linguetta {
+      width: 44px; height: 6px; background: {{accento}};
+      margin-bottom: 7px; font-size: 1px; line-height: 1px;
+    }
+    .cap-blocco .section-title { border-bottom: none; padding-bottom: 0; }
+
+    /* NUMERO — la cifra grande in chiaro accanto al titolo, con un filetto
+       SOPRA invece che sotto. E' una tabella e non due div affiancati perche'
+       affiancare qui si fa solo con le tabelle: `float` e `flex` questo motore
+       li ignora in silenzio, e il risultato sarebbe la cifra sopra il titolo
+       invece che accanto. */
+    .cap-numero { width: 100%; border-collapse: collapse; }
+    .cap-numero td { padding: 0; border: none; vertical-align: middle; }
+    .cap-numero .cap-cifra {
+      width: 62px;
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 40px; line-height: 1; color: {{bordo_caldo}};
+    }
+    .cap-numero .section-title {
+      border-bottom: none; border-top: 2px solid {{bordo_caldo}};
+      padding: 7px 0 0 0;
+    }
     /* [AGGIUNTA 2026-08-02 (quater)] Stessa riga di raccordo, ma quando sta
        IN MEZZO a due riquadri invece che sotto a un titolo. Il margine
        negativo di `.section-intro` serve a incollare l'occhiello al titolo
@@ -1221,6 +1357,33 @@ _CSS_MODELLO = """
        altrimenti la fotografia sborda dal foglio o si ferma prima del bordo.
        C'e' un controllo che lo verifica, perche' e' il tipo di disallineamento
        che non da' nessun errore e si vede solo sulla carta. */
+    /* --- Le due aperture a colonne (task #219) -------------------------
+       [AGGIUNTE 2026-08-15] Dividono in colonne l'APERTURA della giornata,
+       non la giornata: sotto, titolo, cartina e programma restano impilati.
+       Le larghezze sono dichiarate sulle celle perche' senza, con una
+       fotografia sola, la cella rimasta si prende tutta la riga. */
+    .day-eroe, .day-numerone {
+      width: 100%; border-collapse: separate; border-spacing: 7px;
+      margin: 0 -7px 8px -7px; page-break-inside: avoid;
+    }
+    .day-eroe td, .day-numerone td { padding: 0; vertical-align: middle; }
+    .day-eroe-grande { width: 61%; }
+    .day-eroe-lato { width: 39%; }
+    /* Il numerone: grande abbastanza da essere un elemento grafico, non un
+       numero scritto grosso. In grigio chiaro perche' deve fare da fondale
+       alla fotografia accanto, non contenderle l'occhio. */
+    .day-numerone-cifra {
+      width: 27%; text-align: center;
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 76px; line-height: .9; color: {{bordo_caldo}};
+    }
+    .day-numerone-e {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 9px; letter-spacing: .2em; text-transform: uppercase;
+      color: {{accento_testo}}; margin-top: 6px;
+    }
+    .day-numerone-foto { width: 73%; }
+
     .day-banda { margin-left: -1.8cm; margin-right: -1.8cm; margin-bottom: 10px;
                  page-break-inside: avoid; }
     .day-banda .didascalia { font-size: 8px; color: #98a4b0;
@@ -1327,13 +1490,20 @@ _RAPPORTO_FASCIA = 3.2
 # rimandi interni non passano piu' di li': toglierlo cambierebbe il
 # comportamento del motore su un documento che gia' funziona, e non abbiamo
 # modo di provare qui che cosa succede. Si tocca una cosa alla volta.
+#
+# [TOLTO IL PIEDE 2026-08-15 — task #217] Qui c'era
+# `--footer-center "[page] / [topage]"`, e scriveva una cosa falsa: il motore
+# di stampa vede UN file per volta, quindi su un fascicolo di ventisei pagine
+# stampava «1 / 12» — il totale dell'itinerario da solo, prima che le guide
+# gli venissero cucite dietro. E le pagine delle guide, stampate a parte,
+# restavano senza numero.
+#
+# I numeri li mette adesso `fascicolo.numera()`, sul documento finito, quando
+# il totale e' finalmente quello vero.
 COMANDO_STAMPA = (
     "wkhtmltopdf", "--quiet",
     "--enable-internal-links",
     "--outline",
-    "--footer-center", "[page] / [topage]",
-    "--footer-font-size", "8",
-    "--footer-spacing", "5",
 )
 
 
@@ -1375,6 +1545,107 @@ def _anchor(name: str) -> str:
         f"<span id='{safe}' class='anchor-probe'>"
         f"<a href='{_ANCHOR_PROBE_PREFIX}{safe}'>&#160;</a></span>"
     )
+
+
+# --------------------------------------------------------------------------
+# LE TESTATE DEI CAPITOLI (task #216)
+#
+# I capitoli di RACCONTO — quelli per cui il cliente ha pagato: il colpo
+# d'occhio, la selezione, il programma, le guide — chiedono l'apertura piu'
+# decisa. Gli altri raccontano meno e si consultano di piu' (i costi si
+# confrontano col proprio budget, la valigia si spunta la sera prima): li'
+# una testata spettacolare non aggiunge, toglie spazio alla tabella.
+#
+# La distinzione sta QUI e non dentro `compositore.py` di proposito: il
+# compositore sa comporre pagine, non sa quali capitoli abbia questo prodotto.
+# --------------------------------------------------------------------------
+CAPITOLI_DI_RACCONTO = frozenset(
+    {"colpo-docchio", "selezione", "giorno-per-giorno", "guide"}
+)
+
+
+def _titolo_capitolo(nome: str, testo: str, con_ancora: bool = True) -> str:
+    """Il titolo di un capitolo, marcato perche' la passata finale lo trovi.
+
+    Il marcatore e' un attributo e non una classe in piu' per una ragione
+    misurata: mezza dozzina di prove cercano nell'HTML la stringa esatta
+    `class='section-title'`, e una classe aggiunta le avrebbe fatte diventare
+    verdi senza piu' guardare niente — che e' il modo peggiore in cui una
+    prova puo' rompersi, perche' non lo dice.
+
+    `con_ancora=False` per i due capitoli la cui ancora e' gia' stampata
+    poco sopra, fuori dal titolo: due ancore con lo stesso nome sarebbero due
+    `id` uguali nella stessa pagina, e il salto interno finirebbe su quella
+    sbagliata.
+    """
+    ancora = _anchor(nome) if con_ancora else ""
+    return f"<div class='section-title' data-capitolo='{_esc(nome)}'>{ancora}{testo}</div>"
+
+
+# Un titolo di capitolo marcato da `_titolo_capitolo()`. Non puo' pescare i
+# titoli di sezione normali (Shopping, Cosa fare, Come arrivare): quelli
+# l'attributo non ce l'hanno, ed e' esattamente la distinzione che serve.
+_RE_TITOLO_DI_CAPITOLO = re.compile(
+    r"<div class='section-title' data-capitolo='([^']*)'>(.*?)</div>", re.S
+)
+
+
+def _disegna_testata(modo: str, nome: str, dentro: str, numero: int) -> str:
+    """Il vestito di UNA testata. Quattro modi, tutti fatti degli stessi pezzi.
+
+    Non c'e' un `else` che ricade su un modo qualunque: se il compositore
+    inventasse un nome nuovo si vedrebbe subito, mentre una ricaduta muta lo
+    nasconderebbe e il documento uscirebbe con dieci testate uguali senza che
+    nessuna prova diventi rossa.
+    """
+    occhiello = f"<div class='cap-occhiello'>Capitolo {numero}</div>"
+    titolo = f"<div class='section-title' data-capitolo='{_esc(nome)}'>{dentro}</div>"
+    if modo == "fascia":
+        return f"<div class='cap cap-fascia'>{occhiello}{titolo}</div>"
+    if modo == "laterale":
+        return f"<div class='cap cap-laterale'>{occhiello}{titolo}</div>"
+    if modo == "blocco":
+        return (f"<div class='cap cap-blocco'><div class='cap-linguetta'></div>"
+                f"{titolo}</div>")
+    if modo == "numero":
+        return (f"<table class='cap cap-numero'><tr>"
+                f"<td class='cap-cifra'>{numero:02d}</td>"
+                f"<td>{titolo}</td></tr></table>")
+    raise ValueError(f"testata sconosciuta: {modo!r}")
+
+
+def _testate_dei_capitoli(documento: str, chiave: str) -> str:
+    """Passata finale: veste ogni capitolo, mai due di fila allo stesso modo.
+
+    [AGGIUNTA 2026-08-15 — task #216.]
+
+    PERCHE' UNA PASSATA SUL DOCUMENTO FINITO e non una decorazione scritta in
+    ognuno degli undici punti che stampano un titolo: perche' la scelta
+    dipende dal capitolo PRECEDENTE, e il capitolo precedente non e' una cosa
+    che un punto del codice conosce — dipende da quali sezioni sono uscite,
+    che cambia da viaggio a viaggio (senza alberghi non c'e' "Il tuo
+    alloggio", senza guide stampate non c'e' "Guide turistiche"). Passando di
+    qui i capitoli si contano nell'ordine vero in cui stanno sulla carta, che
+    e' anche l'unico ordine in cui «mai due di fila uguali» vuol dire
+    qualcosa.
+
+    E' lo stesso rimedio gia' usato per i paragrafi (`_tieni_uniti_i_paragrafi`):
+    vale anche per i capitoli che verranno aggiunti domani, senza doversene
+    ricordare.
+    """
+    stato = {"numero": 0, "precedente": None}
+
+    def _sostituisci(m: "re.Match[str]") -> str:
+        nome, dentro = m.group(1), m.group(2)
+        stato["numero"] += 1
+        modo = compositore.testata(
+            chiave, nome, stato["precedente"],
+            forte=nome in CAPITOLI_DI_RACCONTO,
+        )
+        stato["precedente"] = modo
+        return _disegna_testata(modo, nome, dentro, stato["numero"])
+
+    return _RE_TITOLO_DI_CAPITOLO.sub(_sostituisci, documento)
 
 
 def _render_guide_foto(guide: dict, photos: dict | None) -> str:
@@ -1572,7 +1843,8 @@ def _render_feedback_section(feedback: dict | None, feedback_link: dict | None =
         return ""
     parts = [
         "<div class='page-break'>",
-        "<div class='section-title'>Facci sapere com'è andata</div>",
+        _titolo_capitolo("recensione", "Facci sapere com'è andata",
+                         con_ancora=False),
     ]
     if feedback.get("intro_message"):
         parts.append(f"<div class='summary-box'>{_esc(feedback['intro_message'])}</div>")
@@ -1917,7 +2189,9 @@ def _render_at_a_glance(
         return ""
 
     parts = ["<div class='at-a-glance-page'>"]
-    parts.append("<div class='section-title'>Il tuo viaggio, a colpo d'occhio</div>")
+    parts.append(_titolo_capitolo("colpo-docchio",
+                                  "Il tuo viaggio, a colpo d'occhio",
+                                  con_ancora=False))
 
     if png:
         b64 = base64.b64encode(png).decode("ascii")
@@ -2400,8 +2674,10 @@ def _render_cover(
     if trip.get("date_start") and trip.get("date_end"):
         strip.append(("Quando", _periodo_leggibile(
             trip.get("date_start"), trip.get("date_end"))))
-    if trip.get("duration_days"):
-        strip.append(("Quanto dura", f"{trip.get('duration_days')} giorni"))
+    # [TOLTA DA QUI 2026-08-15 — task #218] La durata la dice il bollo tondo
+    # dentro il blocco della copertina, sei centimetri piu' in alto. La stessa
+    # informazione due volte sulla stessa pagina non rassicura: fa venire il
+    # dubbio che siano due cose diverse lette male.
 
     # --- Indice: colonne e bilanciamento, calcolati PRIMA di stampare ------
     # Servono qui in cima perché la loro altezza decide quanto respiro può
@@ -2500,14 +2776,54 @@ def _render_cover(
             # questo progetto, e vale a maggior ragione per la prima pagina.
             apertura = ""
 
+    # [RIFATTA 2026-08-15 — task #218] La testata della copertina: un blocco
+    # di colore pieno, la fotografia tonda del posto a sinistra, il bollo con
+    # la durata a destra. E' il pezzo del prototipo che Lorenzo aveva
+    # approvato e che il documento vero non aveva mai avuto.
+    #
+    # SOSTITUISCE il titolo che c'era, non si aggiunge: il blocco e' alto piu'
+    # o meno quanto le quattro righe di prima, quindi la copertina resta di
+    # UNA pagina. Non e' un dettaglio — la copertina che sborda sulla seconda
+    # pagina e' un difetto gia' visto due volte in questo progetto, e la
+    # seconda volta e' comparso proprio aggiungendo un'immagine.
+    tonda = ""
+    if foto_copertina:
+        try:
+            ritagliata = foto.ritaglia_tondo(foto_copertina[0])
+            if ritagliata:
+                b64_tonda = base64.b64encode(ritagliata).decode("ascii")
+                tonda = ("<td class='cover-tonda'>"
+                         f"<img src='data:{foto.mime_immagine(ritagliata)};"
+                         f"base64,{b64_tonda}' alt=''/></td>")
+        except (TypeError, ValueError, AttributeError):
+            # Il ritaglio tondo si fa sui PIXEL e non con gli angoli
+            # arrotondati del foglio di stile: quelli, con questo motore di
+            # stampa, danno una figura mezza tonda e mezza quadrata. Se anche
+            # il ritaglio vero non riesce, si resta senza — mai con la figura
+            # sbagliata.
+            tonda = ""
+    giorni = str(trip.get("duration_days") or "").strip()
+    bollo = ""
+    if giorni:
+        bollo = ("<td class='cover-bollo-cella'><div class='cover-bollo'>"
+                 f"<div class='cover-bollo-n'>{_esc(giorni)}</div>"
+                 f"<div class='cover-bollo-t'>giorni</div></div></td>")
+
     parts = [
         f"<div class='cover{density}'>",
         apertura,
         "<div class='cover-hero'>",
+        "<div class='cover-blocco'><table class='cover-blocco-t'><tr>",
+        tonda,
+        "<td class='cover-blocco-testo'>",
         "<div class='cover-kicker'>Itinerario su misura</div>",
         f"<h1 class='cover-title'>{_esc(destination)}</h1>",
         "<div class='cover-rule'></div>",
-        "<div class='cover-sub'>Progettato attorno al tuo ritmo, ai tuoi orari e al tuo budget.</div>",
+        "<div class='cover-sub'>Progettato attorno al tuo ritmo, ai tuoi orari "
+        "e al tuo budget.</div>",
+        "</td>",
+        bollo,
+        "</tr></table></div>",
     ]
     if strip:
         parts.append("<table class='cover-hero-strip'><tr>")
@@ -3212,6 +3528,43 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
         if len(celle) >= 3:
             pezzi.append("<table class='day-striscia'><tr>" + "".join(celle)
                          + "</tr></table>")
+        else:
+            scelta = "banda"
+
+    # --- le due aperture a COLONNE (task #219) ----------------------------
+    # Dividono in colonne l'apertura, non la giornata: sotto, titolo, cartina
+    # e programma restano impilati come sempre. Affiancare, con questo motore
+    # di stampa, si fa solo con le tabelle — `float` e `flex` li ignora in
+    # silenzio, e il risultato sarebbe la colonna stretta SOTTO quella larga.
+    if scelta == "eroe-laterale":
+        grande = _figura(disponibili[0][0],
+                         "style='width:100%; display:block;'", 1.25)
+        piccola = (_figura(disponibili[1][0],
+                           "style='width:100%; display:block;'", 1.0)
+                   if len(disponibili) >= 2 else "")
+        if grande and piccola:
+            pezzi.append(
+                "<table class='day-eroe'><tr>"
+                f"<td class='day-eroe-grande'>{grande}</td>"
+                f"<td class='day-eroe-lato'>{piccola}</td>"
+                "</tr></table>")
+        else:
+            scelta = "banda"
+
+    if scelta == "numero-gigante":
+        figura = _figura(disponibili[0][0],
+                         "style='width:100%; display:block;'", 1.7)
+        if figura:
+            try:
+                cifra = f"{int(giorno_numero):02d}"
+            except (TypeError, ValueError):
+                cifra = str(giorno_numero or "")
+            pezzi.append(
+                "<table class='day-numerone'><tr>"
+                f"<td class='day-numerone-cifra'>{_esc(cifra)}"
+                "<div class='day-numerone-e'>giorno</div></td>"
+                f"<td class='day-numerone-foto'>{figura}</td>"
+                "</tr></table>")
         else:
             scelta = "banda"
 
@@ -4307,7 +4660,7 @@ def render_html(
         date_start = trip.get("date_start", "")
         date_end = trip.get("date_end", "")
         parts.append(
-            f"<div class='section-title'>{_anchor('alloggio')}Il tuo alloggio</div>"
+            _titolo_capitolo("alloggio", "Il tuo alloggio")
         )
         # [AGGIUNTO 2026-08-02 — difetto visto rigenerando il campione] Qui si
         # stampavano due strutture una sotto l'altra, identiche nel peso
@@ -4379,7 +4732,16 @@ def render_html(
         parts.append("</div>")
 
     if curated_html:
-        parts.append(f"<div>{_anchor('selezione')}</div>")
+        # [CORRETTO 2026-08-15 — task #216] Qui c'era la sola ancora: il
+        # capitolo esisteva in indice e sulla pagina no. Chi arrivava dal
+        # sommario atterrava su "Dove mangiare" senza aver mai letto il titolo
+        # del capitolo in cui era finito.
+        parts.append(_titolo_capitolo(
+            "selezione", "La selezione: dove mangiare, cosa fare"))
+        parts.append(
+            "<div class='section-intro'>Locali e luoghi scelti fra quelli davvero "
+            "aperti e recensiti nella tua destinazione, non da una lista generica.</div>"
+        )
         parts.append(curated_html)
 
     poi_energy = _build_poi_energy_lookup(poi)
@@ -4392,9 +4754,9 @@ def render_html(
         # Titolo e occhiello viaggiano insieme dentro il guscio: nel campione
         # questo titolo cadeva da solo sull'ultima riga di pagina 3.
         parts.append(_keep_together(
-            f"<div class='section-title'>{_anchor('giorno-per-giorno')}"
-            "Il programma, giorno per giorno</div>"
-            "<div class='section-intro'>Ogni giornata ha la sua cartina con le tappe numerate "
+            _titolo_capitolo("giorno-per-giorno",
+                             "Il programma, giorno per giorno")
+            + "<div class='section-intro'>Ogni giornata ha la sua cartina con le tappe numerate "
             "nell'ordine di visita, la legenda che spiega ogni indicatore, e i tragitti "
             "spostamento per spostamento con il percorso già pronto da aprire.</div>"
             # [AGGIUNTO 2026-08-03 — task #180] Il criterio sta QUI, dentro lo
@@ -4692,8 +5054,7 @@ def render_html(
 
     if costs_html:
         parts.append(
-            f"<div class='section-title'>{_anchor('costi')}"
-            "Stima dei costi e dettaglio budget</div>"
+            _titolo_capitolo("costi", "Stima dei costi e dettaglio budget")
         )
         parts.append(
             "<div class='section-intro'>Calcolata sui prezzi e sulle fasce di prezzo reali dei "
@@ -4706,8 +5067,8 @@ def render_html(
         # usa anche src/renderer.py per l'output markdown): resta, con la
         # traduzione accanto perché il documento è per un cliente italiano.
         parts.append(
-            f"<div class='section-title'>{_anchor('consigli')}"
-            "Architect's Tips — i consigli dell'Architetto</div>"
+            _titolo_capitolo(
+                "consigli", "Architect's Tips — i consigli dell'Architetto")
         )
         parts.append(
             "<div class='section-intro'>Consigli legati a questo itinerario e a queste date — "
@@ -4717,7 +5078,7 @@ def render_html(
 
     if rain_html:
         parts.append(
-            f"<div class='section-title'>{_anchor('piani-b')}Piani B: se piove</div>"
+            _titolo_capitolo("piani-b", "Piani B: se piove")
         )
         parts.append(
             "<div class='section-intro'>Alternative al chiuso scelte tra i luoghi reali già "
@@ -4728,8 +5089,7 @@ def render_html(
 
     if guide_stampate:
         parts.append(
-            f"<div class='section-title'>{_anchor('guide')}"
-            "Guide turistiche tascabili</div>"
+            _titolo_capitolo("guide", "Guide turistiche tascabili")
         )
         parts.append(
             "<div class='section-intro'>Una scheda per ogni luogo del programma: cosa stai "
@@ -4762,8 +5122,7 @@ def render_html(
     # sull'ultima pagina di tutte — la si legge a viaggio finito.
     if predeparture_html:
         parts.append(
-            f"<div class='section-title'>{_anchor('prima-di-partire')}"
-            "Prima di partire</div>"
+            _titolo_capitolo("prima-di-partire", "Prima di partire")
         )
         parts.append(
             "<div class='section-intro'>La lista della sera prima: quello che, se manca, "
@@ -4774,8 +5133,8 @@ def render_html(
 
     if vademecum_html:
         parts.append(
-            f"<div class='section-title'>{_anchor('vademecum')}"
-            "Vademecum: clima, valigia, bagagli</div>"
+            _titolo_capitolo("vademecum",
+                             "Vademecum: clima, valigia, bagagli")
         )
         parts.append(
             "<div class='section-intro'>Il clima tipico di queste date in questa destinazione, "
@@ -4822,7 +5181,15 @@ def render_html(
     # collegata: servira' quando si sapra' tenere insieme il titolo SOLO se
     # cade nell'ultimo quarto di pagina, che e' l'informazione che questo
     # motore di stampa non ci da'.
-    return _tieni_uniti_i_paragrafi("".join(parts))
+    # [AGGIUNTA 2026-08-15 — task #216] Le testate dei capitoli si vestono
+    # PRIMA della passata sui paragrafi, e non dopo: quella avvolge in un
+    # guscio ogni blocco di prosa corto, e una testata gia' vestita non e' piu'
+    # un blocco di prosa. L'ordine inverso funzionerebbe lo stesso oggi e
+    # smetterebbe di funzionare il giorno in cui una testata contiene una riga
+    # di testo — cioe' senza che nessuno se ne accorga.
+    return _tieni_uniti_i_paragrafi(
+        _testate_dei_capitoli("".join(parts), str(destination or ""))
+    )
 
 
 def render_pdf(
@@ -5067,6 +5434,14 @@ def render_pdf(
                     f"errore={resoconto.get('errore')}"
                 )
         else:
+            # [AGGIUNTO 2026-08-15 — task #217] Anche il documento senza
+            # capitoli vuole i suoi numeri: senza questa riga, un itinerario
+            # corto (nessuna guida stampata, nessun allegato) sarebbe l'unico
+            # documento del prodotto a uscire senza numeri di pagina — e
+            # sarebbe un difetto che compare solo su certi ordini, cioe' il
+            # tipo che non si trova mai.
+            Path(tmp_pdf_path).write_bytes(
+                fascicolo.numera(Path(tmp_pdf_path).read_bytes()))
             link_report = pdf_links.repair_internal_links(tmp_pdf_path)
 
         if isinstance(resoconto_collegamenti, dict):
