@@ -195,11 +195,23 @@ class TestRenderPredeparture(unittest.TestCase):
         self.assertEqual(_render_predeparture({"country": None, "checklist": []}), "")
 
     def test_il_numero_di_emergenza_e_evidenziato(self):
-        html = _render_predeparture(
-            predeparture.build_predeparture(FakeTrip("Italia"), ITINERARIO)
-        )
-        self.assertIn("emergency", html)
-        self.assertIn("112", html)
+        """[SPOSTATO 2026-08-15 — task #220, e la prova si e' spostata con lui.]
+
+        Il numero di emergenza NON sta piu' qui: sta nel capitolo «Numeri
+        utili», in fondo al documento. La ragione e' il momento della lettura
+        — questa e' la lista che si legge la sera prima di partire, il numero
+        di emergenza si cerca mentre si e' in giro — e vale la pena che
+        questa prova lo dica in tutte e due le direzioni: che qui non c'e'
+        piu', e che di la' c'e'. Lasciarlo in tutti e due i posti sarebbe
+        stato il modo piu' rapido di peggiorare credendo di migliorare.
+        """
+        from src.pdf_renderer import _render_numeri_utili
+
+        dati = predeparture.build_predeparture(FakeTrip("Italia"), ITINERARIO)
+        self.assertNotIn("112", _render_predeparture(dati))
+        altrove = _render_numeri_utili(dati)
+        self.assertIn("emergency", altrove)
+        self.assertIn("112", altrove)
 
     def test_le_caselle_sono_disegnate_non_caratteri_unicode(self):
         """I glifi di casella non esistono nei font del renderer: uscirebbero
@@ -215,7 +227,12 @@ class TestRenderPredeparture(unittest.TestCase):
         html = _render_predeparture(
             predeparture.build_predeparture(FakeTrip("Italia"), ITINERARIO)
         )
-        self.assertEqual(html.count("<table class='check-row'>"), html.count("</table>") - 1)
+        # [CORRETTO 2026-08-15] Prima c'era un `- 1`: teneva conto della
+        # tabella della scheda del paese, che stava in cima a questa sezione.
+        # Da quando la scheda vive nel suo capitolo, qui le tabelle sono
+        # tutte e sole le voci della lista.
+        self.assertEqual(html.count("<table class='check-row'>"),
+                         html.count("</table>"))
 
     def test_testo_pericoloso_viene_neutralizzato(self):
         html = _render_predeparture({
