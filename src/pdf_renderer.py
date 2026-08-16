@@ -115,6 +115,33 @@ def _strip_broken_emoji_sequences(text: str) -> str:
     return text
 
 
+def _in_rgb(colore, predefinito=(255, 255, 255)):
+    """`#a1b2c3` -> `(161, 178, 195)`. Il predefinito se non si legge."""
+    testo = str(colore or "").strip().lstrip("#")
+    if len(testo) != 6:
+        return predefinito
+    try:
+        return tuple(int(testo[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return predefinito
+
+
+def _credito(testo: str) -> str:
+    """La didascalia di una fotografia, senza il prefisso raddoppiato.
+
+    [CORRETTO 2026-08-15 — visto sul documento vero.] Sul fascicolo di Bologna
+    si leggeva **«Foto: Foto: Fred Romero from Paris, France / Wikimedia
+    Commons / CC BY 2.0»**: il credito che arriva da Wikimedia comincia gia'
+    con «Foto:», e qui davanti ce ne mettevamo un altro. Sembra una svista di
+    chi ha scritto il documento a mano, che su un prodotto venduto e' peggio
+    di un difetto tecnico.
+    """
+    pulito = str(testo or "").strip()
+    while pulito.lower().startswith("foto:"):
+        pulito = pulito[len("foto:"):].strip()
+    return f"Foto: {_esc(pulito)}" if pulito else ""
+
+
 def _esc(text) -> str:
     """Escape HTML di base per qualunque testo proveniente da dati
     esterni (destinazione, nomi hotel/POI, note del cliente, testo
@@ -1246,6 +1273,21 @@ _CSS_MODELLO = """
     }
     .section-intro { font-size: 11px; color: #6b7a89; margin: -4px 0 10px 0; }
 
+    /* [AGGIUNTA 2026-08-15 — difetto visto da Lorenzo sul documento vero: «i
+       crediti delle foto mettili in piccolo non cosi' in grosso che sono
+       ingombranti».]
+       Aveva ragione e la causa era mia: il credito era rimpicciolito da una
+       regola per ogni tipo di fotografia — `.day-banda .didascalia`,
+       `.day-larga .didascalia`, e cosi' via — quindi le due aperture nuove,
+       che non avevano la loro riga, si prendevano il corpo del testo: tredici
+       punti sotto una fotografia, due righe di credito piu' grandi della
+       didascalia di una cartina.
+       Questa regola vale OVUNQUE e per quelle che verranno: le altre restano
+       e la specializzano dove serve. Una regola generale al posto di sette
+       casi e' anche il modo di non doverlo riscoprire al prossimo giro. */
+    .didascalia { font-size: 8px; color: #98a4b0; margin-top: 2px;
+                  line-height: 1.35; }
+
     /* --- Testate dei capitoli (task #216) --------------------------------
        [AGGIUNTE 2026-08-15] Fino a ieri tutti e undici i capitoli si aprivano
        con la stessa riga: carattere con le grazie e un filetto sotto. Su un
@@ -1635,7 +1677,7 @@ def _disegna_testata(modo: str, nome: str, dentro: str, numero: int,
     raise ValueError(f"testata sconosciuta: {modo!r}")
 
 
-def _testate_dei_capitoli(documento: str, chiave: str, a_capo=()) -> str:
+def _testate_dei_capitoli(documento: str, chiave: str, a_capo=None) -> str:
     """Passata finale: veste ogni capitolo, mai due di fila allo stesso modo.
 
     [AGGIUNTA 2026-08-15 — task #216.]
@@ -1664,8 +1706,23 @@ def _testate_dei_capitoli(documento: str, chiave: str, a_capo=()) -> str:
             forte=nome in CAPITOLI_DI_RACCONTO,
         )
         stato["precedente"] = modo
+        # [CAMBIATO 2026-08-15 — richiesta di Lorenzo, la seconda volta:
+        # «l'impaginazione gestiamola come avevamo detto», «cerca di fare
+        # terminare i capitoli a fine pagina».]
+        #
+        # Prima si mandava a capo solo il capitolo la cui testata era caduta
+        # in fondo al foglio. Riparava il caso peggiore e lasciava tutto il
+        # resto come prima — cioe' capitoli che cominciano a meta' pagina,
+        # che e' quello che Lorenzo continua a vedere e a non volere.
+        #
+        # Adesso OGNI capitolo comincia su una pagina nuova, tranne il primo
+        # (spostarlo aprirebbe il documento con un foglio bianco). Si paga in
+        # bianco a fondo pagina, ed e' una scelta sua: un documento che si
+        # sfoglia per capitoli invece che un flusso continuo.
         return _disegna_testata(modo, nome, dentro, stato["numero"],
-                                a_capo=nome in (a_capo or ()))
+                                a_capo=(stato["numero"] > 1
+                                        if a_capo is None
+                                        else nome in (a_capo or ())))
 
     return _RE_TITOLO_DI_CAPITOLO.sub(_sostituisci, documento)
 
@@ -2629,6 +2686,7 @@ def _render_cover(
     # alla copertina. `None` = copertina come prima: un documento senza
     # immagini non deve peggiorare, deve solo restare quello di ieri.
     foto_copertina: tuple[bytes, str] | None = None,
+    colore_del_blocco: str = "",
 ) -> str:
     """Prima pagina dedicata: il documento che il cliente riceve dopo aver
     pagato deve *sembrare* un prodotto, non l'output di uno script. È
@@ -2787,7 +2845,7 @@ def _render_cover(
             byte_foto = foto.ritaglia_panoramica(byte_foto, _RAPPORTO_FASCIA) or byte_foto
             b64 = base64.b64encode(byte_foto).decode("ascii")
             tipo = foto.mime_immagine(byte_foto)
-            didascalia = (f"<div class='didascalia'>Foto: {_esc(credito)}</div>"
+            didascalia = (f"<div class='didascalia'>{_credito(credito)}</div>"
                           if str(credito or "").strip() else "")
             apertura = (f"<div class='cover-foto'>"
                         f"<img src='data:{tipo};base64,{b64}' alt=''/>"
@@ -2811,7 +2869,12 @@ def _render_cover(
     tonda = ""
     if foto_copertina:
         try:
-            ritagliata = foto.ritaglia_tondo(foto_copertina[0])
+            # Il fondo del cerchio deve essere il colore del blocco, non
+            # bianco: sopra un blocco pieno un fondo bianco disegna un
+            # quadrato attorno alla foto. Difetto visto da Lorenzo sul
+            # documento vero, 15 agosto.
+            ritagliata = foto.ritaglia_tondo(
+                foto_copertina[0], sfondo_rgb=_in_rgb(colore_del_blocco))
             if ritagliata:
                 b64_tonda = base64.b64encode(ritagliata).decode("ascii")
                 tonda = ("<td class='cover-tonda'>"
@@ -3505,7 +3568,7 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
             return ""
         tipo = foto.mime_immagine(ritagliata)
         return (f"<img src='data:{tipo};base64,{b64}' alt='' {larghezza_html}>"
-                f"<div class='didascalia'>Foto: {_esc(credito)}</div>")
+                f"<div class='didascalia'>{_credito(credito)}</div>")
 
     def _tonda(scatto):
         png = scatto.get("png") if isinstance(scatto, dict) else None
@@ -3522,7 +3585,7 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
         except (TypeError, ValueError):
             return ""
         return (f"<div class='day-tonda'><img src='data:image/png;base64,{b64}' "
-                f"alt=''><div class='didascalia'>Foto: {_esc(credito)}</div></div>")
+                f"alt=''><div class='didascalia'>{_credito(credito)}</div></div>")
 
     pezzi = []
 
@@ -4541,7 +4604,7 @@ def render_html(
     # pagina nuova, decisi MISURANDO la prima stampa (vedi
     # `src/impaginazione.py`). Vuoto = documento che scorre, cioe' il
     # comportamento di sempre.
-    capitoli_a_capo=(),
+    capitoli_a_capo=None,
 ) -> str:
     """
     Funzione pura (nessuna chiamata di rete/subprocess) — costruisce
@@ -4807,6 +4870,10 @@ def render_html(
                 for e in directions_by_day.values() if isinstance(e, dict)
             ),
             foto_copertina=_foto_di_apertura(days, photos),
+            # Il colore su cui atterra la fotografia tonda. Senza, il cerchio
+            # esce con un quadrato bianco attorno: difetto visto da Lorenzo
+            # sul fascicolo di Bologna.
+            colore_del_blocco=_tav.completa(tinte).get("primario"),
         ),
         "<div class='header'>",
         f"<h1>Itinerario Ottimizzato: {destination}</h1>",
@@ -5594,11 +5661,13 @@ def render_pdf(
         # non converge — sposta il problema di un capitolo ogni volta — e
         # costerebbe secondi di stampa dentro un tetto di tempo che e' gia'
         # stretto.
-        try:
-            da_spostare = impaginazione.capitoli_da_mandare_a_capo(
-                Path(tmp_pdf_path).read_bytes(), CAPITOLI_DEL_DOCUMENTO)
-        except Exception:
-            da_spostare = set()
+        # [SPENTA 2026-08-15] La seconda stampa serviva a scovare le testate
+        # cadute in fondo al foglio. Da quando OGNI capitolo comincia su una
+        # pagina nuova non ne resta nessuna, quindi la seconda stampa non
+        # troverebbe mai niente e costerebbe solo tempo. `src/impaginazione.py`
+        # resta: e' il modo di MISURARE dove cadono i capitoli, e serve ogni
+        # volta che si vuole verificare che la regola stia funzionando.
+        da_spostare = set()
         if da_spostare:
             with open(tmp_html_path, "w", encoding="utf-8") as rifatto:
                 rifatto.write(_componi(da_spostare))

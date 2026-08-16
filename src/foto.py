@@ -602,8 +602,9 @@ def sfuma_in_basso(grezzi: bytes, quota: float = 0.62,
         return None
 
 
-def ritaglia_tondo(grezzi: bytes, lato: int = 460) -> bytes | None:
-    """La stessa foto dentro un cerchio, su fondo bianco. `None` se non si legge.
+def ritaglia_tondo(grezzi: bytes, lato: int = 460,
+                   sfondo_rgb=(255, 255, 255)) -> bytes | None:
+    """La stessa foto dentro un cerchio. `None` se non si legge.
 
     [AGGIUNTO 2026-08-13 — task #213] Misurato sul motore di stampa: il
     ritaglio tondo via CSS (`border-radius` piu' `overflow: hidden` sul
@@ -615,8 +616,22 @@ def ritaglia_tondo(grezzi: bytes, lato: int = 460) -> bytes | None:
     prima di renderla tonda: partendo dall'angolo si taglierebbe via meta' del
     soggetto, che nelle fotografie di viaggio sta quasi sempre al centro.
 
-    Fondo bianco invece che trasparente: il documento va su carta bianca, un
-    PNG con canale alfa pesa di piu' e su certi lettori si annerisce.
+    IL COLORE DEL FONDO VA DETTO DA CHI CHIAMA.
+
+    [CORRETTO 2026-08-15 — difetto visto da Lorenzo sul documento vero: «in
+    copertina se fai il cerchio togli la forma del quadrato bianco dietro che
+    e' molto brutto».]
+
+    Aveva ragione e il difetto era mio: il fondo era bianco fisso, e in
+    copertina il cerchio sta **sopra un blocco di colore pieno**. Risultato:
+    un quadrato bianco attorno alla foto tonda, cioe' esattamente la cosa che
+    il ritaglio tondo doveva evitare.
+
+    Non si usa la trasparenza — un PNG con canale alfa pesa di piu' e su certi
+    lettori si annerisce, e questo documento e' gia' stato morso da una
+    differenza fra motori. Si passa invece il colore su cui la figura andra' a
+    finire: cosi' gli angoli scompaiono davvero, su qualunque fondo, e senza
+    chiedere niente al motore di stampa.
     """
     try:
         from PIL import Image, ImageDraw
@@ -639,7 +654,13 @@ def ritaglia_tondo(grezzi: bytes, lato: int = 460) -> bytes | None:
             ).resize((lato, lato))
             maschera = Image.new("L", (lato, lato), 0)
             ImageDraw.Draw(maschera).ellipse((0, 0, lato - 1, lato - 1), fill=255)
-            sfondo = Image.new("RGB", (lato, lato), (255, 255, 255))
+            try:
+                colore = tuple(int(c) for c in (sfondo_rgb or (255, 255, 255)))[:3]
+                if len(colore) != 3:
+                    colore = (255, 255, 255)
+            except (TypeError, ValueError):
+                colore = (255, 255, 255)
+            sfondo = Image.new("RGB", (lato, lato), colore)
             sfondo.paste(quadrata, (0, 0), maschera)
             fuori = io.BytesIO()
             sfondo.save(fuori, format="PNG", optimize=True)
