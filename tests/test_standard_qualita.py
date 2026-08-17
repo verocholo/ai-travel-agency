@@ -975,21 +975,11 @@ class TestLaCartaNonRestaMezzaVuota(unittest.TestCase):
             f"funzionano {saltano}: qualcuno è tornato a essere solo testo blu",
         )
         bersagli = len(set(pdf_links.RIFERIMENTI_NELL_HTML.findall(_documento())))
-        # [AGGIUNTO 2026-08-16 — task #223] Da oggi non tutti i segnaposto
-        # sono bersagli di un rimando cliccabile: `giorno-{N}-fine` è una
-        # sonda di sola MISURA — dice a `src/impaginazione.py` dove finisce
-        # una giornata, e nessun `href` la richiama mai, di proposito (vedi
-        # `src/pdf_renderer.py`, dove viene seminata). Il conteggio qui sotto
-        # va ampliato di quelle sonde, altrimenti questo controllo — che
-        # difende una cosa vera, i collegamenti cliccabili — griderebbe al
-        # difetto per una sonda che non e' mai stata un collegamento.
-        sonde_di_sola_misura = len(re.findall(r"id='giorno-\d+-fine'", _documento()))
         self.assertEqual(
-            bersagli + sonde_di_sola_misura, senza_destinazione,
+            bersagli, senza_destinazione,
             f"i segnaposto di atterraggio sono {senza_destinazione} per "
-            f"{bersagli} bersagli distinti piu' {sonde_di_sola_misura} sonde "
-            "di sola misura: se non coincidono, qualche àncora non è stata "
-            "piazzata dove il rimando la cerca",
+            f"{bersagli} bersagli distinti: se non coincidono, qualche àncora "
+            f"non è stata piazzata dove il rimando la cerca",
         )
 
 

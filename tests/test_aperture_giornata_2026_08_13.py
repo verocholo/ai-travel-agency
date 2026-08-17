@@ -137,57 +137,55 @@ class TestLaVarietaArrivaDAVVERONELDOCUMENTO(unittest.TestCase):
                          _aperture(_documento(giorni=6)))
 
 
-class TestOgniGiornataHaLeSueFotografie(unittest.TestCase):
-    """Richiesta secca di Lorenzo. La garanzia e' costruita, non dichiarata."""
+class TestUnaFotografiaSTANELLAPAGINADICUIPARLA(unittest.TestCase):
+    """[RIBALTATA IL 16 AGOSTO. La versione vecchia difendeva l'errore.]
 
-    def test_una_giornata_senza_foto_proprie_resta_illustrata(self):
-        """Il caso vero: per quelle tappe Google non ha restituito niente.
+    Questa classe si chiamava «ogni giornata ha le sue fotografie» e
+    verificava che una giornata senza immagini proprie ne ricevesse in
+    prestito da altre tappe. Era la risposta alla richiesta di Lorenzo del 13
+    agosto, e la difesa era che la didascalia dice sempre di che cosa si
+    tratta — quindi niente di falso.
 
-        Al cliente non interessa il perche': vede una pagina spoglia in mezzo
-        a cinque illustrate. Si prende in prestito da un'altra tappa dello
-        stesso viaggio — e la didascalia continua a dire di CHI e' la
-        fotografia e quindi che luogo mostra, perche' la regola di questo
-        prodotto e' che non si inventa niente.
-        """
+    Vera, e non basta. Lorenzo, guardando il fascicolo vero: «le foto sono
+    messe a caso senza alcun ordine (cosa c'entra il tortellino) e si
+    ripetono ancora». Chi sfoglia non legge la didascalia.
+
+    LA REGOLA NUOVA, che questa classe adesso difende: **una fotografia sta
+    nella pagina di cui parla, o non c'e'.** Meglio una pagina senza immagini
+    che una pagina con l'immagine di un'altra cosa.
+    """
+
+    def test_una_giornata_senza_foto_proprie_resta_senza(self):
         aperture = _aperture(_documento(giorni=5, scoperti=(3,)))
-        self.assertEqual(5, len(aperture),
-                         f"una giornata e' rimasta senza apertura: {aperture}")
+        self.assertEqual(4, len(aperture),
+                         f"una giornata scoperta ha ricevuto un prestito: "
+                         f"{aperture}")
 
-    def test_nemmeno_due_giornate_scoperte_restano_spoglie(self):
-        aperture = _aperture(_documento(giorni=6, scoperti=(2, 5)))
-        self.assertEqual(6, len(aperture), aperture)
+    def test_le_giornate_coperte_restano_illustrate(self):
+        # La regola nuova non deve svuotare il documento: le giornate che le
+        # fotografie ce l'hanno le stampano come sempre.
+        self.assertEqual(6, len(_aperture(_documento(giorni=6))))
+
+    def test_nessuna_immagine_di_una_tappa_di_un_altro_giorno(self):
+        """Il controllo che avrebbe preso il tortellino.
+
+        Nella sezione della giornata 2 non deve comparire il credito di una
+        fotografia che appartiene a una tappa di un'altra giornata.
+        """
+        html = _documento(giorni=4)
+        giornate = html.split("class='day-title'")[1:]
+        seconda = next(g for g in giornate if "giorno-2" in g[:200])
+        for altro_giorno in ("Autore P1_", "Autore P3_", "Autore P4_"):
+            with self.subTest(autore=altro_giorno):
+                self.assertNotIn(altro_giorno, seconda)
 
     def test_senza_nessuna_fotografia_il_documento_esce_lo_stesso(self):
-        """Succede se manca la chiave di Google: un guasto di configurazione,
-        non una giornata sfortunata. Un fascicolo che non parte e' peggio di
-        uno senza fotografie."""
+        """Succede se manca la chiave di Google: un guasto di configurazione.
+        Un fascicolo che non parte e' peggio di uno senza fotografie."""
         html = _documento(giorni=3, scoperti=(1, 2, 3))
         self.assertEqual([], _aperture(html))
         self.assertIn("Giornata 1", html)
         self.assertIn("Giornata 3", html)
-
-    def test_la_fotografia_prestata_porta_il_suo_credito(self):
-        # Nessuna immagine senza chi l'ha fatta: vale doppio quando l'immagine
-        # arriva da un'altra tappa.
-        html = _documento(giorni=4, scoperti=(2,))
-        # Si taglia sui TITOLI DI GIORNATA del corpo, non sulla prima
-        # occorrenza del nome: quella sta nell'indice di copertina, e
-        # cercare li' misurerebbe la copertina invece del programma. Ci sono
-        # cascato scrivendo questo file.
-        giornate = html.split("class='day-title'")[1:]
-        seconda = next(g for g in giornate if "giorno-2" in g[:200])
-        # Si guarda TUTTA la sezione, non i primi mille caratteri: la
-        # didascalia sta subito dopo l'immagine, e l'immagine e' un centinaio
-        # di migliaia di caratteri di base64. Una finestra corta qui non
-        # trovava niente e sembrava un difetto del prodotto.
-        self.assertIn("Foto:", seconda,
-                      "la giornata senza fotografie proprie non ha ricevuto "
-                      "nessuna immagine in prestito")
-        # E deve essere una fotografia PRESA IN PRESTITO, cioe' di una tappa
-        # che non e' di questa giornata: se comparisse un autore "P2_*"
-        # vorrebbe dire che le foto proprie c'erano e la prova non sta
-        # misurando il caso che dice di misurare.
-        self.assertNotIn("Autore P2_", seconda)
 
 
 class TestLaBandaEsceDaiMarginiEsattamenteQuantoDeve(unittest.TestCase):

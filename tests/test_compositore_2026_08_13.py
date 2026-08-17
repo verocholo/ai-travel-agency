@@ -264,18 +264,55 @@ class TestOgniGiornataHaLeFotografie(unittest.TestCase):
         self.assertEqual(["a", "b"], avute)
         self.assertEqual("proprie", da_dove)
 
-    def test_senza_le_proprie_si_prendono_in_prestito_dal_viaggio(self):
-        avute, da_dove = compositore.foto_della_giornata([], ["x", "y"], "z", 1)
-        self.assertTrue(avute)
-        self.assertEqual("dal viaggio", da_dove)
+    def test_senza_le_proprie_la_giornata_NON_prende_in_prestito(self):
+        """[RIBALTATA IL 16 AGOSTO, e la vecchia versione difendeva l'errore.]
 
-    def test_le_foto_prestate_ruotano_col_giorno(self):
-        """Prendendo sempre la prima disponibile, tutte le giornate scoperte
-        dello stesso viaggio mostrerebbero la stessa identica immagine — e
-        quello si nota subito."""
-        prime = [compositore.foto_della_giornata([], ["x", "y", "z"], None, g)[0][0]
-                 for g in (1, 2, 3)]
-        self.assertEqual(3, len(set(prime)), prime)
+        Diceva: «senza le proprie si prendono in prestito dal viaggio». Era la
+        regola scritta il 13 agosto per rispondere a «ogni giornata deve avere
+        le foto», e la difesa era che la didascalia dice sempre di che cosa si
+        tratta — quindi nessuna promessa falsa.
+
+        Vera, e non basta. Lorenzo, sul fascicolo vero: «le foto sono messe a
+        caso senza alcun ordine (cosa c'entra il tortellino) e si ripetono
+        ancora». Chi sfoglia non legge la didascalia: vede un tortellino nella
+        pagina delle Due Torri e conclude che il documento mette immagini a
+        caso. E le ripetizioni nascevano proprio qui — le stesse tre immagini
+        prestate a tutte le giornate scoperte.
+
+        LA REGOLA NUOVA: una fotografia sta nella pagina di cui parla, o non
+        c'e'.
+        """
+        scelte, provenienza = compositore.foto_della_giornata(
+            [], ["di un'altra tappa", "e un'altra ancora"], None, 2)
+        self.assertEqual([], scelte)
+        self.assertEqual("nessuna", provenienza)
+
+    def test_resta_la_fotografia_della_destinazione(self):
+        # Non e' un prestito: e' vera per qualunque pagina di quel viaggio, e
+        # non racconta un altro luogo.
+        scelte, provenienza = compositore.foto_della_giornata(
+            [], ["di un'altra tappa"], "della citta'", 2)
+        self.assertEqual(["della citta'"], scelte)
+        self.assertEqual("della destinazione", provenienza)
+
+    def test_niente_prestiti_quindi_niente_rotazione_da_governare(self):
+        """[SOSTITUISCE «le foto prestate ruotano col giorno», 16 agosto.]
+
+        Quella prova difendeva un dettaglio del prestito: che le giornate
+        scoperte non mostrassero tutte la stessa identica immagine. Era una
+        cura per un sintomo del prestito stesso — e col prestito tolto non
+        c'e' piu' niente da ruotare.
+
+        Resta scritta al suo posto perche' il difetto che curava era vero: se
+        un domani qualcuno reintroducesse un prestito, dovra' rileggersi anche
+        quella storia.
+        """
+        for indice in (1, 2, 3, 7):
+            with self.subTest(giorno=indice):
+                scelte, provenienza = compositore.foto_della_giornata(
+                    [], ["prima", "seconda", "terza"], None, indice)
+                self.assertEqual([], scelte)
+                self.assertEqual("nessuna", provenienza)
 
     def test_all_ultimo_gradino_resta_la_destinazione(self):
         avute, da_dove = compositore.foto_della_giornata([], [], "citta", 1)
