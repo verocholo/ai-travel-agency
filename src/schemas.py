@@ -217,15 +217,6 @@ class POI:
     # documento che vendiamo.
     photo_ref: Optional[str] = None
     photo_credit: Optional[str] = None
-    # [AGGIUNTI 2026-08-17 — task #226, richiesta di Lorenzo: «foto diverse,
-    # non usare sempre le solite tre ripetute».] La SECONDA fotografia del
-    # luogo, quando Google ne restituisce piu' di una — stessa logica del
-    # campo sopra, indice diverso. Serve a `src/foto.py` per dare a un
-    # luogo che compare in piu' punti del documento (la sua guida, e le
-    # bande "altre tappe" di altre guide) un'immagine diversa da quella
-    # gia' usata come sua di apertura.
-    photo_ref_2: Optional[str] = None
-    photo_credit_2: Optional[str] = None
 
     @property
     def coord(self) -> str:

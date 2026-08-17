@@ -253,13 +253,27 @@ def foto_della_giornata(proprie, riserva_viaggio, riserva_destinazione,
     """
     if proprie:
         return list(proprie)[:quante], "proprie"
-    if riserva_viaggio:
-        # Si ruota sull'indice della giornata invece di prendere sempre la
-        # prima: altrimenti tutte le giornate scoperte dello stesso viaggio
-        # mostrerebbero la stessa identica immagine, che si nota subito.
-        riserva = list(riserva_viaggio)
-        taglio = (max(1, indice) - 1) % len(riserva)
-        return (riserva[taglio:] + riserva[:taglio])[:quante], "dal viaggio"
+    # [TOLTO IL PRESTITO — 2026-08-16. E' l'annullamento di una decisione mia
+    # del 13 agosto, non la correzione di un difetto.]
+    #
+    # Qui, quando una giornata non aveva fotografie proprie, se ne prendevano
+    # in prestito da ALTRE tappe dello stesso viaggio. La difesa era che la
+    # didascalia dice sempre di che cosa si tratta, quindi non si promette
+    # niente di falso. E' vera, e non basta.
+    #
+    # Lorenzo, guardando il fascicolo vero: «le foto sono messe a caso senza
+    # alcun ordine (cosa c'entra il tortellino) e si ripetono ancora». Ha
+    # ragione due volte. Chi sfoglia non legge la didascalia: vede un
+    # tortellino nella pagina delle Due Torri e conclude che il documento
+    # mette immagini a caso. E le ripetizioni venivano proprio da qui — le
+    # stesse tre immagini prestate a tutte le giornate scoperte.
+    #
+    # LA REGOLA NUOVA: una fotografia sta nella pagina di cui parla, o non
+    # c'e'. Meglio una pagina senza immagini che una pagina con l'immagine di
+    # un'altra cosa.
+    #
+    # Resta la fotografia della DESTINAZIONE, che non e' un prestito: e' vera
+    # per qualunque pagina di quel viaggio, e non racconta un altro luogo.
     if riserva_destinazione:
         return [riserva_destinazione], "della destinazione"
     return [], "nessuna"

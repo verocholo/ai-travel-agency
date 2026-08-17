@@ -511,49 +511,28 @@ def _coerce_rating_count(value) -> int | None:
     return count if count >= 0 else None
 
 
-def _foto_valide(item: dict) -> list:
-    """Le fotografie del luogo che hanno un nome-risorsa valido, nell'ordine
-    di rilevanza in cui Google le restituisce.
+def _photo_ref(item: dict) -> str | None:
+    """Il nome-risorsa della PRIMA foto del luogo, oppure None.
 
-    [ESTRATTA 2026-08-17 — task #226, richiesta di Lorenzo: «foto diverse,
-    non usare sempre le solite tre ripetute».] Prima questa lista si
-    guardava una volta sola, per prendere SOLO la prima fotografia: bastava
-    per la scheda della guida, ma lasciava senza risposta la domanda «e se
-    lo stesso luogo serve una SECONDA immagine altrove nel documento?» — che
-    e' esattamente il caso delle guide che si prestano fotografie a vicenda
-    (`poi_pdf._altre_foto`): con un solo scatto disponibile per luogo, un
-    itinerario di 5-6 tappe mostra la STESSA fotografia di uno stesso posto
-    piu' volte in pagine diverse.
+    La prima e non una a caso: Google restituisce le foto in ordine di
+    rilevanza, e la prima e' quella che vedresti aprendo la scheda del posto.
+    Sceglierne una a caso per "varieta'" significherebbe stampare, ogni tanto,
+    la foto del parcheggio.
     """
     foto = item.get("photos")
     if not isinstance(foto, (list, tuple)):
-        return []
-    return [
-        scatto for scatto in foto
-        if isinstance(scatto, dict)
-        and (_clean_str(scatto.get("name")) or "").startswith("places/")
-    ]
-
-
-def _photo_ref(item: dict, indice: int = 0) -> str | None:
-    """Il nome-risorsa della fotografia all'INDICE dato, oppure None.
-
-    Di proposito nell'ordine restituito da Google e non a caso: e' l'ordine
-    di rilevanza, e la prima e' quella che vedresti aprendo la scheda del
-    posto. Sceglierne una a caso per "varieta'" significherebbe stampare,
-    ogni tanto, la foto del parcheggio.
-    """
-    valide = _foto_valide(item)
-    if 0 <= indice < len(valide):
-        nome = _clean_str(valide[indice].get("name"))
-        if nome:
+        return None
+    for scatto in foto:
+        if not isinstance(scatto, dict):
+            continue
+        nome = _clean_str(scatto.get("name"))
+        if nome and nome.startswith("places/"):
             return nome
     return None
 
 
-def _photo_credit(item: dict, indice: int = 0) -> str | None:
-    """L'attribuzione da stampare accanto alla fotografia all'INDICE dato,
-    oppure None.
+def _photo_credit(item: dict) -> str | None:
+    """L'attribuzione da stampare accanto alla foto, oppure None.
 
     Google chiede esplicitamente che le foto siano mostrate con il nome del
     loro autore. Non e' una formalita': la foto e' di una persona, e noi la
@@ -563,22 +542,28 @@ def _photo_credit(item: dict, indice: int = 0) -> str | None:
     e' un peggioramento estetico, la foto senza il nome dell'autore e' un
     problema di un altro genere.
     """
-    valide = _foto_valide(item)
-    if not (0 <= indice < len(valide)):
+    foto = item.get("photos")
+    if not isinstance(foto, (list, tuple)):
         return None
-    autori = valide[indice].get("authorAttributions")
-    if not isinstance(autori, (list, tuple)):
-        return None
-    nomi = []
-    for autore in autori:
-        if not isinstance(autore, dict):
+    for scatto in foto:
+        if not isinstance(scatto, dict):
             continue
-        nome = _clean_str(autore.get("displayName"))
-        if nome:
-            nomi.append(nome)
-    if not nomi:
-        return None
-    return "Foto: " + ", ".join(nomi[:2]) + " / Google"
+        if not (_clean_str(scatto.get("name")) or "").startswith("places/"):
+            continue
+        autori = scatto.get("authorAttributions")
+        if not isinstance(autori, (list, tuple)):
+            return None
+        nomi = []
+        for autore in autori:
+            if not isinstance(autore, dict):
+                continue
+            nome = _clean_str(autore.get("displayName"))
+            if nome:
+                nomi.append(nome)
+        if not nomi:
+            return None
+        return "Foto: " + ", ".join(nomi[:2]) + " / Google"
+    return None
 
 
 def fetch_place_photo(photo_ref: str, api_key: str, max_width_px: int = 800) -> bytes | None:
@@ -698,17 +683,8 @@ def map_places_response(data: dict) -> list[POI]:
                 # nome di chi l'ha scattata. Nessuno dei due e' l'immagine:
                 # l'immagine si scarica dopo, e solo per le attrazioni che
                 # finiscono davvero nel documento.
-                photo_ref=_photo_ref(item, 0),
-                photo_credit=_photo_credit(item, 0),
-                # [AGGIUNTI 2026-08-17 — task #226, «foto diverse, non le
-                # solite ripetute»] La SECONDA fotografia, quando Google ne
-                # restituisce piu' di una: costa zero in piu' qui (arriva
-                # gratis nella stessa risposta), e serve a `src/foto.py` per
-                # dare a un luogo che compare in piu' punti del documento
-                # un'immagine diversa da quella gia' usata come sua di
-                # apertura, invece di ripetere sempre lo stesso scatto.
-                photo_ref_2=_photo_ref(item, 1),
-                photo_credit_2=_photo_credit(item, 1),
+                photo_ref=_photo_ref(item),
+                photo_credit=_photo_credit(item),
             )
         except (KeyError, TypeError, AttributeError):
             skipped += 1

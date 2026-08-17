@@ -74,20 +74,6 @@ from . import wikimedia
 # rimisurare il margine no.
 MAX_FOTO = 12
 
-# [AGGIUNTO 2026-08-17 — task #226, richiesta di Lorenzo: «foto diverse, non
-# usare sempre le solite tre ripetute».]
-#
-# La SECONDA fotografia per luogo, usata SOLO come riserva per i punti del
-# documento dove un luogo torna a comparire — le bande "altre tappe" delle
-# guide (`poi_pdf._altre_foto`) — cosi' che la fotografia gia' usata come
-# apertura di QUELLA guida non sia anche quella prestata alle guide vicine.
-#
-# Il tetto e' volutamente PIU' STRETTO di `MAX_FOTO`, non lo stesso numero:
-# e' una spesa aggiuntiva sopra quella gia' accettata da Lorenzo, e non ogni
-# luogo ha bisogno di comparire piu' volte nel documento — nella pratica ne
-# bastano poche per rompere la ripetizione piu' visibile.
-MAX_FOTO_SECONDARIA = 6
-
 # Larghezza massima in pixel dell'immagine che finisce nel documento.
 # [ALZATO 2026-08-11 — segnalazione di Lorenzo: «le foto sono stretchate o in
 # bassa risoluzione».] Erano 800 pixel di larghezza. Su schermo bastano; sulla
@@ -235,35 +221,6 @@ def mime_immagine(dati: bytes) -> str:
     return "image/png"
 
 
-def dimensioni(dati: bytes) -> tuple[int, int] | None:
-    """`(larghezza, altezza)` in pixel, o `None` se i byte non sono un'immagine.
-
-    [AGGIUNTO 2026-08-17 — task #224, pagina 4 del fascicolo di Bologna:
-    «una foto e' troppo piu' piccola dell'altra».]
-
-    Serve a chi affianca due o piu' fotografie di forme diverse e le vuole
-    alla STESSA altezza (vedi `pdf_renderer._larghezze_per_altezza_uguale`):
-    prima si ritaglia ogni fotografia al rapporto che il suo contenuto
-    sostiene, POI si misura che cosa e' uscito davvero — perche' il ritaglio
-    ha un tetto (`TAGLIO_MASSIMO`) che puo' consegnare un rapporto diverso da
-    quello chiesto, e un calcolo che si fida del rapporto CHIESTO invece che
-    di quello CONSEGNATO e' esattamente il difetto che ha prodotto due
-    fotografie di altezza diversa nella stessa fila.
-    """
-    if not isinstance(dati, (bytes, bytearray)) or not dati:
-        return None
-    try:
-        from PIL import Image
-
-        with Image.open(io.BytesIO(dati)) as immagine:
-            larghezza, altezza = immagine.size
-            if larghezza > 0 and altezza > 0:
-                return larghezza, altezza
-    except Exception:  # noqa: BLE001 — un'immagine illeggibile torna None
-        pass
-    return None
-
-
 def _sfumatura_verticale(disegno, larghezza: int, altezza: int, alto, basso) -> None:
     """Il fondo della grafica interna, riga per riga.
 
@@ -357,8 +314,7 @@ def copertina_interna(nome: str, tipo: str = "") -> bytes | None:
 
 
 def _indice_poi(poi) -> dict:
-    """`{poi_id: {"nome", "tipo", "ref", "credito", "ref2", "credito2"}}` da
-    POI dict oppure oggetti.
+    """`{poi_id: {"nome", "tipo", "ref", "credito"}}` da POI dict oppure oggetti.
 
     Accetta entrambe le forme di proposito, come `pdf_extras._orari_per_poi`:
     `service.py` ha in mano i POI gia' convertiti in dizionari dal payload di
@@ -366,10 +322,6 @@ def _indice_poi(poi) -> dict:
     accettasse una sola delle due costringerebbe uno dei due chiamanti a
     convertire, e quella conversione sarebbe il punto in cui prima o poi le
     due strade si separano.
-
-    [ESTESA 2026-08-17 — task #226] `ref2`/`credito2` portano la SECONDA
-    fotografia del luogo, quando Google ne ha restituita piu' di una: vedi
-    `raccogli_foto()` per come viene usata.
     """
     indice: dict = {}
     for elemento in (poi or []):
@@ -388,9 +340,6 @@ def _indice_poi(poi) -> dict:
             "ref": leggi("photo_ref") if isinstance(leggi("photo_ref"), str) else "",
             "credito": (leggi("photo_credit")
                         if isinstance(leggi("photo_credit"), str) else ""),
-            "ref2": leggi("photo_ref_2") if isinstance(leggi("photo_ref_2"), str) else "",
-            "credito2": (leggi("photo_credit_2")
-                        if isinstance(leggi("photo_credit_2"), str) else ""),
         }
     return indice
 
@@ -477,9 +426,6 @@ def raccogli_foto(guides, poi, api_key: str | None = None,
     except (TypeError, ValueError):
         tetto = MAX_FOTO
     spese = 0
-    # [AGGIUNTO 2026-08-17 — task #226] Il tetto separato per le seconde
-    # fotografie: vedi `MAX_FOTO_SECONDARIA`.
-    spese_secondarie = 0
 
     # Il cronometro parte qui e non dentro `_foto_libera`: deve misurare il
     # tempo speso in TUTTE le ricerche messe insieme, non in una sola. Un
@@ -524,33 +470,9 @@ def raccogli_foto(guides, poi, api_key: str | None = None,
         if not immagine:
             continue
 
-        voce = {
+        risultato[identificativo] = {
             "png": immagine, "credito": credito, "reale": reale, "fonte": fonte,
         }
-
-        # [AGGIUNTO 2026-08-17 — task #226, «foto diverse, non le solite
-        # ripetute».] La SECONDA fotografia, solo per i luoghi con una
-        # fotografia VERA e solo entro il suo tetto separato — non ha senso
-        # comprarne una seconda per un luogo che non ne ha nemmeno una
-        # prima, e non ha senso spendere se quella principale e' gia' la
-        # grafica disegnata in casa. Finisce sotto una chiave diversa
-        # (`png_alt`/`credito_alt`) apposta: ogni chiamante che gia' legge
-        # `png`/`credito` continua a vedere esattamente lo stesso
-        # documento di prima. E' `poi_pdf._altre_foto()` che la cerca,
-        # quando esiste, per non prestare alle guide vicine la stessa
-        # identica immagine che il luogo usa gia' come sua.
-        if (reale and api_key and spese_secondarie < MAX_FOTO_SECONDARIA):
-            ref2 = scheda.get("ref2") or ""
-            credito2 = scheda.get("credito2") or ""
-            if ref2 and credito2:
-                spese_secondarie += 1
-                grezzi2 = places_client.fetch_place_photo(ref2, api_key, LARGHEZZA_MAX)
-                immagine2 = normalizza_png(grezzi2) if grezzi2 else None
-                if immagine2:
-                    voce["png_alt"] = immagine2
-                    voce["credito_alt"] = credito2
-
-        risultato[identificativo] = voce
 
     return risultato
 

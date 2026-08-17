@@ -733,7 +733,6 @@ def generate_architect_tips(
     objective_function: str | None = None,
     module_id: str | None = None,
     max_tokens: int = 16000,
-    tentativi_massimi: int = 2,
 ) -> dict:
     """Genera consigli e piani B. Ritorna la struttura di `normalize_tips()`.
 
@@ -754,25 +753,6 @@ def generate_architect_tips(
     massimo consentito); il costo di quello basso era l'intera sezione.
     Quattordici sezioni × ~250 token di media più i piani B stanno attorno ai
     5-7k reali: 16000 è margine, non spesa.
-
-    [AGGIUNTO 2026-08-17 — task #229, secondo incidente identico al primo.]
-    Un cliente ha ricevuto di nuovo tre righe generiche al posto di
-    quattordici sezioni PIÙ i piani B, che sono spariti del tutto — stessa
-    identica firma del guasto dell'1 agosto. Questa volta pero' il
-    troncamento a max_tokens non c'entra (il tetto e' gia' a 16000): quello
-    che manca qui e' un secondo tentativo. Una singola chiamata al modello
-    che fallisce per una ragione transitoria — un errore di rete, un
-    sovraccarico momentaneo dell'API, una risposta che quella particolare
-    generazione non e' riuscita a rendere JSON valido — oggi arriva dritta
-    al `except Exception` di `pdf_extras.py` e degrada IMMEDIATAMENTE, alla
-    prima chiamata, senza che nessuno abbia mai riprovato.
-
-    `tentativi_massimi` di proposito basso (2, non 5): un terzo tentativo
-    costerebbe tempo dentro il tetto dei 300 secondi per chiamata che tutta
-    la pipeline Make rispetta (vedi CHANGELOG dell'attesa intelligente), per
-    un guadagno marginale — se due tentativi falliscono entrambi, il
-    problema quasi certamente non è transitorio, e la terza chiamata
-    costerebbe solo tempo aggiunto a un fallimento già deciso.
     """
     import anthropic  # import locale: stessa convenzione degli altri moduli Claude
 
@@ -780,59 +760,41 @@ def generate_architect_tips(
     facts = build_grounding_facts(trip, itinerary, hotels=hotels, cost_summary=cost_summary)
     indoor_candidates = build_indoor_candidates(pois, itinerary)
     outdoor_days = days_needing_rain_plan(itinerary, pois)
-    messaggio_utente = build_tips_user_message(
-        trip, itinerary, categories, facts, indoor_candidates, outdoor_days,
-        objective_function=objective_function, module_id=module_id,
-    )
 
     client = anthropic.Anthropic(api_key=api_key)
-    ultimo_errore: Exception | None = None
-    tentativi = max(1, int(tentativi_massimi))
+    response = client.messages.create(
+        model="claude-sonnet-5",
+        max_tokens=max_tokens,
+        system=_load_system_prompt(),
+        messages=[{
+            "role": "user",
+            "content": build_tips_user_message(
+                trip, itinerary, categories, facts, indoor_candidates, outdoor_days,
+                objective_function=objective_function, module_id=module_id,
+            ),
+        }],
+    )
+    # [AGGIUNTO 2026-08-01 — misura del costo reale]
+    cost_telemetry.record_llm(
+        "claude-sonnet-5", getattr(response, "usage", None), label="consigli"
+    )
+    text = "".join(block.text for block in response.content if hasattr(block, "text"))
 
-    for tentativo in range(1, tentativi + 1):
-        try:
-            response = client.messages.create(
-                model="claude-sonnet-5",
-                max_tokens=max_tokens,
-                system=_load_system_prompt(),
-                messages=[{"role": "user", "content": messaggio_utente}],
-            )
-            # [AGGIUNTO 2026-08-01 — misura del costo reale] Registrata a ogni
-            # tentativo, anche quelli poi scartati: la chiamata è stata fatta
-            # e pagata, il tentativo successivo non la cancella.
-            cost_telemetry.record_llm(
-                "claude-sonnet-5", getattr(response, "usage", None), label="consigli"
-            )
-            text = "".join(block.text for block in response.content if hasattr(block, "text"))
+    if response.stop_reason == "max_tokens":
+        raise TipsGeneratorError(
+            f"Risposta di Claude troncata per i consigli dell'architetto: raggiunto "
+            f"max_tokens={max_tokens} prima di completare il JSON. Aumenta max_tokens."
+        )
 
-            if response.stop_reason == "max_tokens":
-                raise TipsGeneratorError(
-                    f"Risposta di Claude troncata per i consigli dell'architetto: "
-                    f"raggiunto max_tokens={max_tokens} prima di completare il JSON. "
-                    f"Aumenta max_tokens."
-                )
+    try:
+        raw = parse_claude_output(text)
+    except ParseError as e:
+        raise TipsGeneratorError(
+            f"Output di Claude per i consigli dell'architetto non è JSON valido: {e}"
+        ) from e
 
-            try:
-                raw = parse_claude_output(text)
-            except ParseError as e:
-                raise TipsGeneratorError(
-                    f"Output di Claude per i consigli dell'architetto non è JSON "
-                    f"valido: {e}"
-                ) from e
-
-            _validate_tips_shape(raw)
-            return normalize_tips(raw, categories, indoor_candidates)
-
-        except Exception as e:  # noqa: BLE001 — qualunque causa, si riprova una volta
-            ultimo_errore = e
-            if tentativo < tentativi:
-                continue
-            raise
-
-    # Non dovrebbe mai arrivarci: il ciclo sopra o ritorna o rilancia. Se ci
-    # arriva comunque (un domani `tentativi_massimi` diventasse 0 per un
-    # bug altrove), meglio un errore leggibile che un `None` silenzioso.
-    raise ultimo_errore or TipsGeneratorError("nessun tentativo eseguito")
+    _validate_tips_shape(raw)
+    return normalize_tips(raw, categories, indoor_candidates)
 
 
 def render_tips_markdown(tips: dict) -> str:
