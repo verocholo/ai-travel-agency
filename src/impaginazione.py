@@ -99,6 +99,104 @@ def posizioni(dati: bytes) -> dict:
         return {}
 
 
+# Quanto deve restare, come minimo, sotto l'ultima fotografia di una
+# giornata perche' quella giornata si consideri "finita con spazio bianco".
+#
+# [AGGIUNTO 2026-08-16 — l'ultimo dei nove difetti segnalati da Lorenzo sul
+# fascicolo di Bologna: pagine 15, 18, 21, 26, «due foto piccole e spazio
+# vuoto».] Trenta per cento e' la stessa soglia, vista dal lato opposto, di
+# `ARRIVO_MINIMO` in `scripts_qualita_pagina.py` (70% di riempimento minimo
+# = 30% di margine massimo tollerato): le due misurano la stessa cosa con
+# strumenti diversi — quella sui pixel della pagina stampata, questa sui
+# punti di una sonda — e usare lo stesso numero evita due definizioni
+# diverse dello stesso difetto che un domani potrebbero disallinearsi.
+QUOTA_BIANCO_GIORNATA = 0.30
+
+
+def giornate_con_bianco_finale(dati: bytes, numeri_giorni,
+                               ancore_successive=(),
+                               quota: float = QUOTA_BIANCO_GIORNATA) -> set:
+    """Quali giornate finiscono con troppo spazio bianco sotto l'ultima foto.
+
+    [AGGIUNTO 2026-08-16 — l'ultimo dei nove difetti segnalati da Lorenzo sul
+    fascicolo di Bologna: pagine 15, 18, 21, 26, «due foto piccole e spazio
+    vuoto». La strada scelta e' ingrandire le fotografie di chiusura
+    giornata, non allargare i margini — vedi
+    `src/pdf_renderer._render_striscia_foto`.]
+
+    Stesso metodo di `capitoli_da_mandare_a_capo`, applicato a un problema
+    diverso: non si indovina, si stampa, si guarda dove sono cadute le sonde,
+    si ripara SOLO quello che serve. La sonda qui non e' la testata di un
+    capitolo ma la chiusura di ogni giornata (`giorno-{N}-fine`, seminata da
+    `src/pdf_renderer.py` subito dopo l'ultima cosa che quella giornata
+    stampa): dice a che altezza dal fondo pagina si e' fermato il contenuto,
+    fila di foto compresa.
+
+    Una giornata entra nel risultato SOLO se tutte e tre le condizioni sono
+    vere — le prime due esistono per non riparare un difetto che non c'e':
+
+    - **non e' l'ultima pagina del documento intero.** Quella e' la
+      chiusura, finisce dove finisce, e allungarla per riempirla e' il
+      difetto opposto — stessa regola che usa
+      `scripts_qualita_pagina.problemi()` saltando l'ultima pagina.
+    - **quello che viene dopo comincia su una pagina SUCCESSIVA.** Se la
+      giornata dopo (o, per l'ultima giornata, il primo capitolo dopo)
+      comincia sulla STESSA pagina, lo spazio lo riempie gia' lei:
+      ingrandire qui sposterebbe soltanto il problema, non lo toglierebbe.
+      `ancore_successive` e' l'elenco dei nomi da controllare per l'ultima
+      giornata, nell'ordine in cui possono comparire nel documento — di
+      solito `CAPITOLI_DEL_DOCUMENTO` di `src/pdf_renderer.py`, filtrato ai
+      capitoli che vengono dopo il programma.
+    - **la sonda di chiusura si e' fermata alta sulla pagina**, sopra la
+      soglia `quota` dell'altezza del foglio: e' la misura diretta dello
+      spazio bianco rimasto sotto.
+
+    Torna un insieme di NUMERI di giornata (non di nomi di sonda): e' quello
+    che `_render_striscia_foto` chiede per decidere, giornata per giornata,
+    se ingrandire la propria fila di chiusura.
+    """
+    dove = posizioni(dati)
+    if not dove:
+        return set()
+    pagine_note = [pagina for pagina, _altezza in dove.values()]
+    if not pagine_note:
+        return set()
+    ultima_pagina = max(pagine_note)
+
+    try:
+        ordinati = sorted({int(n) for n in (numeri_giorni or [])})
+    except (TypeError, ValueError):
+        return set()
+
+    trovate = set()
+    for indice, numero in enumerate(ordinati):
+        fine = dove.get(f"giorno-{numero}-fine")
+        if not fine:
+            continue
+        pagina, altezza = fine
+        if pagina >= ultima_pagina:
+            continue
+
+        prossima_pagina = None
+        if indice + 1 < len(ordinati):
+            prossima = dove.get(f"giorno-{ordinati[indice + 1]}")
+            if prossima:
+                prossima_pagina = prossima[0]
+        else:
+            for nome in (ancore_successive or ()):
+                trovata = dove.get(nome)
+                if trovata:
+                    prossima_pagina = trovata[0]
+                    break
+
+        if prossima_pagina is None or prossima_pagina <= pagina:
+            continue
+
+        if altezza >= ALTEZZA_A4_PT * quota:
+            trovate.add(numero)
+    return trovate
+
+
 def capitoli_da_mandare_a_capo(dati: bytes, nomi,
                                quota: float = QUOTA_MINIMA_SOTTO) -> set:
     """Quali capitoli cominciano troppo in fondo alla loro pagina.
