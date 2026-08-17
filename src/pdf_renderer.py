@@ -4241,12 +4241,21 @@ def _render_numeri_utili(predeparture: dict | None, hotels=None,
         # Dentro il guscio: senza, l'elenco si spezza fra due pagine e
         # l'ultima giornata resta da sola in cima al foglio dopo, con sotto
         # una pagina bianca. Misurato — la pagina si fermava al 6%.
-        pezzi.append(_keep_together(
+        # [TOLTO IL GUSCIO 2026-08-16 — misurato.] Dentro il guscio, l'elenco
+        # o entrava tutto in fondo alla pagina o scendeva tutto in quella
+        # dopo, che restava piena al nove per cento. Un elenco di numeri
+        # corti si legge benissimo a cavallo di due pagine, come qualunque
+        # tabella di un libro: e' esattamente il caso in cui «non spezzare»
+        # produce il difetto che dovrebbe evitare.
+        #
+        # Resta unita l'INTESTAZIONE con la prima riga: una riga di
+        # presentazione da sola in fondo al foglio sarebbe orfana.
+        pezzi.append(
             "<div class='mid-intro'>Quanto si cammina, giorno per giorno — "
             "misurato sui tragitti veri del tuo programma, non stimato. "
             "E' il numero che decide le scarpe.</div>"
             + _camminate_in_due_colonne(camminate)
-        ))
+        )
     return "".join(pezzi)
 
 
@@ -5338,8 +5347,25 @@ def render_html(
         # [AGGIUNTO 2026-08-13] La fila di fotografie chiude la giornata,
         # dopo il programma e prima degli spostamenti residui: e' li' che lo
         # spazio avanza davvero.
+        #
+        # [CORRETTO 2026-08-16 — segnalazione di Lorenzo: «non possono esserci
+        # pagine solo con foto e poi tutto bianco».]
+        #
+        # La fila viaggia dentro `page-break-inside: avoid`, quindi o entra
+        # nella pagina o scende INTERA in quella dopo — e quando scendeva ci
+        # arrivava da sola, seguita da mezzo foglio bianco. Una pagina di sole
+        # immagini in un documento di viaggio non e' un errore di stampa: e'
+        # una pagina che nessuno ha guardato.
+        #
+        # La riparazione non e' togliere il guscio — le didascalie
+        # resterebbero orfane in cima al foglio — ma **legare la fila
+        # all'ultimo pezzo di testo che la precede**: cosi' o scendono
+        # insieme, e allora la pagina nuova ha del testo, o restano insieme
+        # dove sono. E' lo stesso rimedio del titolo che non resta solo in
+        # fondo alla pagina, applicato dall'altra parte.
         if _striscia_html:
-            parts.append(_striscia_html)
+            coda = parts.pop() if parts else ""
+            parts.append(_keep_together(coda + _striscia_html))
 
         # [AGGIUNTO 2026-07-31 — richiesta di Lorenzo: "manca anche la parte
         # 'cartina e come arrivare'"] Subito dopo il programma della
@@ -5470,10 +5496,11 @@ def render_html(
             _titolo_capitolo("numeri-utili", "Numeri utili e quanto si cammina")
         )
         parts.append(
-            "<div class='section-intro'>Il capitolo da cercare quando serve qualcosa "
-            "subito: il numero di emergenza, come si paga, che prese servono, "
-            "l'indirizzo di dove dormi e quanta strada fai a piedi ogni giorno. "
-            "Niente qui è stato scritto da un'intelligenza artificiale: sono dati "
+            # [ACCORCIATA 2026-08-16] Quattro righe di presentazione facevano
+            # sbordare la coda del capitolo sulla pagina dopo, che restava
+            # piena al sette per cento. Due righe dicono la stessa cosa.
+            "<div class='section-intro'>Da cercare quando serve qualcosa subito. "
+            "Niente qui è scritto da un'intelligenza artificiale: sono dati "
             "verificati a mano e misure prese sul tuo programma.</div>"
         )
         parts.append(numeri_utili_html)
