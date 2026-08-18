@@ -169,7 +169,44 @@ def _candidati(dati: dict) -> list[dict]:
     return [p for p in elenco if isinstance(p, dict)]
 
 
-def _prima_utilizzabile(pagine: list[dict]) -> dict | None:
+# Parole che in un titolo non dicono niente su QUALE luogo sia: compaiono in
+# mezza Commons e farebbero passare per attinente qualunque cosa.
+_PAROLE_VUOTE = frozenset({
+    "di", "de", "del", "della", "dello", "dei", "degli", "delle", "da", "il",
+    "lo", "la", "le", "gli", "un", "uno", "una", "and", "the", "of", "in",
+    "at", "italy", "italia", "view", "vista", "foto", "photo", "img", "dsc",
+})
+
+
+def _parole(testo: str) -> set:
+    """Le parole che identificano un luogo, senza quelle di servizio."""
+    import re as _re
+
+    return {p for p in _re.split(r"[^0-9a-zàèéìòóùç]+", str(testo or "").lower())
+            if len(p) > 2 and p not in _PAROLE_VUOTE}
+
+
+def attinenza(titolo: str, nome: str) -> int:
+    """Quante parole del nome del luogo compaiono nel titolo della foto.
+
+    [AGGIUNTA 2026-08-16 — segnalazione di Lorenzo: «le foto sono messe a caso
+    senza alcun ordine (cosa c'entra il tortellino)».]
+
+    Commons, per «Mercato delle Erbe Bologna», restituisce otto risultati:
+    fra questi il mercato, ma anche un piatto di tortellini, perche' la
+    ricerca e' testuale e la citta' basta a farli comparire. Finora si
+    prendeva **il primo utilizzabile**, cioe' si tirava a sorte.
+
+    Contare le parole in comune non e' intelligenza artificiale ed e'
+    esattamente cio' che serve: «File:Mercato delle Erbe Bologna 01.jpg» fa
+    due, «File:Tortellini bolognesi.jpg» fa zero. Con zero non si stampa —
+    meglio una scheda senza fotografia che una scheda con la fotografia di
+    un'altra cosa.
+    """
+    return len(_parole(titolo) & _parole(nome))
+
+
+def _prima_utilizzabile(pagine: list[dict], nome: str = "") -> dict | None:
     """La scheda della prima fotografia scaricabile, senza scaricarla.
 
     Separare la SCELTA dallo SCARICAMENTO serve a poter provare la regola
@@ -178,9 +215,21 @@ def _prima_utilizzabile(pagine: list[dict]) -> dict | None:
     l'indirizzo da cui prendere i byte, che non e' un dato della fotografia
     ma un passaggio intermedio, e infatti nella fotografia finita non c'e'.
     """
+    # [ORDINATE PER ATTINENZA 2026-08-16.] Prima si scorreva la lista come
+    # arrivava e si prendeva la prima scaricabile: con una ricerca testuale
+    # vuol dire prendere quello che capita. Adesso si guardano prima quelle
+    # che nominano il luogo. A parita' di attinenza resta l'ordine di
+    # Commons, che e' per pertinenza della ricerca.
+    if nome:
+        pagine = sorted(
+            pagine,
+            key=lambda p: -attinenza(str(p.get("title") or ""), nome))
     for pagina in pagine:
         titolo = str(pagina.get("title") or "")
         if not titolo.lower().endswith(ESTENSIONI_BUONE):
+            continue
+        # Nessuna parola in comune col nome del luogo: e' il tortellino.
+        if nome and attinenza(titolo, nome) == 0:
             continue
         info = (pagina.get("imageinfo") or [{}])[0]
         meta = info.get("extmetadata") or {}
@@ -224,7 +273,13 @@ def cerca_immagine(nome: str, contesto: str = "",
                 "generator": "search",
                 "gsrsearch": termine,
                 "gsrnamespace": "6",   # 6 = spazio dei File
-                "gsrlimit": "8",
+                # [ALLARGATO 2026-08-16 — «per scegliere le foto devi
+                # scegliere tra una scelta molto piu' ampia».] Otto risultati
+                # bastavano quando si prendeva il primo utilizzabile; adesso
+                # che si sceglie per attinenza, piu' candidati vuol dire piu'
+                # probabilita' che ce ne sia uno che nomina davvero il luogo.
+                # Costa zero: e' la stessa singola richiesta.
+                "gsrlimit": "24",
                 "prop": "imageinfo",
                 "iiprop": "url|extmetadata|size|mime",
                 "iiurlwidth": str(LARGHEZZA),
@@ -236,7 +291,7 @@ def cerca_immagine(nome: str, contesto: str = "",
         # Commons ha risposto: qualunque cosa abbia detto, la rete c'e'.
         # L'interruttore si riarma qui e solo qui.
         azzera_interruttore()
-        scelta = _prima_utilizzabile(_candidati(risposta.json()))
+        scelta = _prima_utilizzabile(_candidati(risposta.json()), nome)
         if scelta is None:
             # Nessuna fotografia utilizzabile NON e' un guasto: e' l'esito
             # normale per una trattoria. Non deve spegnere niente.
