@@ -1426,6 +1426,60 @@ _CSS_MODELLO = """
        forzata: solo un tetto, cosi' l'immagine sceglie le proprie proporzioni
        dentro il limite e nessuna fotografia esce schiacciata — e' la stessa
        lezione che era costata le foto stirate dell'11 agosto. */
+    /* --- L'IMPAGINAZIONE EDITORIALE (2026-08-18) -----------------------
+       [Richiesta di Lorenzo, con quattro brochure di viaggio in mano:
+       «migliorare l'impaginazione per renderla sempre luxury ma simile a
+       queste».]
+
+       Cosa hanno quelle e questo documento non aveva, in ordine di quanto
+       si vede: la fotografia che arriva al bordo del foglio, il numero
+       gigante di capitolo, gli angoli morbidi, il testo su due colonne.
+       Tre di queste quattro cose, con questo motore di stampa, si fanno in
+       un modo solo e non e' quello ovvio:
+
+       - **al vivo** = margini negativi pari a quelli di `@page`. Non
+         esiste `bleed`, e un'immagine larga 100% si ferma comunque dentro
+         la colonna di testo;
+       - **angoli morbidi** = ritaglio sui PIXEL (`foto.angoli_arrotondati`),
+         perche' `border-radius` su un'immagine qui arrotonda in alto e
+         taglia netto in basso;
+       - **due colonne** = tabella, perche' `column-count` viene ignorato in
+         silenzio.
+
+       Il margine negativo vale 1.8cm ai lati e 2cm in alto: gli stessi
+       numeri di `@page`. Se qualcuno cambia quelli, questi vanno cambiati
+       insieme — c'e' un controllo che se ne accorge. */
+    .cover-piena { margin: -2cm -1.8cm 14px -1.8cm; }
+    .cover-piena img { width: 100%; display: block; }
+    .cover-piena .didascalia {
+      font-size: 7.5px; color: #b6bfc8; text-align: right;
+      margin: 3px 1.8cm 0 0;
+    }
+    .cover-al-vivo { margin-left: -1.8cm; margin-right: -1.8cm;
+                     padding-left: 1.8cm; padding-right: 1.8cm; }
+
+    /* L'indice illustrato, che dalle brochure prende la cosa piu' utile e
+       non solo la piu' bella: accanto a ogni voce c'e' una fotografia del
+       posto, cosi' l'indice si guarda invece di leggersi. */
+    .toc-pagina { page-break-before: always; }
+    .toc-titolo {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 40px; color: #16212f; margin: 0 0 6px 0; font-weight: normal;
+      letter-spacing: .02em;
+    }
+    .toc-riga { width: 100%; border-collapse: collapse; margin-top: 14px; }
+    .toc-riga td { padding: 0 0 14px 0; border: none; vertical-align: top; }
+    .toc-mini { width: 172px; padding-right: 18px !important; }
+    .toc-mini img { width: 160px; display: block; }
+    .toc-larga { padding-left: 0 !important; }
+    .toc-testo { border-bottom: 1px solid {{sfondo_tenue}}; }
+    .toc-n {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 24px; color: {{accento}}; line-height: 1;
+    }
+    .toc-voce { font-size: 15px; color: #16212f; margin: 2px 0 4px 0; }
+    .toc-voce a { color: #16212f; text-decoration: none; }
+
     .cover-foto { text-align: center; margin: 0 0 18px 0; page-break-inside: avoid; }
     .cover-foto img { width: 100%; }
     .cover-foto .didascalia { font-size: 8px; color: #98a4b0; margin-top: 3px; }
@@ -1568,6 +1622,25 @@ _ANCHOR_PROBE_PREFIX = pdf_links.PROBE_PREFIX
 # comunque un colpo d'occhio riconoscibile — non un rettangolo cosi'
 # stretto da sembrare un ritaglio a caso.
 _RAPPORTO_FASCIA = 4.2
+
+# [AGGIUNTO 2026-08-18] La forma della fotografia di copertina da quando
+# arriva ai bordi del foglio. A ventuno centimetri di larghezza, 1.32 da'
+# sedici centimetri di altezza: poco piu' di meta' pagina A4. Piu' alta e la
+# copertina sborda; piu' bassa e torna a sembrare una fascia decorativa
+# invece della pagina.
+# [MISURATO 2026-08-18] Da quando l'indice sta su una pagina sua, la
+# copertina ha solo la fotografia, il blocco del titolo e i numeri di
+# consegna: con 1.32 restava mezza pagina bianca sotto. 1.02 — cioe' quasi
+# quadrata — la riempie fino in fondo senza sbordare.
+#
+# NOTA SUL BORDO AL VIVO, misurata e non supposta: con questo motore di
+# stampa la fotografia arriva a **tre millimetri e mezzo** dal bordo del
+# foglio, non a zero. Quei tre millimetri sono l'area non stampabile che
+# wkhtmltopdf tiene per se': spingere il margine negativo oltre non serve
+# (provato: si ferma li' lo stesso) e oltre una certa misura fa rimpicciolire
+# l'INTERA pagina, testo compreso. Tre millimetri e mezzo sono una cornice
+# bianca sottile, non una cornice: e' il massimo che questo motore concede.
+_RAPPORTO_COPERTINA = 1.15
 
 # Il rapporto delle fotografie in fila a chiusura di giornata. Con tre celle
 # larghe un terzo del foglio, 1.5 da' figure alte poco meno di quattro
@@ -2794,6 +2867,12 @@ def _render_cover(
     # immagini non deve peggiorare, deve solo restare quello di ieri.
     foto_copertina: tuple[bytes, str] | None = None,
     colore_del_blocco: str = "",
+    # [AGGIUNTO 2026-08-18] Le fotografie piccole dell'indice, una per voce,
+    # nell'ordine dei capitoli: `[(png, credito), ...]`. Chi chiama le prende
+    # dal registro delle immagini gia' stampate, quindi non ripetono niente.
+    # Vuoto = indice senza figure, cioe' un documento senza fotografie: resta
+    # leggibile e non peggiora, come sempre.
+    miniature=None,
 ) -> str:
     """Prima pagina dedicata: il documento che il cliente riceve dopo aver
     pagato deve *sembrare* un prodotto, non l'output di uno script. È
@@ -2903,6 +2982,26 @@ def _render_cover(
             if isinstance(title, str) and title.strip():
                 entries.append((anchor if isinstance(anchor, str) and anchor else None, title))
     subs = list(day_entries or [])
+
+    # [2026-08-18] Le voci dell'indice con la loro fotografia accanto. Le
+    # miniature finiscono ai PRIMI capitoli e non a caso: sono quelli che il
+    # cliente guarda per decidere se il documento gli piace.
+    _mini = [m for m in (miniature or []) if m]
+    voci_indice = []
+    for _i, (_ancora_voce, _title) in enumerate(entries):
+        _fig = ""
+        if _i < len(_mini):
+            try:
+                _png, _cred = _mini[_i]
+                _tagliata = foto.ritaglia_panoramica(_png, 1.45) or _png
+                _tagliata = foto.angoli_arrotondati(_tagliata) or _tagliata
+                _b64 = base64.b64encode(_tagliata).decode("ascii")
+                _fig = (f"<img src='data:{foto.mime_immagine(_tagliata)};"
+                        f"base64,{_b64}' alt=''/>")
+            except (TypeError, ValueError, AttributeError):
+                _fig = ""
+        voci_indice.append((_ancora_voce, _title, _fig))
+
     columns: tuple[list, list] | None = None
     tallest = 0
     if len(entries) >= 2:
@@ -2973,12 +3072,28 @@ def _render_cover(
     if foto_copertina:
         try:
             byte_foto, credito = foto_copertina
-            byte_foto = foto.ritaglia_panoramica(byte_foto, _RAPPORTO_FASCIA) or byte_foto
+            # [AL VIVO 2026-08-18] La fascia da 4.2 diventa una fotografia
+            # alta piu' di meta' pagina che arriva ai tre bordi del foglio.
+            # E' la differenza piu' grande fra la copertina di ieri e quelle
+            # delle brochure che Lorenzo ha portato: li' la fotografia NON
+            # ha una cornice bianca attorno, e' la pagina.
+            #
+            # 1.32 e' il rapporto che, a ventuno centimetri di larghezza,
+            # da' un'immagine alta sedici — poco piu' di meta' foglio.
+            # Sotto, il blocco del titolo e i numeri di consegna riempiono
+            # il resto senza che la copertina sbordi sulla seconda pagina,
+            # che e' un difetto gia' visto due volte in questo progetto.
+            # `ritaglia_ritratto` e non `ritaglia_panoramica`: qui la
+            # fotografia deve diventare piu' ALTA, non piu' larga, e la
+            # seconda non sa fare quel verso — chiedendoglielo lascia
+            # l'immagine com'e' (provato: la copertina restava una fascia
+            # con mezzo foglio bianco sotto).
+            byte_foto = foto.ritaglia_ritratto(byte_foto, _RAPPORTO_COPERTINA) or byte_foto
             b64 = base64.b64encode(byte_foto).decode("ascii")
             tipo = foto.mime_immagine(byte_foto)
             didascalia = (f"<div class='didascalia'>{_credito(credito)}</div>"
                           if str(credito or "").strip() else "")
-            apertura = (f"<div class='cover-foto'>"
+            apertura = (f"<div class='cover-piena'>"
                         f"<img src='data:{tipo};base64,{b64}' alt=''/>"
                         f"{didascalia}</div>")
         except (TypeError, ValueError, AttributeError):
@@ -3029,7 +3144,8 @@ def _render_cover(
         f"<div class='cover{density}'>",
         apertura,
         "<div class='cover-hero'>",
-        "<div class='cover-blocco'><table class='cover-blocco-t'><tr>",
+        "<div class='cover-blocco cover-al-vivo'>"
+        "<table class='cover-blocco-t'><tr>",
         tonda,
         "<td class='cover-blocco-testo'>",
         "<div class='cover-kicker'>Itinerario su misura</div>",
@@ -3077,34 +3193,60 @@ def _render_cover(
     # sinistra. Con una sola voce la tabella a due colonne sarebbe sbilanciata
     # e peggiorerebbe l'impaginazione invece di migliorarla: sotto le due voci
     # la striscia non si stampa proprio.
-    if columns:
-        parts.append(
-            "<div class='cover-toc'>"
-            "<div class='cover-toc-title'>Cosa troverai dentro</div>"
-            "<table><tr>"
-        )
-        offset = 0
-        for column in columns:
-            parts.append("<td class='col'>")
-            for index, (anchor, title) in enumerate(column):
-                label = (
-                    f"<a href='{pdf_links.LINK_PREFIX}{_esc(anchor)}'>{_esc(title)}</a>" if anchor
-                    else _esc(title)
+    # [L'INDICE SU UNA PAGINA SUA, ILLUSTRATO — 2026-08-18.]
+    #
+    # Richiesta di Lorenzo con quattro brochure in mano. Tutte e quattro
+    # fanno la stessa cosa e la fanno per lo stesso motivo: **copertina, poi
+    # indice**, e l'indice ha le fotografie accanto alle voci. Una fotografia
+    # accanto a «Il tuo alloggio» non e' decorazione — dice al cliente cosa
+    # trovera' li' dentro prima che ci arrivi, che e' esattamente il lavoro
+    # di un indice.
+    #
+    # C'e' anche un guadagno che non si vede: prima l'indice stava in fondo
+    # alla copertina per non lasciare mezza pagina bianca (misurato: la
+    # pagina 2 si fermava al 47%). Da quando la fotografia di copertina
+    # arriva ai bordi del foglio, la copertina e' piena da sola e l'indice
+    # ha abbastanza materia per riempire una pagina sua.
+    if voci_indice:
+        parts.append("<div class='toc-pagina'>")
+        parts.append("<div class='cover-kicker'>Cosa troverai dentro</div>")
+        parts.append(f"<h2 class='toc-titolo'>{_esc(destination)}, in nove capitoli</h2>"
+                     if len(voci_indice) == 9 else
+                     f"<h2 class='toc-titolo'>{_esc(destination)}, capitolo per capitolo</h2>")
+        parts.append("<table class='toc-riga'>")
+        for numero, (anchor, title, mini) in enumerate(voci_indice, start=1):
+            label = (
+                f"<a href='{pdf_links.LINK_PREFIX}{_esc(anchor)}'>{_esc(title)}</a>"
+                if anchor else _esc(title)
+            )
+            sotto = ""
+            if anchor == "giorno-per-giorno" and subs:
+                sotto = "".join(
+                    f"<div class='cover-toc-sub'>"
+                    f"<a href='{pdf_links.LINK_PREFIX}{_esc(a)}'>{_esc(x)}</a></div>"
+                    for a, x in subs
                 )
+            parts.append("<tr>")
+            if mini:
+                parts.append(f"<td class='toc-mini'>{mini}</td>")
                 parts.append(
-                    f"<div class='cover-toc-item'>"
-                    f"<span class='cover-toc-num'>{offset + index + 1:02d}</span>"
-                    f"{label}</div>"
+                    "<td class='toc-testo'>"
+                    f"<div class='toc-n'>{numero:02d}</div>"
+                    f"<div class='toc-voce'>{label}</div>{sotto}</td>"
                 )
-                if anchor == "giorno-per-giorno":
-                    for day_anchor, day_title in subs:
-                        parts.append(
-                            f"<div class='cover-toc-sub'>"
-                            f"<a href='{pdf_links.LINK_PREFIX}{_esc(day_anchor)}'>{_esc(day_title)}</a></div>"
-                        )
-            parts.append("</td>")
-            offset += len(column)
-        parts.append("</tr></table></div>")
+            else:
+                # Senza fotografia la voce prende tutta la riga invece di
+                # lasciare una cella vuota a sinistra. Una colonna di
+                # riquadri vuoti sotto una colonna di fotografie si legge
+                # come «qui manca qualcosa», ed e' lo stesso ragionamento
+                # gia' fatto il 2 agosto per i riquadri della copertina.
+                parts.append(
+                    "<td class='toc-testo toc-larga' colspan='2'>"
+                    f"<div class='toc-n'>{numero:02d}</div>"
+                    f"<div class='toc-voce'>{label}</div>{sotto}</td>"
+                )
+            parts.append("</tr>")
+        parts.append("</table>")
 
     # "Come si legge": tre istruzioni brevi. Vanno DOPO l'indice, perché
     # spiegano come usare quello che l'indice elenca — e perché in fondo alla
@@ -3134,6 +3276,13 @@ def _render_cover(
         "da dati reali raccolti al momento della generazione. Dove un dato non era disponibile "
         "lo troverai marcato come da verificare, mai sostituito da una stima inventata.</div>"
     )
+    # Chiude la pagina dell'indice (aperta solo se ci sono voci) e poi la
+    # copertina. «Come si legge» e la nota sui dati stanno sulla pagina
+    # dell'indice e non sulla copertina, ed e' voluto: spiegano come usare
+    # cio' che l'indice elenca, e sulla copertina rubavano spazio alla
+    # fotografia.
+    if voci_indice:
+        parts.append("</div>")
     parts.append("</div>")
     return "".join(parts)
 
@@ -3580,6 +3729,7 @@ def _tavola_di_chiusura(photos, usate) -> str:
         if not scelto:
             continue
         ritagliata = foto.ritaglia_panoramica(scelto["png"], 1.35) or scelto["png"]
+        ritagliata = foto.angoli_arrotondati(ritagliata) or ritagliata
         try:
             b64 = base64.b64encode(ritagliata).decode("ascii")
         except (TypeError, ValueError):
@@ -3590,6 +3740,76 @@ def _tavola_di_chiusura(photos, usate) -> str:
             "alt='' style='width:100%; display:block;'>"
             f"<div class='didascalia'>{_credito(scelto['credito'])}</div></div>")
     return ""
+
+
+def _miniature_per_indice(days, photos, usate, quante: int = 6) -> list:
+    """Fino a `quante` fotografie per le voci dell'indice, mai ripetute.
+
+    [AGGIUNTO 2026-08-18 — l'indice illustrato delle brochure.]
+
+    Si scorrono le tappe nell'ordine di visita e si prende, per ogni luogo,
+    la prima fotografia che il documento non ha ancora stampato. Se ne
+    restano poche si mostrano poche: un indice con tre figure e sei righe
+    pulite e' molto meglio di un indice con sei figure di cui tre ripetute —
+    ed e' la stessa regola che governa tutto il resto delle immagini qui.
+    """
+    if not isinstance(photos, dict) or not photos:
+        return []
+    prese, visti = [], set()
+    for giorno in days or []:
+        if not isinstance(giorno, dict):
+            continue
+        for block in (giorno.get("blocks") or []):
+            if len(prese) >= max(0, int(quante)):
+                return prese
+            if not isinstance(block, dict):
+                continue
+            poi_id = block.get("poi_id")
+            if not isinstance(poi_id, str) or poi_id in visti:
+                continue
+            scatto = photos.get(poi_id)
+            if not isinstance(scatto, dict) or not scatto.get("reale"):
+                continue
+            visti.add(poi_id)
+            # [LA REGOLA CHE EVITA IL DANNO — misurata.] L'indice prende una
+            # fotografia di questo luogo SOLO se, dopo averla presa, ne resta
+            # almeno un'altra per la giornata in cui il luogo compare.
+            #
+            # Senza questa riga l'indice si mangiava la scorta: sul primo
+            # collaudo con tre luoghi e due fotografie a testa, le sei
+            # miniature svuotavano il documento e le giornate restavano senza
+            # fila di chiusura. Una pagina bella all'inizio pagata con tre
+            # pagine spoglie dopo non e' un miglioramento.
+            # DUE devono restare, non una: la giornata ne usa una in
+            # apertura e una nella fila di chiusura. Misurato con la soglia a
+            # uno: le miniature svuotavano lo stesso il documento e le
+            # giornate restavano senza fila. L'indice si serve solo di cio'
+            # che avanza davvero.
+            if _quanti_scatti_liberi(scatto, usate) < 3:
+                continue
+            scelto = _scatto_non_ancora_usato(scatto, usate)
+            if scelto:
+                prese.append((scelto["png"], scelto["credito"]))
+    return prese
+
+
+def _quanti_scatti_liberi(scatto, usate) -> int:
+    """Quante fotografie di questo luogo il documento non ha ancora usato."""
+    if not isinstance(scatto, dict):
+        return 0
+    scorta = scatto.get("scatti")
+    if not isinstance(scorta, list) or not scorta:
+        scorta = [{"png": scatto.get("png"), "credito": scatto.get("credito")}]
+    quante = 0
+    for pezzo in scorta:
+        if not isinstance(pezzo, dict):
+            continue
+        png, credito = pezzo.get("png"), pezzo.get("credito")
+        if not png or not isinstance(credito, str) or not credito.strip():
+            continue
+        if usate is None or _impronta(png) not in usate:
+            quante += 1
+    return quante
 
 
 def _impronta(png) -> str:
@@ -3857,6 +4077,7 @@ def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "",
         _poi_id, scatto, nome = candidate[0]
         grezzi = scatto.get("png") if isinstance(scatto, dict) else None
         ritagliata = foto.ritaglia_panoramica(grezzi, 2.9) or grezzi
+        ritagliata = foto.angoli_arrotondati(ritagliata) or ritagliata
         try:
             b64 = base64.b64encode(ritagliata).decode("ascii")
         except (TypeError, ValueError, KeyError):
@@ -3906,6 +4127,7 @@ def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "",
         # riempie la cella per intero — l'altezza la governa il ritaglio, non
         # un tetto scritto nel foglio di stile.
         ritagliata = foto.ritaglia_panoramica(grezzi, rapporto_della_fila) or grezzi
+        ritagliata = foto.angoli_arrotondati(ritagliata) or ritagliata
         try:
             b64 = base64.b64encode(ritagliata).decode("ascii")
         except (TypeError, ValueError, KeyError):
@@ -4013,6 +4235,11 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
         ritagliata, _rapporto_reale = _ritaglio_misurato(png, rapporto)
         if sfumata:
             ritagliata = foto.sfuma_in_basso(ritagliata) or ritagliata
+        # [ANGOLI MORBIDI 2026-08-18] Vedi `foto.angoli_arrotondati`: si fa
+        # sui pixel perche' il foglio di stile, qui, arrotonda in alto e
+        # taglia netto in basso. E' la firma visiva piu' ricorrente delle
+        # brochure che Lorenzo ha portato.
+        ritagliata = foto.angoli_arrotondati(ritagliata) or ritagliata
         try:
             b64 = base64.b64encode(ritagliata).decode("ascii")
         except (TypeError, ValueError):
@@ -4030,6 +4257,7 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
         if not png or not credito:
             return "", 0
         ritagliata, rapporto_reale = _ritaglio_misurato(png, rapporto)
+        ritagliata = foto.angoli_arrotondati(ritagliata) or ritagliata
         try:
             b64 = base64.b64encode(ritagliata).decode("ascii")
         except (TypeError, ValueError):
@@ -5555,6 +5783,12 @@ def render_html(
             # esce con un quadrato bianco attorno: difetto visto da Lorenzo
             # sul fascicolo di Bologna.
             colore_del_blocco=_tav.completa(tinte).get("primario"),
+            # [AGGIUNTO 2026-08-18] Le fotografie dell'indice. Si prendono
+            # dal registro come tutte le altre, quindi non ripetono niente:
+            # se il documento ne ha poche, l'indice ne mostra poche e le
+            # voci restanti restano righe pulite — mai la stessa immagine
+            # due volte per riempire un buco.
+            miniature=_miniature_per_indice(days, photos, _immagini_usate),
         ),
         "<div class='header'>",
         f"<h1>Itinerario Ottimizzato: {destination}</h1>",

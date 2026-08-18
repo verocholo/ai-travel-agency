@@ -744,6 +744,52 @@ def ritaglia_panoramica(grezzi: bytes, rapporto: float = 2.6) -> bytes | None:
         return None
 
 
+def ritaglia_ritratto(grezzi: bytes, rapporto: float = 1.15) -> bytes | None:
+    """La stessa fotografia, ritagliata piu' ALTA. `None` se non si legge.
+
+    [AGGIUNTO 2026-08-18 — la copertina a tutta pagina.]
+
+    E' la gemella di `ritaglia_panoramica` dall'altra parte: quella toglie
+    altezza per fare una fascia, questa toglie larghezza per fare una pagina.
+    Serve perche' le fotografie che arrivano da Commons e da Google sono
+    quasi sempre orizzontali, e una copertina orizzontale non riempie un
+    foglio verticale — resta una fascia con mezzo foglio bianco sotto, che e'
+    esattamente il difetto che questa modifica doveva togliere.
+
+    Il taglio e' CENTRALE e limitato da `TAGLIO_MASSIMO`, per la stessa
+    ragione scritta li': quello che conta non e' quanto si toglie, e' cosa
+    resta. Una fotografia gia' verticale non viene toccata — allargarla
+    vorrebbe dire aggiungere pixel che non esistono.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    if not isinstance(grezzi, (bytes, bytearray)) or not grezzi:
+        return None
+    try:
+        with Image.open(io.BytesIO(grezzi)) as immagine:
+            piena = immagine.convert("RGB")
+            larghezza, altezza = piena.size
+            if not larghezza or not altezza or rapporto <= 0:
+                return None
+            voluta = int(altezza * rapporto)
+            minima = int(larghezza * (1.0 - TAGLIO_MASSIMO))
+            if voluta < minima:
+                voluta = minima
+            if voluta >= larghezza:
+                ritagliata = piena
+            else:
+                sinistra = (larghezza - voluta) // 2
+                ritagliata = piena.crop((sinistra, 0, sinistra + voluta, altezza))
+            fuori = io.BytesIO()
+            ritagliata.save(fuori, format="JPEG", quality=85, optimize=True,
+                            progressive=True)
+            return fuori.getvalue()
+    except Exception:
+        return None
+
+
 def sfuma_in_basso(grezzi: bytes, quota: float = 0.62,
                    forza: float = 0.86) -> bytes | None:
     """La stessa foto con la luce che cala verso il fondo. `None` se non si legge.
@@ -793,6 +839,78 @@ def sfuma_in_basso(grezzi: bytes, quota: float = 0.62,
             fuori = io.BytesIO()
             piena.save(fuori, format="JPEG", quality=88, optimize=True,
                        progressive=True)
+            return fuori.getvalue()
+    except Exception:
+        return None
+
+
+# Quanto sono arrotondati gli angoli delle fotografie, in millesimi del lato
+# corto. [AGGIUNTO 2026-08-18 — Lorenzo, mostrando quattro brochure di
+# viaggio: «migliorare l'impaginazione per renderla sempre luxury ma simile a
+# queste».]
+#
+# E' la firma visiva piu' ricorrente di quei documenti: nessuna fotografia ha
+# gli angoli vivi. Non e' decorazione fine a se stessa — un angolo vivo dice
+# «ritaglio automatico», un angolo morbido dice «qualcuno l'ha impaginata».
+#
+# Il numero e' in millesimi e non in pixel perche' le fotografie di questo
+# documento hanno larghezze molto diverse (una fascia di copertina e una
+# cella di griglia): un raggio fisso sarebbe invisibile sull'una e
+# esagerato sull'altra.
+RAGGIO_ANGOLI = 0.035
+
+
+def angoli_arrotondati(grezzi: bytes, sfondo_rgb=(255, 255, 255),
+                       raggio: float = RAGGIO_ANGOLI) -> bytes | None:
+    """La stessa fotografia con gli angoli morbidi. `None` se non si legge.
+
+    [AGGIUNTO 2026-08-18.] Si fa sui PIXEL, e non e' una scelta di gusto: e'
+    la stessa lezione gia' pagata con il ritaglio tondo il 13 agosto —
+    `border-radius` su un'immagine, con questo motore di stampa, arrotonda
+    in alto e taglia netto in basso. Nell'anteprima del browser e' perfetto,
+    nel PDF venduto e' un difetto.
+
+    Come per il cerchio, **il colore del fondo lo dice chi chiama**: niente
+    trasparenza, perche' un PNG con canale alfa pesa di piu' e su certi
+    lettori si annerisce. Si dipinge direttamente il colore su cui la
+    fotografia andra' a finire, e gli angoli scompaiono su qualunque fondo
+    senza chiedere niente al motore di stampa.
+
+    Non ritaglia e non ridimensiona: la fotografia che entra e quella che
+    esce hanno le stesse identiche misure. Chi vuole anche cambiare forma usa
+    prima `ritaglia_panoramica`, come fa tutto il resto del documento.
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return None
+    if not isinstance(grezzi, (bytes, bytearray)) or not grezzi:
+        return None
+    try:
+        with Image.open(io.BytesIO(grezzi)) as immagine:
+            piena = immagine.convert("RGB")
+            larghezza, altezza = piena.size
+            if not larghezza or not altezza:
+                return None
+            r = int(round(min(larghezza, altezza) * max(0.0, float(raggio))))
+            if r < 2:
+                return bytes(grezzi)
+            maschera = Image.new("L", (larghezza, altezza), 0)
+            ImageDraw.Draw(maschera).rounded_rectangle(
+                (0, 0, larghezza - 1, altezza - 1), radius=r, fill=255)
+            try:
+                colore = tuple(int(c) for c in (sfondo_rgb or (255, 255, 255)))[:3]
+                if len(colore) != 3:
+                    colore = (255, 255, 255)
+            except (TypeError, ValueError):
+                colore = (255, 255, 255)
+            sfondo = Image.new("RGB", (larghezza, altezza), colore)
+            sfondo.paste(piena, (0, 0), maschera)
+            fuori = io.BytesIO()
+            # JPEG e non PNG: una fotografia da milleseicento pixel salvata
+            # in PNG pesa tre o quattro volte tanto, e il fascicolo viaggia
+            # per email. Il cerchio usa PNG perche' e' piccolo; qui no.
+            sfondo.save(fuori, format="JPEG", quality=85, optimize=True)
             return fuori.getvalue()
     except Exception:
         return None

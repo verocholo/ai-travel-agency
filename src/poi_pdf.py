@@ -350,6 +350,26 @@ def _sonda(nome: str) -> str:
     )
 
 
+def _paragraphi_separati(testo) -> list:
+    """Il testo diviso nei suoi paragrafi, ognuno gia' vestito da paragrafo.
+
+    [AGGIUNTO 2026-08-18.] `_paragraphs` li restituisce gia' incollati in
+    una stringa sola, che va benissimo per una colonna e non serve a niente
+    per due: per bilanciare due colonne bisogna poterli contare e pesare uno
+    per uno. Stessa divisione, stesse regole — si riusa `_paragraphs` su ogni
+    pezzo invece di riscrivere la spaccatura, cosi' le due strade non
+    possono divergere.
+    """
+    import re as _re
+
+    grezzo = str(testo or "").replace("\r\n", "\n").replace("\r", "\n")
+    blocchi = [b.strip() for b in _re.split(r"\n\s*\n", grezzo) if b.strip()]
+    if len(blocchi) <= 1:
+        singoli = [b.strip() for b in grezzo.split("\n") if b.strip()]
+        blocchi = singoli if len(singoli) > 1 else blocchi
+    return [_paragraphs(b, "corpo") for b in blocchi if b]
+
+
 def _due_colonne(pezzi) -> str:
     """Il corpo della scheda su due colonne, bilanciate per altezza.
 
@@ -423,6 +443,11 @@ def _immagine(scatto, larghezza_max: int | None = None, alt: str = "",
         return ""
     if rapporto:
         grezzi = foto.ritaglia_panoramica(grezzi, rapporto) or grezzi
+        # [ANGOLI MORBIDI 2026-08-18] Sui pixel, non col foglio di stile:
+        # qui `border-radius` su un'immagine arrotonda in alto e taglia netto
+        # in basso. Stessa scelta del documento principale, cosi' le due
+        # meta' del fascicolo hanno la stessa faccia.
+        grezzi = foto.angoli_arrotondati(grezzi) or grezzi
     if larghezza_max:
         grezzi = foto.normalizza_png(grezzi, larghezza_max) or grezzi
     try:
@@ -639,7 +664,22 @@ def build_guide_html(
 
     storia = guide.get("history_summary") or ""
     if storia:
-        parti.append(f"<div class='corpo'>{_paragraphs(storia, 'corpo')}</div>")
+        # [SU DUE COLONNE 2026-08-18 — Lorenzo, con quattro brochure di
+        # viaggio in mano: «renderla luxury ma simile a queste».]
+        #
+        # Erano tutte e quattro impaginate a colonne, e non per moda: una
+        # riga larga quanto un A4 e' faticosa, l'occhio si perde tornando a
+        # capo. E' il motivo per cui riviste e guide sono in colonne da un
+        # secolo e mezzo — la stessa ragione gia' scritta in `_due_colonne`,
+        # applicata al pezzo di testo piu' lungo della scheda invece che
+        # solo agli elenchi sotto.
+        #
+        # Con UN paragrafo solo non si divide niente: mezza colonna di
+        # testo e mezza vuota sarebbe peggio di una riga larga.
+        _pezzi_storia = _paragraphi_separati(storia)
+        _dentro = (_due_colonne(_pezzi_storia) if len(_pezzi_storia) > 1
+                   else _paragraphs(storia, "corpo"))
+        parti.append(f"<div class='corpo'>{_dentro}</div>")
 
     # [AGGIUNTO 2026-08-13 — task #223] Il corpo della scheda si
     # raccoglie qui e si stampa su DUE COLONNE (vedi `_due_colonne`).
@@ -648,14 +688,22 @@ def build_guide_html(
 
     curiosita = [str(c).strip() for c in (guide.get("curiosita") or []) if str(c).strip()]
     if curiosita:
+        # [CORRETTO 2026-08-18] Le voci finivano in `parti` mentre l'elenco
+        # che le contiene finiva in `corpo`: i pallini uscivano FUORI dal
+        # loro `<ul>` e fuori dalle due colonne, stampati a tutta larghezza
+        # in fondo alla scheda, staccati dal titolo «Da sapere» che li
+        # annunciava. Si vede benissimo sul fascicolo vero, ed e' un refuso
+        # di una lettera: `parti` invece di `corpo`.
         corpo.append("<div class='sottotitolo'>Da sapere</div><ul>")
-        parti.extend(f"<li>{_esc(c)}</li>" for c in curiosita)
+        corpo.extend(f"<li>{_esc(c)}</li>" for c in curiosita)
         corpo.append("</ul>")
 
     consigli = [str(t).strip() for t in (guide.get("practical_tips") or []) if str(t).strip()]
     if consigli:
+        # Stesso refuso, stesso effetto: i consigli pratici uscivano dal
+        # loro riquadro colorato e finivano a tutta pagina in fondo.
         corpo.append("<div class='riquadro'><strong>Consigli pratici</strong><ul>")
-        parti.extend(f"<li>{_esc(t)}</li>" for t in consigli)
+        corpo.extend(f"<li>{_esc(t)}</li>" for t in consigli)
         corpo.append("</ul></div>")
 
     errore = str(guide.get("errore_da_evitare") or "").strip()
