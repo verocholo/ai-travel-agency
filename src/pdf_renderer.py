@@ -197,7 +197,23 @@ def _paragraphs(text, css_class: str = "guide-para") -> str:
 # `test_header_uses_solid_background_color_no_gradient` verifica che le
 # PAROLE "linear-gradient"/"opacity" non compaiano nell'HTML generato.
 _CSS_MODELLO = """
-    @page { size: A4; margin: 2cm 1.8cm; }
+    /* [MARGINE INFERIORE ALLARGATO 2026-08-18 — pagina 3 del fascicolo di
+       Bologna vero: l'ultima riga di testo finiva SOPRA il numero di
+       pagina. Misurato: l'inchiostro arrivava a 813 pixel su 842, cioe'
+       ventotto punti oltre il fondo della colonna di testo, e il numero di
+       pagina sta a ventotto punti dal bordo.
+
+       La causa non e' un errore di calcolo: questo motore di stampa, quando
+       spezza un riquadro con riempimento (il «Il viaggio in breve»), lascia
+       sconfinare l'ultima riga oltre il margine invece di mandarla alla
+       pagina dopo. Non lo si puo' vietare — si puo' solo lasciargli lo
+       spazio in cui sconfinare senza far danno.
+
+       Due decimi di centimetro in piu' sotto, e il numero di pagina
+       spostato piu' in basso (vedi `fascicolo.ALTEZZA_DEL_NUMERO_PT`):
+       insieme fanno quaranta punti di franco, piu' del sconfinamento
+       peggiore misurato. */
+    @page { size: A4; margin: 2cm 1.8cm 2.2cm; }
     * { box-sizing: border-box; }
     body {
       font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -2821,12 +2837,36 @@ def _render_cover(
         rows.append(("Base", hotels[0].get("name") or "[Da Verificare]"))
     if days:
         rows.append(("Giornate progettate", str(len(days))))
-    stops = sum(
-        len([b for b in (d.get("blocks") or []) if isinstance(b, dict)])
-        for d in days
-    )
+    # [CORRETTO 2026-08-18 — Lorenzo, sul fascicolo di Bologna vero: la
+    # copertina dichiarava «16 tappe in programma» e nel programma le tappe
+    # con un nome, un indirizzo e un orario erano una decina. Le altre erano
+    # spazi liberi — «[SLOT LIBERO] passeggiata libera», «tempo libero in
+    # hotel» — che sono una cosa buona e onesta, ma non sono tappe.]
+    #
+    # Un numero gonfiato sulla prima pagina e' il tipo di dettaglio che, se
+    # il cliente lo scopre, gli fa rileggere con sospetto tutto il resto.
+    # Contarli separatamente li racconta meglio di quanto facesse
+    # sommarli: dice che il programma respira, invece di far credere a
+    # sedici visite in due giorni.
+    def _e_una_tappa(blocco) -> bool:
+        if not isinstance(blocco, dict):
+            return False
+        if blocco.get("poi_id"):
+            return True
+        testo = f"{blocco.get('activity') or ''} {blocco.get('location') or ''}"
+        return "SLOT LIBERO" not in testo.upper()
+
+    tutti = [b for d in days for b in (d.get("blocks") or [])
+             if isinstance(b, dict)]
+    stops = len([b for b in tutti if _e_una_tappa(b)])
+    liberi = len(tutti) - stops
     if stops:
         rows.append(("Tappe in programma", str(stops)))
+    if liberi:
+        rows.append((
+            "Spazi liberi",
+            "1 momento" if liberi == 1 else f"{liberi} momenti",
+        ))
     if leg_count:
         rows.append((
             "Spostamenti mappati",
@@ -3509,7 +3549,112 @@ def _render_day_travel_total(legs) -> str:
     return f"<div class='day-total'>{_esc(testo)}</div>"
 
 
-def _foto_di_apertura(days, photos: dict | None) -> tuple[bytes, str] | None:
+def _tavola_di_chiusura(photos, usate) -> str:
+    """Una fotografia grande in fondo al corpo, per non lasciare un foglio
+    quasi vuoto in mezzo al fascicolo.
+
+    [AGGIUNTO 2026-08-18 — direttiva di Lorenzo, testuale: «le foto devono
+    occupare lo spazio bianco», e sul fascicolo vero: «non possono esserci
+    pagine solo con foto e poi tutto bianco».]
+
+    Si usa SOLO quando l'ultima pagina del corpo e' rimasta quasi vuota e
+    stringere il testo non e' bastato a farla sparire (vedi
+    `impaginazione.coda_orfana` e il cancello in `render_pdf`). E' il caso in
+    cui il foglio c'e' comunque: l'unica scelta e' fra riempirlo e lasciarlo
+    bianco.
+
+    Due regole, e sono quelle di sempre:
+
+    - **una fotografia mai usata**, presa dal registro del documento. Se non
+      ne resta nessuna non si stampa niente: ristampare qui un'immagine gia'
+      vista sarebbe riparare una pagina brutta con un difetto peggiore;
+    - **il credito accanto**, piccolo come ovunque. Senza credito la
+      fotografia non si stampa: e' licenza, non estetica.
+    """
+    if not isinstance(photos, dict) or not photos:
+        return ""
+    for scatto in photos.values():
+        if not isinstance(scatto, dict) or not scatto.get("reale"):
+            continue
+        scelto = _scatto_non_ancora_usato(scatto, usate)
+        if not scelto:
+            continue
+        ritagliata = foto.ritaglia_panoramica(scelto["png"], 1.35) or scelto["png"]
+        try:
+            b64 = base64.b64encode(ritagliata).decode("ascii")
+        except (TypeError, ValueError):
+            continue
+        tipo = foto.mime_immagine(ritagliata)
+        return _keep_together(
+            f"<div class='day-larga'><img src='data:{tipo};base64,{b64}' "
+            "alt='' style='width:100%; display:block;'>"
+            f"<div class='didascalia'>{_credito(scelto['credito'])}</div></div>")
+    return ""
+
+
+def _impronta(png) -> str:
+    """L'identita' di un'immagine: i suoi byte, non il luogo da cui viene.
+
+    [AGGIUNTO 2026-08-18.] Serve al registro delle immagini gia' stampate.
+    Si usa l'impronta dei byte e non il `poi_id` per una ragione precisa: lo
+    stesso luogo puo' avere piu' fotografie, e due luoghi diversi possono
+    ricevere lo stesso identico file da Commons. Quello che non deve
+    ripetersi e' l'IMMAGINE, che e' cio' che il cliente vede.
+    """
+    import hashlib
+
+    if not isinstance(png, (bytes, bytearray)) or not png:
+        return ""
+    return hashlib.sha1(bytes(png)).hexdigest()
+
+
+def _scatto_non_ancora_usato(scatto, usate=None):
+    """La prima fotografia di QUESTO luogo che non e' ancora stata stampata.
+
+    [AGGIUNTO 2026-08-18 — Lorenzo, sul fascicolo di Bologna vero: «la
+    scelta delle foto e' troppo limitata hai ripetuto le stesse 3 foto».]
+
+    Misurato su quel documento: quattordici immagini stampate, dieci
+    diverse. La fotografia delle Due Torri usciva TRE volte identica —
+    fascia di copertina, striscia del Giorno 1, e a tutta pagina in apertura
+    di scheda — perche' ogni punto del documento ripartiva da `photos`
+    grezzo e riprendeva sempre la prima.
+
+    Adesso ogni luogo porta una scorta (`scatti`, riempita da
+    `foto.raccogli_foto`) e questa funzione consegna la prima non ancora
+    usata, segnandola. Con `usate=None` si comporta esattamente come prima —
+    la prima della lista — cosi' ogni chiamante vecchio vede lo stesso
+    documento di ieri.
+
+    Torna `None` quando questo luogo ha finito le sue fotografie. E' voluto,
+    ed e' la regola gia' scritta il 16 agosto: **meglio nessuna fotografia
+    che la fotografia di un altro luogo, o la stessa due volte.**
+    """
+    if not isinstance(scatto, dict):
+        return None
+    scorta = scatto.get("scatti")
+    if not isinstance(scorta, list) or not scorta:
+        # Voce vecchia, o luogo senza fotografie vere: si ricade sulle due
+        # chiavi di sempre, cosi' un dizionario costruito a mano — succede
+        # in mezza dozzina di collaudi — continua a funzionare.
+        scorta = [{"png": scatto.get("png"), "credito": scatto.get("credito")}]
+    for pezzo in scorta:
+        if not isinstance(pezzo, dict):
+            continue
+        png, credito = pezzo.get("png"), pezzo.get("credito")
+        if not png or not isinstance(credito, str) or not credito.strip():
+            continue
+        if usate is None:
+            return {"png": png, "credito": credito}
+        segno = _impronta(png)
+        if segno and segno not in usate:
+            usate.add(segno)
+            return {"png": png, "credito": credito}
+    return None
+
+
+def _foto_di_apertura(days, photos: dict | None,
+                      usate=None) -> tuple[bytes, str] | None:
     """La fotografia che apre il documento: la prima tappa vera del viaggio.
 
     [AGGIUNTO 2026-08-13 — task #209] La copertina era l'unica pagina del
@@ -3525,22 +3670,43 @@ def _foto_di_apertura(days, photos: dict | None) -> tuple[bytes, str] | None:
     stessa copertina. Una prima pagina che cambia fra due esecuzioni identiche
     e' un difetto che nessuno riesce a riprodurre.
     """
+    # [2026-08-18] La copertina prende UNA fotografia e ne segna UNA. Non
+    # passa da `_foto_vere_della_giornata` col registro acceso, e la ragione
+    # merita due righe perche' ci sono cascato: quella funzione prepara
+    # l'intera giornata — due giri, tutte le tappe — e segnarle tutte qui
+    # vorrebbe dire consumare le fotografie del Giorno 1 per stamparne una.
+    # Il risultato era una copertina bella e una giornata svuotata.
     for giorno in days or []:
         if not isinstance(giorno, dict):
             continue
-        candidate = _foto_vere_della_giornata(giorno.get("blocks"), photos)
-        for _poi_id, scatto, _nome in candidate:
-            dati = scatto.get("png")
-            if isinstance(dati, (bytes, bytearray)) and dati:
-                return bytes(dati), str(scatto.get("credito") or "")
+        for block in (giorno.get("blocks") or []):
+            if not isinstance(block, dict):
+                continue
+            scatto = photos.get(block.get("poi_id")) if isinstance(photos, dict) else None
+            if not isinstance(scatto, dict) or not scatto.get("reale"):
+                continue
+            scelto = _scatto_non_ancora_usato(scatto, usate)
+            if scelto and scelto.get("png"):
+                return bytes(scelto["png"]), str(scelto.get("credito") or "")
     return None
 
 
-def _foto_vere_della_giornata(blocks, photos: dict | None) -> list:
+def _foto_vere_della_giornata(blocks, photos: dict | None,
+                             usate=None) -> list:
     """Le fotografie VERE delle tappe di una giornata, nell'ordine di visita.
 
     Una tappa sola per luogo: se il cliente torna in Piazza Maggiore due
     volte, la sua fotografia si stampa una volta.
+
+    [ESTESA 2026-08-18] `usate` e' il registro delle immagini gia' stampate
+    in QUESTO documento. Passandolo, ogni luogo consegna la prima fotografia
+    della sua scorta che non e' ancora uscita, e la segna. Senza, si comporta
+    esattamente come prima.
+
+    Un luogo che ha esaurito le sue fotografie **non compare**: e' la stessa
+    regola del 16 agosto, applicata alle ripetizioni invece che ai prestiti —
+    meglio una pagina con una fotografia in meno che la stessa immagine due
+    volte nello stesso fascicolo.
     """
     if not isinstance(photos, dict) or not photos:
         return []
@@ -3554,16 +3720,79 @@ def _foto_vere_della_giornata(blocks, photos: dict | None) -> list:
         scatto = photos.get(poi_id)
         if not isinstance(scatto, dict) or not scatto.get("reale"):
             continue
-        credito = scatto.get("credito")
-        if not scatto.get("png") or not isinstance(credito, str) or not credito.strip():
+        viste.add(poi_id)
+        nome = str(block.get("location") or "").strip()
+
+        # Prima scelta: una fotografia che il documento non ha ancora
+        # stampato. Seconda scelta — e solo se la prima non c'e' — la
+        # fotografia di sempre, anche se e' gia' uscita altrove.
+        #
+        # LA SECONDA SCELTA NON E' UNA RESA, ed e' la riga piu' importante
+        # di questa funzione. La regola «mai due volte la stessa immagine»
+        # presa alla lettera, su un viaggio con quattro luoghi e una
+        # fotografia a testa, non produce un documento senza ripetizioni:
+        # produce giornate SENZA FOTOGRAFIE. E' peggio, e Lorenzo lo ha
+        # gia' detto con altre parole il 13 agosto — «ogni giornata deve
+        # avere le foto».
+        #
+        # Cosi' com'e': quando la scorta basta — ed e' il caso normale da
+        # quando `foto.raccogli_foto` ne raccoglie fino a tre per luogo — non
+        # si ripete niente; quando non basta, il documento resta quello di
+        # ieri invece di svuotarsi.
+        scelto = _scatto_non_ancora_usato(scatto, usate)
+        if not scelto:
+            scelto = _scatto_non_ancora_usato(scatto, None)
+        if not scelto:
+            continue
+        uscita.append((poi_id, scelto, nome))
+
+    return uscita
+
+
+def _scorta_della_giornata(blocks, photos: dict | None, usate) -> list:
+    """LA SECONDA fotografia di ogni luogo della giornata, quando c'e'.
+
+    [AGGIUNTO 2026-08-18.] E' la riserva con cui la fila di chiusura si
+    riempie quando l'apertura si e' presa le prime.
+
+    ## Perche' e' una funzione a parte e non un secondo giro dentro l'altra
+
+    Provato, e sbagliato: mettendo tutto in un elenco solo, l'apertura di
+    giornata vedeva il doppio delle fotografie e cambiava impianto —
+    sceglieva il mosaico, che ne usa tre, dove prima ne usava una. Il
+    documento si allungava di una pagina senza che nessuno l'avesse chiesto.
+    Misurato: otto pagine diventate nove.
+
+    L'apertura deve continuare a vedere quello che vedeva: **una fotografia
+    per luogo, la migliore.** La riserva serve dopo, e solo a chi riempie.
+
+    Senza registro non torna niente: senza sapere cosa e' gia' uscito, la
+    riserva ristamperebbe le stesse immagini, che e' il difetto da cui e'
+    nata tutta questa storia.
+    """
+    if usate is None or not isinstance(photos, dict) or not photos:
+        return []
+    viste, uscita = set(), []
+    for block in blocks or []:
+        if not isinstance(block, dict):
+            continue
+        poi_id = block.get("poi_id")
+        if not isinstance(poi_id, str) or not poi_id or poi_id in viste:
+            continue
+        scatto = photos.get(poi_id)
+        if not isinstance(scatto, dict) or not scatto.get("reale"):
             continue
         viste.add(poi_id)
-        uscita.append((poi_id, scatto, str(block.get("location") or "").strip()))
+        altra = _scatto_non_ancora_usato(scatto, usate)
+        if altra:
+            uscita.append((poi_id, altra,
+                           str(block.get("location") or "").strip()))
     return uscita
 
 
 def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "",
-                          ingrandita: bool = False) -> str:
+                          ingrandita: bool = False,
+                          candidate_pronte=None) -> str:
     """Fino a tre fotografie in fila, in chiusura di giornata.
 
     [AGGIUNTO 2026-08-13 — richiesta di Lorenzo: «inserisci piu' foto,
@@ -3608,8 +3837,16 @@ def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "",
     fotografie di questa fila non deformate da agosto.
     """
     massimo = 2 if ingrandita else 3
-    candidate = [c for c in _foto_vere_della_giornata(blocks, photos)
-                 if c[0] != gia_usata][:massimo]
+    # [2026-08-18] `candidate_pronte` sono le fotografie che l'apertura di
+    # questa giornata NON ha usato, gia' scelte contro il registro del
+    # documento. Il vecchio `gia_usata` — un nome solo, indovinato —
+    # resta per i chiamanti che non passano niente (mezza dozzina di
+    # collaudi), ed e' il motivo per cui non l'ho tolto.
+    if candidate_pronte is not None:
+        candidate = list(candidate_pronte)[:massimo]
+    else:
+        candidate = [c for c in _foto_vere_della_giornata(blocks, photos)
+                     if c[0] != gia_usata][:massimo]
 
     if ingrandita and len(candidate) == 1:
         # Una fila di UNA fotografia sola, altrove, sembrerebbe un errore in
@@ -3636,6 +3873,29 @@ def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "",
     if len(candidate) < 2:
         return ""
     larghezza = 100 // len(candidate)
+
+    # [AGGIUNTO 2026-08-18 — «le foto che si trovano vicine in serie devono
+    # avere tutte la stessa dimensione», ripetuto guardando le pagine 5 e 6
+    # del fascicolo di Bologna vero.]
+    #
+    # Chiedere lo stesso rapporto a tutte NON basta: il tetto di ritaglio
+    # (`foto.TAGLIO_MASSIMO`) impedisce a una fotografia molto verticale di
+    # arrivarci, e in una riga di celle uguali quella esce piu' alta delle
+    # altre. Qui si misura cosa riesce a fare ognuna e si prende la forma
+    # piu' alta del gruppo — l'unica che tutte possono raggiungere, perche'
+    # sbucciare di MENO si puo' sempre.
+    _rapporti = []
+    for _poi_id, _scatto, _nome in candidate:
+        _grezzi = _scatto.get("png") if isinstance(_scatto, dict) else None
+        if not _grezzi:
+            continue
+        _tagliata = foto.ritaglia_panoramica(_grezzi, RAPPORTO_FILA) or _grezzi
+        _misura = foto.dimensioni(_tagliata)
+        if _misura and _misura[1]:
+            _rapporti.append(_misura[0] / _misura[1])
+    rapporto_della_fila = (max(0.85, min(min(_rapporti), RAPPORTO_FILA))
+                           if _rapporti else RAPPORTO_FILA)
+
     celle = []
     for _poi_id, scatto, nome in candidate:
         grezzi = scatto.get("png") if isinstance(scatto, dict) else None
@@ -3645,7 +3905,7 @@ def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "",
         # spazio ci fosse attorno. Adesso si ritaglia a un rapporto fisso e
         # riempie la cella per intero — l'altezza la governa il ritaglio, non
         # un tetto scritto nel foglio di stile.
-        ritagliata = foto.ritaglia_panoramica(grezzi, RAPPORTO_FILA) or grezzi
+        ritagliata = foto.ritaglia_panoramica(grezzi, rapporto_della_fila) or grezzi
         try:
             b64 = base64.b64encode(ritagliata).decode("ascii")
         except (TypeError, ValueError, KeyError):
@@ -3663,7 +3923,8 @@ def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "",
 
 
 def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
-                          riserva_viaggio, apertura_precedente):
+                          riserva_viaggio, apertura_precedente,
+                          disponibili_pronte=None):
     """Come si apre questa giornata: l'HTML e il nome dell'apertura scelta.
 
     [AGGIUNTO 2026-08-13 — task #214, primo pezzo del compositore che entra
@@ -3686,14 +3947,21 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
     Torna anche il nome dell'apertura perche' chi chiama deve poterlo passare
     alla giornata dopo: senza, «mai due volte di fila» non e' verificabile.
     """
-    proprie = [(scatto, nome) for _poi, scatto, nome
-               in _foto_vere_della_giornata(blocks, photos)]
+    # [2026-08-18] Le fotografie arrivano gia' scelte da chi chiama, contro
+    # il registro delle immagini gia' stampate nel documento. Se non arrivano
+    # — mezza dozzina di collaudi chiamano questa funzione da sola — si
+    # scelgono qui come si e' sempre fatto.
+    if disponibili_pronte is not None:
+        proprie = list(disponibili_pronte)
+    else:
+        proprie = [(scatto, nome) for _poi, scatto, nome
+                   in _foto_vere_della_giornata(blocks, photos)]
     disponibili, _provenienza = compositore.foto_della_giornata(
         proprie, riserva_viaggio, None, giorno_numero)
     apertura = compositore.scegli_apertura(
         chiave, giorno_numero, len(disponibili), apertura_precedente)
     if not apertura or not disponibili:
-        return "", ""
+        return "", "", 0
 
     # [ESTESO 2026-08-13 — task #215, e nasce da una bocciatura.]
     # La prima versione portava dentro SOLO l'apertura e lasciava fuori tutto
@@ -3775,6 +4043,56 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
         )
         return html, rapporto_reale
 
+    def _rapporto_comune(scatti, rapporto_ideale):
+        """Il rapporto che TUTTE queste fotografie riescono davvero a
+        raggiungere, cosi' che affiancate vengano alla stessa altezza.
+
+        [AGGIUNTO 2026-08-18 — Lorenzo, due volte: «le foto che si trovano
+        vicine in serie devono avere tutte la stessa dimensione», e poi di
+        nuovo sul fascicolo di Bologna vero, pagine 5 e 6.]
+
+        ## Perche' non bastava chiedere lo stesso rapporto a tutte
+
+        Lo si faceva gia', ed e' proprio li' che si rompeva. Il ritaglio ha
+        un tetto (`foto.TAGLIO_MASSIMO`): una fotografia molto verticale —
+        le due torri — non riesce a diventare larga quanto le si chiede, e
+        consegna il rapporto piu' vicino che il tetto permette. Chiedere
+        1.35 a tre fotografie ne restituisce tre di forma diversa, e in una
+        riga a colonne uguali questo vuol dire tre altezze diverse.
+
+        Il 17 agosto la strada scelta era stata l'opposta: lasciare a
+        ognuna il rapporto che riusciva a ottenere. Onesto, e bocciato da
+        chi guarda la pagina.
+
+        ## Cosa fa questa
+
+        Misura cosa riesce a fare ognuna e prende il rapporto **piu' basso**
+        del gruppo, cioe' la forma piu' alta: e' l'unica che tutte possono
+        raggiungere: una fotografia si puo' sempre sbucciare di MENO, mai di
+        piu' del tetto. Poi si richiede quel rapporto a tutte, e le altezze
+        vengono uguali per costruzione.
+
+        Effetto secondario voluto: la fila viene un po' piu' alta, cioe'
+        riempie piu' foglio — che e' l'altra cosa chiesta da Lorenzo.
+
+        Il pavimento a 0.85 esiste perche' un gruppo con dentro una
+        fotografia quasi quadrata non trascini l'intera fila a occupare
+        mezza pagina. Sopra il rapporto ideale non si sale mai: la fila non
+        deve diventare piu' bassa di com'era pensata.
+        """
+        PAVIMENTO = 0.85
+        rapporti = []
+        for scatto in scatti:
+            png = scatto.get("png") if isinstance(scatto, dict) else None
+            if not png:
+                continue
+            _ritagliata, reale = _ritaglio_misurato(png, rapporto_ideale)
+            if reale:
+                rapporti.append(reale)
+        if not rapporti:
+            return rapporto_ideale
+        return max(PAVIMENTO, min(min(rapporti), rapporto_ideale))
+
     def _tonda(scatto):
         png = scatto.get("png") if isinstance(scatto, dict) else None
         credito = str((scatto or {}).get("credito") or "").strip()
@@ -3809,6 +4127,7 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
 
     # --- l'apertura fotografica -------------------------------------------
     scelta = apertura
+    consumate = 0
     if apertura == "mosaico":
         # [CORRETTO 2026-08-17 — pagina 6: «le foto sono stretchate».]
         #
@@ -3827,13 +4146,22 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
         # forzarle tutte alla stessa forma: e' la stessa regola di tutto il
         # prodotto — meglio una cosa vera e un po' meno ordinata che una
         # composta e falsa.
-        celle_e_rapporti = [
-            _cella_figura(scatto, 1.35, 33) for scatto, _nome in disponibili[:3]
-        ]
+        # [RIFATTO 2026-08-18] Un rapporto solo per tutte e tre, misurato
+        # sul gruppo: tre celle larghe uguale e tre fotografie della stessa
+        # forma fanno tre figure della stessa altezza. Il commento qui sopra
+        # racconta la scelta del 17 agosto — lasciare a ognuna la sua forma —
+        # che Lorenzo ha bocciato guardando le pagine 5 e 6 del fascicolo
+        # vero: «le foto che si trovano vicine in serie devono avere tutte la
+        # stessa dimensione».
+        _tre = [scatto for scatto, _nome in disponibili[:3]]
+        _rapporto = _rapporto_comune(_tre, 1.35)
+        celle_e_rapporti = [_cella_figura(scatto, _rapporto, 33)
+                            for scatto in _tre]
         celle = [c for c, _r in celle_e_rapporti if c]
         if len(celle) >= 3:
             pezzi.append("<table class='day-striscia'><tr>" + "".join(celle)
                          + "</tr></table>")
+            consumate = 3
         else:
             scelta = "banda"
 
@@ -3865,9 +4193,15 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
         # di prima del 16 agosto, che e' il difetto originale segnalato.
         grande_scatto = disponibili[0][0]
         piccola_scatto = disponibili[1][0] if len(disponibili) >= 2 else None
-        cella_grande, _ = _cella_figura(grande_scatto, RAPPORTO_EROE, 50)
+        # [2026-08-18] Stesso rapporto per tutte e due, ma quello che TUTTE
+        # e due riescono a raggiungere davvero — non quello ideale, che una
+        # fotografia molto verticale non ottiene mai. E' cio' che chiude
+        # l'ultima eccezione descritta nel commento qui sopra.
+        _rapporto_eroe = _rapporto_comune(
+            [s for s in (grande_scatto, piccola_scatto) if s], RAPPORTO_EROE)
+        cella_grande, _ = _cella_figura(grande_scatto, _rapporto_eroe, 50)
         cella_piccola, _ = (
-            _cella_figura(piccola_scatto, RAPPORTO_EROE, 50)
+            _cella_figura(piccola_scatto, _rapporto_eroe, 50)
             if piccola_scatto else ("", 0)
         )
         if cella_grande and cella_piccola:
@@ -3875,6 +4209,7 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
                 "<table class='day-eroe'><tr>"
                 + cella_grande + cella_piccola
                 + "</tr></table>")
+            consumate = 2
         else:
             scelta = "banda"
 
@@ -3892,6 +4227,7 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
                 "<div class='day-numerone-e'>giorno</div></td>"
                 f"<td class='day-numerone-foto'>{figura}</td>"
                 "</tr></table>")
+            consumate = 1
         else:
             scelta = "banda"
 
@@ -3899,6 +4235,7 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
         figura = _figura(disponibili[0][0], "style='width:100%; display:block;'", 3.1)
         if figura:
             pezzi.append(f"<div class='day-banda'>{figura}</div>")
+            consumate = 1
         else:
             scelta = "foto-sola"
 
@@ -3924,6 +4261,7 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
                          "style='width:100%; display:block;'", 2.9)
         if figura:
             pezzi.append(f"<div class='day-larga'>{figura}</div>")
+            consumate = 1
 
     # --- il nastro coi numeri della giornata ------------------------------
     if "nastro" in ornamenti and blocks:
@@ -3937,8 +4275,14 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
     # di due: se se la prendesse lui, l'apertura resterebbe senza.
     if "tonda" in ornamenti and len(disponibili) >= 2:
         pezzi.append(_tonda(disponibili[1][0]))
+        consumate = max(consumate, 2)
 
-    return "".join(x for x in pezzi if x), scelta
+    # QUANTE fotografie ha consumato davvero questa apertura. Serve a chi
+    # chiama per dare alla fila di chiusura solo quelle rimaste: e' un conto,
+    # non piu' una presunzione. Prima si presumeva «una», ed era sbagliato
+    # per il mosaico (tre), per l'eroe laterale (due) e ogni volta che
+    # l'ornamento tondo se ne prendeva un'altra.
+    return "".join(x for x in pezzi if x), scelta, min(consumate, len(disponibili))
 
 
 def _render_day_photo(blocks, photos: dict | None) -> str:
@@ -4922,6 +5266,10 @@ def render_html(
     # fascicolo. Chi stampa lo accende MISURANDO, e lo tiene solo se la
     # pagina e' sparita davvero.
     coda_compatta: bool = False,
+    # [AGGIUNTO 2026-08-18] Vero quando la coda orfana c'e' e stringere non
+    # e' bastato a farla sparire: il foglio resta comunque, e allora si
+    # riempie con una fotografia mai usata invece di lasciarlo bianco.
+    coda_illustrata: bool = False,
 ) -> str:
     """
     Funzione pura (nessuna chiamata di rete/subprocess) — costruisce
@@ -5176,6 +5524,21 @@ def render_html(
 
     tinte = _tav.scegli(photos)
 
+    # [IL REGISTRO DELLE IMMAGINI — 2026-08-18.] Lorenzo, sul fascicolo di
+    # Bologna vero: «la scelta delle foto e' troppo limitata hai ripetuto le
+    # stesse 3 foto». Misurato su quel PDF: quattordici immagini stampate,
+    # dieci diverse, e le Due Torri tre volte identiche.
+    #
+    # La causa non era la scelta di un singolo punto: era che NESSUN punto
+    # sapeva cosa avessero gia' stampato gli altri. Copertina, aperture di
+    # giornata, file di chiusura e schede ripartivano tutte da `photos`
+    # grezzo e riprendevano sempre la prima fotografia di ogni luogo.
+    #
+    # Questo insieme e' l'unica memoria del documento, e sta QUI — prima
+    # della copertina — perche' e' l'unico punto che vede tutto: la
+    # copertina si serve per prima, le giornate dopo, in ordine di lettura.
+    _immagini_usate: set = set()
+
     parts = [
         "<!DOCTYPE html><html lang='it'><head><meta charset='utf-8'>",
         f"<title>Itinerario — {destination}</title>",
@@ -5187,7 +5550,7 @@ def render_html(
                 len(e.get("legs") or [])
                 for e in directions_by_day.values() if isinstance(e, dict)
             ),
-            foto_copertina=_foto_di_apertura(days, photos),
+            foto_copertina=_foto_di_apertura(days, photos, _immagini_usate),
             # Il colore su cui atterra la fotografia tonda. Senza, il cerchio
             # esce con un quadrato bianco attorno: difetto visto da Lorenzo
             # sul fascicolo di Bologna.
@@ -5393,6 +5756,22 @@ def render_html(
         # c'entrano niente. Ora il totale viene stampato una volta sola ma per
         # due strade indipendenti: dentro l'apertura del giorno se la cartina
         # c'e', subito sotto il titolo del primo tronco se non c'e'.
+        _foto_disponibili = _foto_vere_della_giornata(
+            blocks, photos, _immagini_usate)
+        # La riserva si chiede DOPO l'apertura, non prima: l'apertura deve
+        # scegliere il suo impianto guardando una fotografia per luogo, come
+        # ha sempre fatto. Vedi `_scorta_della_giornata`.
+        _foto_html, _apertura_usata, _quante_in_apertura = _apertura_di_giornata(
+            destination, day_number, blocks, photos,
+            _riserva_foto_viaggio, _apertura_precedente,
+            disponibili_pronte=[(s, n) for _p, s, n in _foto_disponibili])
+        _apertura_precedente = _apertura_usata or _apertura_precedente
+        _striscia_html = _render_striscia_foto(
+            blocks, photos,
+            ingrandita=(day_number in _giornate_da_ingrandire),
+            candidate_pronte=(_foto_disponibili[_quante_in_apertura:]
+                              + _scorta_della_giornata(
+                                  blocks, photos, _immagini_usate)))
         _totale_gia_stampato = False
         day_title_html += _totale_html
         day_map_html = _render_day_map(
@@ -5412,6 +5791,27 @@ def render_html(
             # cartina, si ferma alla cartina e non arriva al singolo pallino.
             # È una pagina intera di distanza, non un capitolo: il cliente si
             # ritrova dove stava guardando.
+            # [PROVATO E TOLTO 2026-08-18 — e vale la pena lasciarlo
+            # scritto, perche' era la riparazione ovvia della pagina 7 del
+            # fascicolo di Bologna, dove sotto la cartina resta mezzo foglio
+            # bianco e la fotografia ricompare sulla pagina dopo.]
+            #
+            # L'idea era mettere cartina e fotografia nello STESSO guscio:
+            # o entrano tutte e due o scendono tutte e due, niente vuoto in
+            # mezzo. Misurato sul campione: peggiora. Il guscio diventa alto
+            # duecento punti in piu' e salta alla pagina dopo molto piu'
+            # spesso, lasciando indietro un vuoto piu' grande di quello che
+            # doveva togliere — due pagine al 54% e al 48% dove prima non
+            # ce n'erano.
+            #
+            # La strada giusta e' quella gia' usata due volte questa
+            # settimana: stampare, MISURARE dove e' rimasto il vuoto, e
+            # ristampare solo le giornate che ne hanno bisogno — spostando
+            # la fotografia di apertura in fondo alla giornata invece di
+            # sopra il programma. Non e' stata fatta ora per una ragione
+            # sola, ed e' la stessa che ha salvato il documento altre volte:
+            # il campione qui NON riproduce il difetto, quindi non c'e' modo
+            # di verificare la riparazione prima di spedirla.
             parts.append(
                 f"<div class='day-open'>{_anchor(f'giorno-{day_number}')}"
                 f"{_sonde_cartina(ancore_di_ritorno, day_number)}"
@@ -5439,19 +5839,17 @@ def render_html(
         # giornata. Calcolata qui, fuori dal ciclo dei tronchi, perche' va
         # stampata UNA volta: dentro il ciclo verrebbe ripetuta a ogni
         # "(continua)", cioe' tre volte nella stessa giornata lunga.
-        _foto_html, _apertura_usata = _apertura_di_giornata(
-            destination, day_number, blocks, photos,
-            _riserva_foto_viaggio, _apertura_precedente)
-        _apertura_precedente = _apertura_usata or _apertura_precedente
-        # La fotografia in apertura ne usa una; la fila in chiusura prende le
-        # altre. Passare qui quale e' gia' stata usata evita di stamparla due
-        # volte nella stessa pagina, che e' il modo piu' rapido di far
-        # sembrare automatico un documento.
-        _foto_disponibili = _foto_vere_della_giornata(blocks, photos)
-        _striscia_html = _render_striscia_foto(
-            blocks, photos,
-            gia_usata=(_foto_disponibili[0][0] if _foto_disponibili else ""),
-            ingrandita=(day_number in _giornate_da_ingrandire))
+        # [RIFATTO 2026-08-18.] Le fotografie di questa giornata si scelgono
+        # UNA volta, qui, contro il registro del documento — e poi si
+        # spartiscono: le prime all'apertura, quelle che restano alla fila di
+        # chiusura.
+        #
+        # Prima si sceglieva due volte, e la fila riceveva solo il nome del
+        # PRIMO luogo con la scritta «questa e' gia' usata». Era una
+        # presunzione sbagliata in tre casi su cinque: il mosaico ne consuma
+        # tre, l'eroe laterale due, e l'ornamento tondo un'altra ancora. Il
+        # risultato era la stessa fotografia due volte nella stessa pagina —
+        # il modo piu' rapido di far sembrare automatico un documento.
         _MAX_BLOCKS_PER_DAY_CARD = 20
         chunks = [
             blocks[i : i + _MAX_BLOCKS_PER_DAY_CARD]
@@ -5852,6 +6250,9 @@ def render_html(
     # Sta DENTRO la nota, non accanto: un elemento a superficie zero non
     # riceve un'annotazione misurabile da questo motore di stampa (lezione
     # gia' pagata con le sonde di fine giornata).
+    if coda_illustrata:
+        parts.append(_tavola_di_chiusura(photos, _immagini_usate))
+
     parts.append(
         "<div class='footer"
         # Nel modo compatto anche la nota si stringe al foglio: dieci punti
@@ -6044,7 +6445,8 @@ def render_pdf(
         capitoli_pronti = []
     mappa_capitoli = {c["poi_id"]: c["ancora"] for c in capitoli_pronti}
 
-    def _componi(a_capo=(), ingrandire=(), coda_compatta=False):
+    def _componi(a_capo=(), ingrandire=(), coda_compatta=False,
+                 coda_illustrata=False):
         return render_html(
             itinerary, trip, hotels=hotels, guides=guides, guide_urls=guide_urls,
             capitoli=mappa_capitoli,
@@ -6058,6 +6460,7 @@ def render_pdf(
             capitoli_a_capo=a_capo,
             giornate_da_ingrandire=ingrandire,
             coda_compatta=coda_compatta,
+            coda_illustrata=coda_illustrata,
         )
 
     # I numeri delle giornate DAVVERO presenti in questo itinerario, per la
@@ -6221,6 +6624,30 @@ def render_pdf(
                 _dopo = impaginazione.quante_pagine(
                     Path(tmp_pdf_path).read_bytes())
                 _peggiorata = bool(_prima and _dopo and _dopo >= _prima)
+
+            # [LA TERZA STAMPA — 2026-08-18.] Stringere non e' bastato: il
+            # foglio quasi vuoto resta. A quel punto la scelta non e' piu'
+            # fra una pagina e nessuna pagina — la pagina c'e' comunque — ma
+            # fra riempirla e lasciarla bianca. Si riempie, con una
+            # fotografia mai usata: e' la direttiva di Lorenzo, «le foto
+            # devono occupare lo spazio bianco».
+            #
+            # Si tiene solo se non allunga il documento: una tavola che si
+            # porta dietro un foglio in piu' avrebbe risolto niente.
+            if coda_compatta and _peggiorata and not _fallita:
+                _pagine_prima = impaginazione.quante_pagine(_prima_pdf_bytes)
+                with open(tmp_html_path, "w", encoding="utf-8") as illustrato:
+                    illustrato.write(_componi(da_spostare, giornate_da_ingrandire,
+                                              False, True))
+                terza = subprocess.run(
+                    [*COMANDO_STAMPA, tmp_html_path, tmp_pdf_path],
+                    capture_output=True, text=True, timeout=60,
+                )
+                _dopo = (impaginazione.quante_pagine(
+                    Path(tmp_pdf_path).read_bytes())
+                    if terza.returncode == 0 else 0)
+                if terza.returncode == 0 and _dopo and _dopo <= _pagine_prima:
+                    _peggiorata = False  # la tavola va bene: si tiene questa
 
             if _fallita or _peggiorata:
                 with open(tmp_html_path, "w", encoding="utf-8") as indietro:

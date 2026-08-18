@@ -391,7 +391,14 @@ def allega(dati: bytes, allegati) -> bytes:
 # (72 punti = un pollice). Ventotto punti sono un centimetro scarso: dentro il
 # margine bianco del documento, quindi non puo' finire sopra l'ultima riga di
 # una pagina piena.
-ALTEZZA_DEL_NUMERO_PT = 28.0
+# [ABBASSATO 2026-08-18 — pagina 3 del fascicolo di Bologna vero, dove
+# l'ultima riga di testo finiva sopra il numero.] Erano 28 punti. Il motore
+# di stampa, spezzando un riquadro con riempimento, lascia sconfinare
+# l'ultima riga di una ventina di punti oltre il fondo della colonna: il
+# numero va tenuto piu' in basso, e la colonna piu' in alto (vedi il
+# margine di `@page` in `src/pdf_renderer.py`). Sotto i 16 punti il numero
+# comincia a finire nella zona che alcune stampanti domestiche non stampano.
+ALTEZZA_DEL_NUMERO_PT = 20.0
 CORPO_DEL_NUMERO_PT = 8.0
 # Grigio medio: si legge cercandolo, non si nota sfogliando. Un numero di
 # pagina nero come il testo sembra una nota.

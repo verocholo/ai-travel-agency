@@ -711,20 +711,34 @@ def build_guide_html(
     parti.append(_due_colonne(corpo))
 
     if voci_ritorno:
-        parti.append("<div class='sottotitolo'>Torna dove eri</div>")
+        # [TENUTO INSIEME 2026-08-18 — pagina 18 del fascicolo di Bologna
+        # vero: una riga grigia in cima e poi un foglio bianco intero.]
+        #
+        # Il titolino, i bottoni e la nota che li spiega sono UNA cosa sola.
+        # Stampati come pezzi separati, il motore di stampa e' liberissimo di
+        # lasciare i bottoni in fondo a una pagina e mandare la nota su
+        # quella dopo — dove resta da sola, perche' dopo di lei non c'e'
+        # piu' niente. Il risultato e' la pagina peggiore dell'intero
+        # documento: quella che fa pensare «e' rotto».
+        #
+        # Il guscio e' una tabella con `page-break-inside: avoid`, l'unico
+        # modo che questo motore rispetta davvero.
+        blocco = ["<div class='sottotitolo'>Torna dove eri</div>"]
         for voce in voci_ritorno:
             etichetta = str(voce.get("etichetta") or "Torna all'itinerario")
-            parti.append(
+            blocco.append(
                 f"<div class='bottone-torna'>"
                 f"<a href='{LINK_PREFIX}{_esc(str(voce['ancora']))}'>&#8617; {etichetta}</a>"
                 f"</div>"
             )
         if len(voci_ritorno) > 1:
-            parti.append(
+            blocco.append(
                 "<div class='nota'>Questo luogo compare pi&#249; volte nel "
                 "tuo programma: ogni bottone ti riporta al punto preciso da "
                 "cui sei arrivato.</div>"
             )
+        parti.append("<table class='keep'><tr><td>" + "".join(blocco)
+                     + "</td></tr></table>")
     elif _link(itinerary_url, "Torna all'itinerario"):
         parti.append(
             "<div class='bottone-torna'>"

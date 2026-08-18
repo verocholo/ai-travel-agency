@@ -88,6 +88,23 @@ MAX_FOTO = 12
 # bastano poche per rompere la ripetizione piu' visibile.
 MAX_FOTO_SECONDARIA = 6
 
+# [AGGIUNTO 2026-08-18 — Lorenzo, sul fascicolo di Bologna vero: «la scelta
+# delle foto e' troppo limitata hai ripetuto le stesse 3 foto».]
+#
+# Quante fotografie tenere in scorta PER LUOGO. Non e' un tetto di spesa come
+# i due qui sopra: sono immagini di Wikimedia, gratuite, e la ricerca era ed
+# e' UNA sola — ventiquattro candidati arrivavano gia' tutti insieme e se ne
+# teneva uno.
+#
+# Tre e non dieci perche' il limite vero e' il tempo, non il denaro: ogni
+# immagine in piu' e' uno scaricamento in piu' dentro il cronometro di
+# `SECONDI_MASSIMI_LIBERE`, e un fascicolo che arriva in ritardo e' peggio di
+# un fascicolo con qualche immagine ripetuta. Con tre per luogo e cinque o sei
+# luoghi illustrati la scorta e' abbastanza larga da non ripetere mai niente
+# in un documento di venti pagine — misurato sul fascicolo di Bologna, che ne
+# stampava quattordici di cui dieci diverse.
+SCATTI_PER_LUOGO = 3
+
 # Larghezza massima in pixel dell'immagine che finisce nel documento.
 # [ALZATO 2026-08-11 — segnalazione di Lorenzo: «le foto sono stretchate o in
 # bassa risoluzione».] Erano 800 pixel di larghezza. Su schermo bastano; sulla
@@ -423,15 +440,36 @@ def _foto_libera(nome: str, citta: str, scaduto) -> tuple[bytes | None, str]:
     dalla stessa funzione: separarli renderebbe possibile stampare l'una
     senza l'altra, cioe' violare la licenza per distrazione.
     """
+    trovate = _foto_libere(nome, citta, scaduto, 1)
+    return trovate[0] if trovate else (None, "")
+
+
+def _foto_libere(nome: str, citta: str, scaduto,
+                 quante: int = SCATTI_PER_LUOGO) -> list:
+    """Fino a `quante` fotografie gratuite di QUESTO luogo: `[(png, credito)]`.
+
+    [AGGIUNTO 2026-08-18.] Stessa singola ricerca di prima — cambia solo
+    quante delle candidate gia' trovate si scaricano davvero. Ogni immagine
+    in piu' e' uno scaricamento da un file statico, senza chiavi e senza
+    costo, ma dentro lo stesso cronometro: il tempo resta l'unico limite, ed
+    e' quello che il cliente sente.
+
+    La didascalia viaggia sempre attaccata all'immagine, come prima e per la
+    stessa ragione: Wikimedia permette di ridistribuire la fotografia dentro
+    un documento venduto a una condizione sola, che autore e licenza siano
+    scritti accanto. Separarle renderebbe possibile stampare l'una senza
+    l'altra, cioe' violare la licenza per distrazione.
+    """
     if not nome or scaduto():
-        return None, ""
-    trovata = wikimedia.cerca_immagine(nome, citta, timeout=TIMEOUT_LIBERA)
-    if trovata is None:
-        return None, ""
-    png = normalizza_png(trovata.byte)
-    if not png:
-        return None, ""
-    return png, trovata.didascalia()
+        return []
+    trovate = wikimedia.cerca_immagini(nome, citta, quante,
+                                       timeout=TIMEOUT_LIBERA)
+    uscita = []
+    for trovata in trovate or []:
+        png = normalizza_png(trovata.byte)
+        if png:
+            uscita.append((png, trovata.didascalia()))
+    return uscita
 
 
 def raccogli_foto(guides, poi, api_key: str | None = None,
@@ -496,9 +534,13 @@ def raccogli_foto(guides, poi, api_key: str | None = None,
         credito = ""
         fonte = ""
 
-        # 1. La fotografia libera, gratis.
-        immagine, credito = _foto_libera(nome, citta, scaduto)
-        if immagine:
+        # 1. Le fotografie libere, gratis.
+        # [PLURALE DAL 2026-08-18] La prima e' esattamente quella di prima —
+        # nessun documento cambia immagine di apertura — le altre sono la
+        # scorta con cui il resto del fascicolo evita di ripetersi.
+        libere = _foto_libere(nome, citta, scaduto)
+        if libere:
+            immagine, credito = libere[0]
             fonte = "wikimedia"
 
         # 2. La riserva a pagamento, solo se la prima non ha trovato niente.
@@ -528,6 +570,21 @@ def raccogli_foto(guides, poi, api_key: str | None = None,
             "png": immagine, "credito": credito, "reale": reale, "fonte": fonte,
         }
 
+        # [LA SCORTA — 2026-08-18.] `scatti` e' la lista di TUTTE le
+        # fotografie vere di questo luogo, la migliore per prima. Le chiavi
+        # `png`/`credito` restano quello che sono sempre state — la prima
+        # della lista — cosi' ogni pezzo di codice che le legge continua a
+        # vedere lo stesso identico documento. Chi vuole non ripetersi
+        # scorre `scatti`.
+        #
+        # La grafica disegnata in casa NON entra nella scorta: non e' una
+        # fotografia, e stamparla in fondo a una fila di fotografie vere la
+        # farebbe sembrare un errore di caricamento.
+        voce["scatti"] = ([{"png": png, "credito": cred}
+                           for png, cred in libere] if reale and libere
+                          else ([{"png": immagine, "credito": credito}]
+                                if reale else []))
+
         # [AGGIUNTO 2026-08-17 — task #226, «foto diverse, non le solite
         # ripetute».] La SECONDA fotografia, solo per i luoghi con una
         # fotografia VERA e solo entro il suo tetto separato — non ha senso
@@ -549,6 +606,18 @@ def raccogli_foto(guides, poi, api_key: str | None = None,
                 if immagine2:
                     voce["png_alt"] = immagine2
                     voce["credito_alt"] = credito2
+                    voce["scatti"].append({"png": immagine2,
+                                           "credito": credito2})
+
+        # `png_alt` e' l'alias del SECONDO scatto, da qualunque parte
+        # arrivi. Prima esisteva solo per la seconda foto di Google; da oggi
+        # anche la seconda di Wikimedia riempie quella casella, e
+        # `poi_pdf._altre_foto()` — che chiude ogni scheda con la seconda
+        # fotografia del suo stesso luogo — smette di trovarla vuota nella
+        # gran parte dei casi.
+        if "png_alt" not in voce and len(voce["scatti"]) > 1:
+            voce["png_alt"] = voce["scatti"][1]["png"]
+            voce["credito_alt"] = voce["scatti"][1]["credito"]
 
         risultato[identificativo] = voce
 

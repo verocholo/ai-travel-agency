@@ -60,6 +60,26 @@ DIRECTIONS_BASE_URL = "https://www.google.com/maps/dir/"
 NEGLIGIBLE_LEG_MINUTES = 2
 NEGLIGIBLE_LEG_TEXT = "a pochi passi"
 
+# [NUOVO 2026-08-18 — dal fascicolo di Bologna vero, pagina 6: «circa 12 min
+# in auto · circa 960 m» per andare a cena, su un itinerario che il documento
+# stesso dichiara tutto a piedi.]
+#
+# Novecentosessanta metri in auto sono dodici minuti di traffico e zero
+# senso: e' lo stesso difetto gia' riparato il 1 agosto per gli spostamenti
+# da zero minuti («nessuno prende l'auto per zero minuti»), visto dall'altro
+# lato — li' era il TEMPO a essere assurdo, qui e' la DISTANZA.
+#
+# Sotto questa soglia il tragitto si dichiara a piedi e il tempo si ricalcola
+# sull'andatura, perche' il numero misurato in auto non descrive piu' niente
+# di utile. E' un dato derivato, non misurato, ed e' comunque molto piu'
+# onesto del precedente: la distanza resta quella vera di Google.
+#
+# Millecinquecento metri sono circa venti minuti di cammino: la soglia oltre
+# la quale una persona in citta' comincia davvero a valutare un mezzo. Sopra,
+# il documento continua a mostrare il tempo in auto e offre accanto
+# l'alternativa coi mezzi, che e' la scelta giusta per un tragitto vero.
+METRI_MASSIMI_A_PIEDI = 1500
+
 # [NUOVO 2026-08-01 — "semplificargli la vita e togliergli più lavoro
 # possibile"] Sopra questa soglia uno spostamento non si improvvisa: vale la
 # pena offrire ANCHE il percorso coi mezzi accanto a quello a piedi, così il
@@ -298,6 +318,21 @@ def build_day_legs(plan: dict, travel_lookup: dict[tuple[str, str], dict] | None
         if metri is None:
             metri = stima_metri_in_linea_daria(origin.get("point"), dest.get("point"))
             metri_stimati = metri is not None
+
+        # [RICLASSIFICATO SULLA DISTANZA — 2026-08-18] Vedi
+        # `METRI_MASSIMI_A_PIEDI`. Si fa QUI e non piu' su, dov'e' la
+        # riclassificazione gemella basata sui minuti, per una ragione
+        # banale: i metri si conoscono solo adesso.
+        if (mode == "driving" and isinstance(metri, int)
+                and 0 < metri <= METRI_MASSIMI_A_PIEDI):
+            mode = "walking"
+            mode_label = travel_mode_label(mode)
+            minuti_a_piedi = int(round(metri / METRI_AL_MINUTO_A_PIEDI))
+            # Mai zero: «circa 0 min a piedi» sarebbe l'assurdita' di prima
+            # con un mezzo diverso. Sotto la soglia dei due minuti il testo
+            # diventa comunque «a pochi passi», che e' la forma giusta.
+            minutes = max(1, minuti_a_piedi)
+
         arrival_time = dest.get("time", "")
         # [NUOVO 2026-08-01] Alternativa coi mezzi solo sui tragitti lunghi, e
         # solo quando il modo principale non è già quello: due link identici

@@ -206,8 +206,37 @@ def attinenza(titolo: str, nome: str) -> int:
     return len(_parole(titolo) & _parole(nome))
 
 
+def _utilizzabili(pagine: list[dict], nome: str = "", quante: int = 1) -> list:
+    """Le schede delle fotografie scaricabili, in ordine di attinenza.
+
+    [PLURALE DAL 2026-08-18.] Lorenzo, guardando il fascicolo di Bologna
+    vero: «la scelta delle foto e' troppo limitata hai ripetuto le stesse 3
+    foto». Aveva ragione, e la strozzatura era proprio qui: si chiedevano a
+    Commons ventiquattro candidati, si ordinavano per attinenza, se ne
+    teneva **uno** e se ne buttavano ventitre'. La varieta' era gia' pagata
+    e veniva gettata via a una riga dalla fine.
+
+    Adesso se ne tengono `quante`, sempre in ordine di attinenza: la prima
+    resta esattamente quella di prima — nessun documento cambia foto di
+    apertura — e le altre diventano la scorta con cui il resto del
+    documento evita di ripetersi.
+    """
+    trovate = []
+    for scheda in _schede_utilizzabili(pagine, nome):
+        trovate.append(scheda)
+        if len(trovate) >= max(1, int(quante or 1)):
+            break
+    return trovate
+
+
 def _prima_utilizzabile(pagine: list[dict], nome: str = "") -> dict | None:
-    """La scheda della prima fotografia scaricabile, senza scaricarla.
+    """La scheda della prima fotografia scaricabile, senza scaricarla."""
+    trovate = _utilizzabili(pagine, nome, 1)
+    return trovate[0] if trovate else None
+
+
+def _schede_utilizzabili(pagine: list[dict], nome: str = ""):
+    """Tutte le schede che passano i filtri, una alla volta, senza scaricarle.
 
     Separare la SCELTA dallo SCARICAMENTO serve a poter provare la regola
     delle licenze — che e' la parte rischiosa — su una risposta finta, senza
@@ -239,14 +268,13 @@ def _prima_utilizzabile(pagine: list[dict], nome: str = "") -> dict | None:
         indirizzo = info.get("thumburl") or info.get("url")
         if not indirizzo:
             continue
-        return {
+        yield {
             "titolo": titolo[5:] if titolo.lower().startswith("file:") else titolo,
             "licenza": licenza,
             "autore": _testo_semplice((meta.get("Artist") or {}).get("value")),
             "pagina": str(info.get("descriptionurl") or indirizzo),
             "indirizzo": str(indirizzo),
         }
-    return None
 
 
 def cerca_immagine(nome: str, contesto: str = "",
@@ -258,12 +286,39 @@ def cerca_immagine(nome: str, contesto: str = "",
     inattesa, nessun risultato, solo risultati con licenza sbagliata — esce
     dalla stessa porta, `None`, e il chiamante ripiega.
     """
+    trovate = cerca_immagini(nome, contesto, 1, timeout)
+    return trovate[0] if trovate else None
+
+
+def cerca_immagini(nome: str, contesto: str = "", quante: int = 1,
+                   timeout: int = 12) -> list:
+    """Fino a `quante` fotografie libere di QUESTO luogo, la piu' attinente
+    per prima.
+
+    [AGGIUNTO 2026-08-18 — «la scelta delle foto e' troppo limitata hai
+    ripetuto le stesse 3 foto».]
+
+    La ricerca su Commons e' UNA sola, identica a prima: i ventiquattro
+    candidati arrivavano gia' tutti insieme. Cambia solo quante se ne
+    scaricano — e uno scaricamento in piu' e' una richiesta a un file
+    statico, senza chiavi e senza costo, non una chiamata a un'API a
+    pagamento.
+
+    Regola che NON cambia: sono fotografie di questo luogo, o non ci sono.
+    Le candidate senza nemmeno una parola in comune col nome restano
+    scartate come sempre — e' il tortellino, e vale anche per la seconda e
+    la terza.
+
+    Se una delle immagini in piu' non si scarica, si tiene quello che si e'
+    preso: una scorta piu' corta e' un peccato, una scheda senza fotografia
+    per colpa della quarta e' un difetto.
+    """
     termine = " ".join(p for p in (str(nome or "").strip(),
                                    str(contesto or "").strip()) if p)
     if not termine:
-        return None
+        return []
     if fonte_spenta():
-        return None
+        return []
     try:
         risposta = requests.get(
             API,
@@ -291,28 +346,31 @@ def cerca_immagine(nome: str, contesto: str = "",
         # Commons ha risposto: qualunque cosa abbia detto, la rete c'e'.
         # L'interruttore si riarma qui e solo qui.
         azzera_interruttore()
-        scelta = _prima_utilizzabile(_candidati(risposta.json()), nome)
-        if scelta is None:
+        scelte = _utilizzabili(_candidati(risposta.json()), nome, quante)
+        if not scelte:
             # Nessuna fotografia utilizzabile NON e' un guasto: e' l'esito
             # normale per una trattoria. Non deve spegnere niente.
-            return None
-        scaricata = requests.get(
-            scelta["indirizzo"],
-            headers={"User-Agent": "AI-Travel-Agency/1.0 (itinerari personalizzati)"},
-            timeout=timeout,
-        )
-        scaricata.raise_for_status()
-        if not str(scaricata.headers.get("Content-Type") or "").startswith("image/"):
-            return None
-        if not scaricata.content:
-            return None
-        return ImmagineLibera(
-            titolo=scelta["titolo"],
-            byte=scaricata.content,
-            licenza=scelta["licenza"],
-            autore=scelta["autore"],
-            pagina=scelta["pagina"],
-        )
+            return []
+        raccolte = []
+        for scelta in scelte:
+            scaricata = requests.get(
+                scelta["indirizzo"],
+                headers={"User-Agent": "AI-Travel-Agency/1.0 (itinerari personalizzati)"},
+                timeout=timeout,
+            )
+            scaricata.raise_for_status()
+            if not str(scaricata.headers.get("Content-Type") or "").startswith("image/"):
+                continue
+            if not scaricata.content:
+                continue
+            raccolte.append(ImmagineLibera(
+                titolo=scelta["titolo"],
+                byte=scaricata.content,
+                licenza=scelta["licenza"],
+                autore=scelta["autore"],
+                pagina=scelta["pagina"],
+            ))
+        return raccolte
     except requests.RequestException as e:
         # Rete assente, DNS muto, Commons lento o irraggiungibile: e' il caso
         # che vale per tutte le attrazioni insieme, e l'unico che deve far
@@ -320,10 +378,10 @@ def cerca_immagine(nome: str, contesto: str = "",
         _segna_guasto_di_rete()
         print(f"⚠️  wikimedia: rete non raggiungibile per «{termine}» — "
               f"{type(e).__name__}: {e}")
-        return None
+        return []
     except Exception as e:  # noqa: BLE001 — vedi docstring
         # Risposta inattesa, JSON malformato, campo mancante: e' un problema
         # di QUESTA ricerca, non della rete. Si ripiega e si prosegue.
         print(f"⚠️  wikimedia: nessuna foto per «{termine}» — "
               f"{type(e).__name__}: {e}")
-        return None
+        return []
