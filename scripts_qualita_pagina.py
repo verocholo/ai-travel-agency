@@ -228,6 +228,13 @@ def _conta_immagini(risorse, profondita: int = 0) -> int:
     return quante
 
 
+# Quanto puo' essere grande, al massimo, la fascia bianca sotto l'ultima
+# figura di una pagina prima che quella figura risulti «un francobollo in
+# mezzo al foglio». E' il difetto che Lorenzo ha segnalato per nove pagine di
+# fila il 16 agosto, e che questo strumento non vedeva.
+BIANCO_SOTTO_UNA_FIGURA = 22.0
+
+
 def problemi(percorso_pdf: str, dati: bytes | None = None,
              salta_ultima: bool = True) -> list[str]:
     """L'elenco dei difetti di impaginazione, in italiano e pronto da leggere.
