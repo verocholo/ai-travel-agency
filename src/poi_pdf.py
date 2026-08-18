@@ -946,6 +946,14 @@ def banda_isolata(dati: bytes, quota: float = QUOTA_BANDA_ISOLATA) -> bool:
     """La fila di fotografie in fondo a QUESTA guida e' caduta da sola su
     una pagina quasi vuota?
 
+    [DOVE SI USA, dal 18 agosto: `publish_guides()`, cioe' le guide
+    PUBBLICATE — un documento per attrazione, ospitato su Render. Non piu'
+    `costruisci_capitoli()`: li' le schede scorrono dentro un unico
+    documento e dopo la fila comincia subito la scheda dopo, quindi la
+    pagina non resta vuota e non c'e' niente da ingrandire. La riparazione
+    non e' stata buttata: e' stata spostata dove il vincolo che l'ha resa
+    necessaria — un PDF per guida — esiste ancora.]
+
     [AGGIUNTO 2026-08-17 — task #227.] Stesso metodo di
     `impaginazione.giornate_con_bianco_finale`, applicato a un documento
     piu' piccolo: si stampa, si guarda dove e' caduta la sonda
@@ -970,6 +978,88 @@ def banda_isolata(dati: bytes, quota: float = QUOTA_BANDA_ISOLATA) -> bool:
         return altezza >= impaginazione.ALTEZZA_A4_PT * quota
     except Exception:
         return False
+
+
+def _frammento(html: str) -> str:
+    """Il CORPO di una scheda, senza il guscio del documento.
+
+    Serve a mettere piu' schede dentro un foglio solo. Il taglio si fa sui
+    marcatori veri (`<body ...>` e `</body>`) perche' `build_guide_html`
+    chiude sempre con `</body></html>`: se un domani cambiasse forma, qui si
+    torna la stringa intera invece di tagliare a caso — una scheda con un
+    guscio di troppo si stampa lo stesso, una scheda tagliata male no.
+    """
+    testo = str(html or "")
+    apertura = testo.find("<body")
+    if apertura < 0:
+        return testo
+    apertura = testo.find(">", apertura)
+    chiusura = testo.rfind("</body>")
+    if apertura < 0 or chiusura <= apertura:
+        return testo
+    return testo[apertura + 1:chiusura]
+
+
+def unisci_le_schede(pezzi, a_capo=()) -> str:
+    """Tutte le schede in UN documento solo, cosi' che condividano le pagine.
+
+    [RIFATTO 2026-08-18 — decisione di Lorenzo, presa sui numeri.]
+
+    ## Il difetto che questa funzione toglie alla radice
+
+    Misurato sul campione con nove schede cucite: **dieci pagine su
+    ventisette piene fra l'8% e il 26%**. Ogni scheda era un PDF a se',
+    cucito dietro l'altro, e due PDF diversi non possono condividere un
+    foglio: una scheda lunga una pagina e un quarto si portava dietro
+    tre quarti di pagina bianca, sempre, per costruzione.
+
+    Nessuna regola di impaginazione poteva ripararlo — non era una scelta
+    sbagliata, era l'impianto. Le riparazioni provate prima (ingrandire la
+    fila di fotografie quando resta isolata, stringere la coda) coprivano
+    solo i casi in cui c'era qualcosa da ingrandire o da stringere.
+
+    ## Cosa cambia per chi legge
+
+    Le schede scorrono una dopo l'altra come i capitoli di un libro: la
+    seconda comincia dove finisce la prima, sulla stessa pagina se c'e'
+    posto. Chi sfoglia non vede piu' mezze pagine bianche fra una scheda e
+    l'altra.
+
+    ## E i collegamenti?
+
+    Restano. Ogni scheda porta con se' la sua ancora, che il documento
+    principale usa per il bottone «Apri la guida»: cambia dove atterra
+    (una pagina condivisa invece di una pagina propria), non se atterra.
+    Dove sia finita ogni ancora non si indovina — si misura sul PDF
+    stampato, con le stesse sonde di tutto il resto.
+
+    `a_capo` sono le ancore delle schede che devono comunque cominciare su
+    una pagina nuova: quelle che, misurando, erano cadute troppo in fondo al
+    foglio. E' la stessa regola del documento principale — una scheda che
+    comincia due righe prima della fine della pagina si legge come un errore
+    di stampa — e vale per una MINORANZA di schede, non per tutte: mandarle
+    a capo tutte vorrebbe dire tornare al difetto di partenza.
+    """
+    pezzi = [(a, h) for a, h in (pezzi or []) if h]
+    if not pezzi:
+        return ""
+    primo = str(pezzi[0][1])
+    apertura = primo.find("<body")
+    if apertura >= 0:
+        apertura = primo.find(">", apertura)
+    guscio = primo[:apertura + 1] if apertura > 0 else "<html><body>"
+
+    da_mandare_a_capo = {n for n in (a_capo or []) if n}
+    corpo = []
+    for indice, (ancora, html) in enumerate(pezzi):
+        dentro = _frammento(html)
+        # La prima non si manda mai a capo: e' gia' la prima pagina del
+        # blocco delle schede, e un salto qui vorrebbe dire aprire il
+        # blocco con un foglio bianco.
+        if indice and ancora in da_mandare_a_capo:
+            dentro = ("<div style='page-break-before: always'></div>" + dentro)
+        corpo.append(dentro)
+    return guscio + "".join(corpo) + "</body></html>"
 
 
 def costruisci_capitoli(
@@ -1022,11 +1112,16 @@ def costruisci_capitoli(
 
     tinte = _tav.scegli(foto if isinstance(foto, dict) else None)
 
-    capitoli: list[dict] = []
+    # --- 1. le schede, una per una, ma solo come TESTO ---------------------
+    # Non si stampa ancora niente: si stampa una volta sola, tutte insieme,
+    # ed e' il punto dell'intera modifica. Stampare qui vorrebbe dire N
+    # documenti che non possono condividere una pagina.
+    pezzi: list[tuple] = []
     for guide in elenco[:MAX_GUIDE]:
         poi_id = guide.get("poi_id")
         if not isinstance(poi_id, str) or not poi_id:
             continue
+        ancora = fascicolo.ancora_capitolo(poi_id)
         try:
             html = build_guide_html(
                 guide,
@@ -1035,51 +1130,83 @@ def costruisci_capitoli(
                 photo=foto.get(poi_id),
                 come_arrivare=str(tragitti.get(poi_id) or ""),
                 open_hours=orari.get(poi_id),
-                ancora_capitolo=fascicolo.ancora_capitolo(poi_id),
+                ancora_capitolo=ancora,
                 ritorni=ritorni.get(poi_id),
                 tavolozza=tinte,
-                foto_extra=_altre_foto(foto, poi_id, len(capitoli)),
-                sonda_banda=True,
+                foto_extra=_altre_foto(foto, poi_id, len(pezzi)),
+                # [SPENTA NELLA MODALITA' UNITA' — 2026-08-18] La sonda
+                # serviva a scoprire se la fila di fotografie in fondo a
+                # QUESTA scheda fosse caduta da sola su una pagina quasi
+                # vuota, per ristamparla ingrandita. Con le schede che
+                # scorrono una nell'altra il caso quasi non esiste piu':
+                # dopo quella fila comincia subito la scheda successiva,
+                # quindi la pagina non resta vuota. E con un documento solo
+                # una sonda con lo stesso nome per ogni scheda si
+                # pesterebbe i piedi da sola.
+                sonda_banda=False,
             )
-            blob = render_guide_pdf(html)
-
-            # [AGGIUNTO 2026-08-17 — task #227] LA SECONDA STAMPA. Si stampa
-            # una volta, si guarda se la fila di foto in fondo e' caduta da
-            # sola su una pagina quasi vuota (`banda_isolata()`), e SOLO in
-            # quel caso si ristampa con la fila ingrandita.
-            #
-            # Raddoppia le stampe SOLO per le guide che ne hanno davvero
-            # bisogno — non tutte, come per il documento principale: e' la
-            # differenza fra un miglioramento e uno scambio. Se la seconda
-            # stampa fallisce o non e' piu' piccola, si tiene la prima:
-            # una scheda con una pagina un po' vuota e' molto meglio di
-            # nessuna scheda.
-            if blob and banda_isolata(blob):
-                html_ingrandito = build_guide_html(
-                    guide,
-                    destination=destination,
-                    place_card=schede.get(poi_id),
-                    photo=foto.get(poi_id),
-                    come_arrivare=str(tragitti.get(poi_id) or ""),
-                    open_hours=orari.get(poi_id),
-                    ancora_capitolo=fascicolo.ancora_capitolo(poi_id),
-                    ritorni=ritorni.get(poi_id),
-                    tavolozza=tinte,
-                    foto_extra=_altre_foto(foto, poi_id, len(capitoli)),
-                    banda_ingrandita=True,
-                    sonda_banda=True,
-                )
-                blob_ingrandito = render_guide_pdf(html_ingrandito)
-                if blob_ingrandito:
-                    blob = blob_ingrandito
         except Exception:
-            blob = None
-        if not blob:
-            continue
+            html = ""
+        if html:
+            pezzi.append((poi_id, ancora, html))
+
+    if not pezzi:
+        return []
+
+    # --- 2. una stampa sola, tutte le schede dentro ------------------------
+    blob = render_guide_pdf(unisci_le_schede([(a, h) for _p, a, h in pezzi]))
+    if not blob:
+        # Nessun capitolo cucito: il documento principale torna a stampare
+        # le schede al suo interno, che e' il comportamento di sempre
+        # quando la stampa delle guide non riesce. Meglio un fascicolo
+        # senza capitoli staccati che un fascicolo con i collegamenti morti.
+        return []
+
+    # --- 3. LA SECONDA STAMPA: solo le schede cadute in fondo al foglio ----
+    # Stesso metodo del documento principale (`src/impaginazione.py`): si
+    # guarda dove sono atterrate le ancore, si mandano a capo SOLO quelle
+    # che cominciano a due dita dal fondo — una scheda che comincia li' si
+    # legge come un errore di stampa — e si ristampa.
+    #
+    # Solo quelle: mandarle a capo tutte vorrebbe dire tornare esattamente
+    # al difetto che questa modifica toglie.
+    try:
+        from src import impaginazione
+
+        a_capo = impaginazione.capitoli_da_mandare_a_capo(
+            blob, [a for _p, a, _h in pezzi])
+        if a_capo:
+            rifatto = render_guide_pdf(
+                unisci_le_schede([(a, h) for _p, a, h in pezzi], a_capo))
+            if rifatto:
+                blob = rifatto
+    except Exception:
+        pass  # una scheda impaginata meno bene e' meglio di nessuna scheda
+
+    # --- 4. dove e' finita ogni ancora ------------------------------------
+    # Il conto per costruzione non si puo' piu' fare — le schede non hanno
+    # piu' una pagina propria da contare — quindi la posizione si MISURA
+    # sulle sonde del PDF appena stampato. Se le sonde non si leggono, tutte
+    # le ancore atterrano sulla prima pagina del blocco: un collegamento
+    # impreciso e' molto meglio di un collegamento morto.
+    try:
+        from src import impaginazione
+
+        dove = impaginazione.posizioni(blob)
+    except Exception:
+        dove = {}
+
+    capitoli = []
+    for poi_id, ancora, _html in pezzi:
+        posizione = dove.get(ancora)
         capitoli.append({
             "poi_id": poi_id,
-            "ancora": fascicolo.ancora_capitolo(poi_id),
-            "pdf": blob,
+            "ancora": ancora,
+            # I byte stanno su UNA voce sola: e' un documento solo. Le altre
+            # voci servono a dire al documento principale quali bottoni puo'
+            # stampare, e su quale pagina atterrano.
+            "pdf": blob if not capitoli else b"",
+            "pagina": int(posizione[0]) if posizione else 0,
         })
     return capitoli
 
@@ -1131,18 +1258,38 @@ def publish_guides(
             nome = f"{nome}-{indice + 1}"[:60]
         nomi_usati.add(nome)
 
-        html = build_guide_html(
-            guide,
-            destination=destination,
-            place_card=schede.get(poi_id),
-            photo=foto.get(poi_id),
-            itinerary_url=itinerary_url,
-            come_arrivare=str(tragitti.get(poi_id) or ""),
-            open_hours=orari.get(poi_id),
-        )
-        blob = render_guide_pdf(html)
+        def _stampa(**extra):
+            return render_guide_pdf(build_guide_html(
+                guide,
+                destination=destination,
+                place_card=schede.get(poi_id),
+                photo=foto.get(poi_id),
+                itinerary_url=itinerary_url,
+                come_arrivare=str(tragitti.get(poi_id) or ""),
+                open_hours=orari.get(poi_id),
+                **extra,
+            ))
+
+        blob = _stampa(sonda_banda=True)
         if not blob:
             continue
+
+        # [SPOSTATA QUI 2026-08-18 — non e' una riparazione nuova, e' quella
+        # del 17 agosto rimessa dove serve ancora.]
+        #
+        # La seconda stampa con la fila di fotografie ingrandita nasceva per
+        # i capitoli cuciti. Da oggi i capitoli scorrono dentro un documento
+        # solo (`unisci_le_schede`) e quel problema li' non esiste piu':
+        # dopo la fila comincia subito la scheda successiva.
+        #
+        # Qui invece il vincolo e' rimasto identico — una guida pubblicata E'
+        # un documento a se', e la sua fila di fotografie puo' ancora cadere
+        # da sola su una pagina quasi vuota. Buttare la riparazione perche'
+        # e' cambiato l'altro documento sarebbe stato uno spreco.
+        if banda_isolata(blob):
+            ingrandito = _stampa(sonda_banda=True, banda_ingrandita=True)
+            if ingrandito:
+                blob = ingrandito
         url = hosting.store(consegna, nome, blob)
         if url:
             urls[poi_id] = url

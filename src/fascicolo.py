@@ -555,6 +555,19 @@ def pagine_di_partenza(principale: bytes, capitoli, ancore) -> dict:
             quante = len(PdfReader(io.BytesIO(pezzo)).pages)
             if isinstance(ancora, str) and ancora:
                 mappa[ancora] = pagina
+            elif isinstance(ancora, dict):
+                # [AGGIUNTO 2026-08-18] Un pezzo che contiene PIU' capitoli:
+                # `{ancora: pagina dentro il pezzo}`. Da quando le schede
+                # scorrono dentro un unico documento per non lasciare mezze
+                # pagine bianche fra l'una e l'altra (vedi
+                # `poi_pdf.unisci_le_schede`), un pezzo solo porta tutte le
+                # ancore, e ognuna sta dove sta — non piu' all'inizio.
+                for nome, scostamento in ancora.items():
+                    if isinstance(nome, str) and nome:
+                        try:
+                            mappa[nome] = pagina + int(scostamento)
+                        except (TypeError, ValueError):
+                            mappa[nome] = pagina
             pagina += quante
         return mappa
     except Exception:  # noqa: BLE001 — una mappa mancante non e' un guasto

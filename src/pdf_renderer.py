@@ -6006,11 +6006,42 @@ def render_pdf(
     # riuscito a stamparsi non finisce qui dentro, e quindi il documento
     # principale non stampa nemmeno il collegamento che ci porterebbe: nessun
     # link morto, senza bisogno di ricordarselo.
+    #
+    # [AGGIORNATO 2026-08-18] Da quando le schede scorrono dentro UN
+    # documento solo — per non lasciare mezza pagina bianca fra l'una e
+    # l'altra, vedi `poi_pdf.unisci_le_schede` — i byte stanno su una voce
+    # sola e le altre portano solo il loro nome e la pagina su cui sono
+    # atterrate. La garanzia di prima resta intatta, e per la stessa
+    # ragione: una scheda entra in questa lista SOLO se e' finita davvero
+    # dentro il documento stampato. Se la stampa non riesce, la lista e'
+    # vuota e il documento principale torna a stampare le schede al suo
+    # interno — nessun bottone che porta nel vuoto.
     capitoli_pronti = [
         c for c in (capitoli_pdf or [])
-        if isinstance(c, dict) and c.get("pdf") and c.get("ancora")
+        if isinstance(c, dict) and c.get("ancora")
         and isinstance(c.get("poi_id"), str)
     ]
+    #
+    # I pezzi da cucire e, per ognuno, le ancore che contiene con la pagina
+    # su cui atterrano DENTRO quel pezzo. Si cammina la lista: una voce con
+    # i byte apre un pezzo nuovo, le voci senza byte che la seguono stanno
+    # dentro quel pezzo. Cosi' regge tutte e due le forme — un documento
+    # solo con tutte le schede (da oggi) e un PDF per scheda (com'era, e
+    # come restano i collaudi vecchi) — senza un interruttore da ricordare.
+    pezzi_da_cucire: list = []
+    ancore_dei_pezzi: list = []
+    for c in capitoli_pronti:
+        if c.get("pdf"):
+            pezzi_da_cucire.append(c["pdf"])
+            ancore_dei_pezzi.append({})
+        if not ancore_dei_pezzi:
+            continue
+        try:
+            ancore_dei_pezzi[-1][c["ancora"]] = int(c.get("pagina") or 0)
+        except (TypeError, ValueError):
+            ancore_dei_pezzi[-1][c["ancora"]] = 0
+    if not pezzi_da_cucire:
+        capitoli_pronti = []
     mappa_capitoli = {c["poi_id"]: c["ancora"] for c in capitoli_pronti}
 
     def _componi(a_capo=(), ingrandire=(), coda_compatta=False):
@@ -6242,13 +6273,19 @@ def render_pdf(
         if capitoli_pronti or allegati_veri:
             dati, resoconto = fascicolo.cuci(
                 Path(tmp_pdf_path).read_bytes(),
-                [c["pdf"] for c in capitoli_pronti],
+                pezzi_da_cucire,
                 allegati_veri,
                 # Le ancore, in fila con i capitoli: e' cio' che permette di
                 # sapere dove atterra ogni collegamento senza doverlo dedurre
                 # da un segnaposto invisibile che il motore di stampa di
                 # produzione non disegna.
-                ancore=[c.get("ancora") for c in capitoli_pronti],
+                #
+                # [AGGIORNATO 2026-08-18] Un pezzo solo che contiene tutte le
+                # schede: l'ancora non e' piu' un nome per pezzo ma una mappa
+                # `{nome: pagina dentro il pezzo}`. La pagina l'ha misurata
+                # `poi_pdf.costruisci_capitoli` sulle sonde del PDF delle
+                # schede, dove le schede ora condividono i fogli.
+                ancore=ancore_dei_pezzi,
             )
             Path(tmp_pdf_path).write_bytes(dati)
             link_report = resoconto.get("collegamenti") or {}
