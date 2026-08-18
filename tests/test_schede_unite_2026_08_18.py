@@ -148,16 +148,39 @@ class TestICAPITOLICUCITISONOUNODOCUMENTOSOLO(unittest.TestCase):
                            "sonde non si stanno leggendo, e i bottoni «Apri "
                            "la guida» porterebbero tutti allo stesso punto")
 
-    def test_le_schede_condividono_i_fogli(self):
-        """La prova che il difetto e' andato via: quattro schede corte
-        NON possono occupare quattro pagine intere."""
+    def test_ogni_scheda_comincia_su_una_facciata_sua(self):
+        """[ROVESCIATA 2026-08-18, settimo giro, e va detto perche'.]
+
+        Fino a stamattina questa prova pretendeva l'OPPOSTO: che le schede
+        condividessero i fogli, perche' quattro schede corte su quattro
+        pagine intere erano il difetto («dieci pagine su ventisette piene
+        fra l'8% e il 26%») che l'unione dei capitoli era nata per togliere.
+
+        Poi Lorenzo, in maiuscolo: «NON VOGLIO CHE SPEZZI A META' LE PAGINE
+        DELLE GUIDE TURISTICHE. NON FARLO». Una facciata con la coda di una
+        scheda e la testa di un'altra e' esattamente cio' che lui chiama
+        pagina spezzata a meta', e la sua decisione batte la mia misura.
+
+        Il difetto di partenza non e' pero' tornato, e la riparazione non e'
+        piu' l'accorpamento ma il RIENTRO: le schede si stringono per stare
+        in una facciata (vedi `RITAGLI_DI_RIENTRO`), invece di accodarsi
+        l'una all'altra. Misurato sul campione vero: nove schede in nove
+        facciate, tutte piene sopra il 92% — meglio delle dodici facciate
+        che costava l'accorpamento.
+
+        Qui si controlla la proprieta' nuova: nessuna facciata contiene
+        l'inizio di due schede diverse.
+        """
         from src import impaginazione
 
-        pagine = impaginazione.quante_pagine(self.capitoli[0]["pdf"])
-        self.assertGreater(pagine, 0)
-        self.assertLess(pagine, 4,
-                        f"quattro schede corte occupano ancora {pagine} "
-                        "pagine: stanno tornando una per foglio")
+        blob = self.capitoli[0]["pdf"]
+        dove = impaginazione.posizioni(blob)
+        pagine_di_partenza = [dove[c["ancora"]][0] for c in self.capitoli
+                              if c["ancora"] in dove]
+        self.assertTrue(pagine_di_partenza, "nessuna ancora misurabile")
+        self.assertEqual(len(pagine_di_partenza), len(set(pagine_di_partenza)),
+                         "due schede cominciano sulla stessa facciata: "
+                         f"pagine di partenza {pagine_di_partenza}")
 
     def test_senza_schede_non_si_cuce_niente(self):
         self.assertEqual([], poi_pdf.costruisci_capitoli([]))
@@ -275,3 +298,174 @@ class TestSULFASCICOLOVEROSISONORISPARMIATEPAGINE(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLAFOTOGRAFIASISPOSTAQUANDONONCISTA(unittest.TestCase):
+    """La pagina 16 dell'anteprima: mezzo foglio bianco sotto un titolo.
+
+    Segnalazione di Lorenzo, 18 agosto: «non mi piace come e' impaginata
+    pagina 16, sistemala togliendo lo spazio bianco».
+
+    Il difetto: una scheda che comincia a meta' pagina stampa il titolo, e
+    poi la sua fotografia — alta dodici centimetri fra figura e didascalia —
+    non ci entra piu'. La fotografia scende alla pagina dopo e si porta
+    dietro TUTTO il testo, lasciando mezzo foglio bianco sotto un titolo
+    solo.
+
+    La riparazione non e' mandare la scheda a capo — quello sposta il vuoto,
+    non lo toglie — ma spostare la FOTOGRAFIA in fondo alla scheda: il testo
+    comincia subito sotto il titolo e riempie il foglio. E' anche il posto in
+    cui una rivista mette la figura quando apre un pezzo col testo.
+    """
+
+    def test_la_fotografia_normalmente_apre_la_scheda(self):
+        html = poi_pdf.build_guide_html(
+            _guida("A"), destination="Siena",
+            photo={"png": b"\xff\xd8finta", "credito": "Foto: a / Prova"})
+        prima_del_testo = html.split("Una storia di questo posto", 1)[0]
+        self.assertIn("<img", prima_del_testo,
+                      "la fotografia non apre piu' la scheda")
+
+    def test_quando_serve_la_fotografia_va_in_fondo(self):
+        html = poi_pdf.build_guide_html(
+            _guida("A"), destination="Siena",
+            photo={"png": b"\xff\xd8finta", "credito": "Foto: a / Prova"},
+            foto_in_coda=True)
+        prima_del_testo = html.split("Una storia di questo posto", 1)[0]
+        self.assertNotIn("<img", prima_del_testo)
+        self.assertIn("<img", html, "la fotografia e' sparita del tutto")
+
+    def test_in_fondo_vuol_dire_dopo_il_corpo_non_dopo_la_storia(self):
+        """[MISURATO, e la misura ha cambiato la riparazione.]
+
+        Mettendola subito dopo la storia il difetto si dimezzava e basta:
+        tre righe di testo e poi ancora un terzo di foglio bianco, perche'
+        la fotografia bloccava comunque il corpo della scheda. In fondo, il
+        corpo riempie la pagina.
+        """
+        html = poi_pdf.build_guide_html(
+            {**_guida("A"), "highlights": [{"nome": "Una cosa",
+                                            "testo": "da guardare"}]},
+            destination="Siena",
+            photo={"png": b"\xff\xd8finta", "credito": "Foto: a / Prova"},
+            foto_in_coda=True)
+        self.assertLess(html.rindex("guida-colonne"), html.rindex("<img"),
+                        "la fotografia sta prima del corpo: il corpo finisce "
+                        "sulla pagina dopo e il foglio resta mezzo vuoto")
+
+    def test_la_misura_sceglie_solo_le_schede_che_cominciano_in_basso(self):
+        from unittest import mock
+
+        from src import impaginazione
+
+        finte = {
+            "capitolo-alta": (0, impaginazione.ALTEZZA_A4_PT * 0.80),
+            "capitolo-bassa": (0, impaginazione.ALTEZZA_A4_PT * 0.50),
+        }
+        with mock.patch.object(impaginazione, "posizioni",
+                               lambda _d: finte):
+            scelte = impaginazione.capitoli_con_foto_in_coda(
+                b"finto", ["capitolo-alta", "capitolo-bassa"])
+        self.assertIn("capitolo-bassa", scelte)
+        self.assertNotIn("capitolo-alta", scelte)
+
+    def test_una_scheda_gia_mandata_a_capo_non_sposta_niente(self):
+        """Per quelle il problema e' un altro e la riparazione pure:
+        cominciano su una pagina nuova, dove di posto ce n'e' tutto."""
+        from unittest import mock
+
+        from src import impaginazione
+
+        # Due schede: la prima e' la piu' in alto (non si manda mai a capo),
+        # la seconda cade a due dita dal fondo.
+        finte = {
+            "capitolo-uno": (0, impaginazione.ALTEZZA_A4_PT * 0.90),
+            "capitolo-due": (0, impaginazione.ALTEZZA_A4_PT * 0.10),
+        }
+        with mock.patch.object(impaginazione, "posizioni", lambda _d: finte):
+            a_capo = impaginazione.capitoli_da_mandare_a_capo(
+                b"finto", ["capitolo-uno", "capitolo-due"])
+            in_coda = impaginazione.capitoli_con_foto_in_coda(
+                b"finto", ["capitolo-uno", "capitolo-due"])
+        self.assertIn("capitolo-due", a_capo)
+        self.assertEqual(set(), a_capo & in_coda,
+                         "la stessa scheda riceve due riparazioni diverse "
+                         "per lo stesso difetto")
+
+    def test_senza_sonde_non_si_sposta_niente(self):
+        from src import impaginazione
+
+        self.assertEqual(
+            set(), impaginazione.capitoli_con_foto_in_coda(b"non un pdf", ["x"]))
+
+
+class TestLARIPARAZIONESIRIPETEFINCHEISERVE(unittest.TestCase):
+    """[Lorenzo, secondo giro: «non hai risolto il problema, lo hai
+    semplicemente spostato in un'altra pagina».]
+
+    Aveva ragione, ed era un difetto di metodo, non di regola: spostare la
+    fotografia di una scheda cambia dove cadono TUTTE quelle dopo. Alla prima
+    passata si ripara la scheda che si vedeva, e una che prima stava bene
+    finisce a due terzi di pagina con la sua fotografia dietro — il vuoto
+    riappare dieci pagine piu' in la'.
+
+    Si misura, si ripara, si RIMISURA. Al massimo tre volte: un ciclo che
+    insegue l'impaginazione perfetta non converge, e ogni passata e' una
+    stampa.
+    """
+
+    def test_la_soglia_delle_schede_e_piu_bassa_di_quella_dei_capitoli(self):
+        """E la differenza e' giustificata: nel documento principale sotto la
+        testata c'e' subito un blocco che non si spezza (una tabella, una
+        cartina), nelle schede c'e' prosa, che scorre."""
+        from src import impaginazione
+
+        self.assertLess(poi_pdf.QUOTA_A_CAPO_SCHEDE,
+                        impaginazione.QUOTA_MINIMA_SOTTO)
+        self.assertGreater(poi_pdf.QUOTA_A_CAPO_SCHEDE, 0.05)
+
+    def test_la_storia_scorre_quando_la_scheda_comincia_in_basso(self):
+        """Le due colonne sono una TABELLA, e una tabella non si spezza fra
+        due pagine: su una scheda che comincia a due terzi del foglio non
+        entra mai e si porta dietro tutto. Su una colonna sola i paragrafi
+        scorrono."""
+        guida = {**_guida("A"),
+                 "history_summary": "Primo paragrafo.\n\nSecondo paragrafo.\n\nTerzo."}
+        alta = poi_pdf.build_guide_html(guida, destination="Siena")
+        bassa = poi_pdf.build_guide_html(guida, destination="Siena",
+                                         foto_in_coda=True)
+        # Si guarda SOLO dentro il riquadro della storia: sotto c'e' il
+        # corpo della scheda, che sta su due colonne da sempre. Una finestra
+        # piu' larga troverebbe quella tabella e direbbe di si' sempre.
+        def _storia(html):
+            dentro = html.split("<div class='corpo'>", 1)[1]
+            return dentro.split("</div><table class='guida-colonne'", 1)[0]
+
+        # [AGGIORNATA 2026-08-18, secondo giro.] La storia sta su una
+        # colonna SEMPRE, non solo quando la scheda comincia in basso: e' la
+        # scelta per chi legge da telefono. La proprieta' che questa prova
+        # difende resta la stessa e vale ancora — il testo della storia deve
+        # poter scorrere fra due pagine, cioe' non deve mai finire in una
+        # tabella.
+        for html in (alta, bassa):
+            self.assertNotIn("guida-colonne", _storia(html),
+                             "la storia e' in una tabella che non si spezza: "
+                             "la scheda si porta dietro tutto e lascia il bianco")
+
+    def test_il_ciclo_si_ferma_da_solo(self):
+        """Un tetto di passate e una condizione di uscita.
+
+        [AGGIORNATA 2026-08-18, settimo giro.] Il ciclo non insegue piu' le
+        fotografie da spostare ma i RIENTRI da stringere: cambia cosa
+        misura, non la regola che questa prova difende. Senza il tetto, una
+        scheda che oscilla fra due posizioni farebbe stampare all'infinito;
+        senza la condizione di uscita, si stamperebbe quattro volte anche
+        quando alla prima e' gia' tutto a posto.
+        """
+        import inspect
+
+        sorgente = inspect.getsource(poi_pdf.costruisci_capitoli)
+        self.assertIn("for _passata in range(4)", sorgente)
+        self.assertIn("if not cambiato:", sorgente,
+                      "manca la condizione di uscita: il ciclo non sa "
+                      "riconoscere di aver finito")

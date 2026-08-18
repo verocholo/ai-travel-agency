@@ -296,10 +296,32 @@ class TestLAPROSADELLESCHEDESTAINCOLONNE(unittest.TestCase):
         dentro = html.split("<div class='corpo'>", 1)[1]
         return dentro.split("</div><table class='guida-colonne'", 1)[0]
 
-    def test_con_piu_paragrafi_la_storia_va_su_due_colonne(self):
-        storia = self._solo_la_storia(self._scheda(4))
-        self.assertIn("guida-colonne", storia,
-                      "la storia e' ancora una colonna larga quanto un A4")
+    def test_la_storia_sta_SEMPRE_su_una_colonna(self):
+        """[RIBALTATA 2026-08-18, secondo giro — richiesta di Lorenzo:
+        «ottimizza al massimo il layout per il mobile».]
+
+        Stamattina questa prova pretendeva il contrario, e la ragione era
+        buona: una riga larga quanto un A4 e' faticosa, ed e' il motivo per
+        cui le riviste sono in colonne da un secolo e mezzo.
+
+        Vale sulla CARTA. Questo documento si legge da un telefono — lo dice
+        il documento stesso nella lista della valigia — e un A4 a due
+        colonne su uno schermo da sei pollici obbliga a ingrandire, leggere
+        mezza pagina, tornare su e rileggere l'altra meta'. Su schermo le
+        colonne non dimezzano la fatica: la raddoppiano.
+
+        Restano a due colonne gli ELENCHI corti sotto la storia: voci di
+        poche righe, dove l'occhio non torna indietro.
+        """
+        for quanti in (1, 4):
+            with self.subTest(paragrafi=quanti):
+                self.assertNotIn("guida-colonne",
+                                 self._solo_la_storia(self._scheda(quanti)))
+
+    def test_gli_elenchi_corti_restano_su_due_colonne(self):
+        # Li' le colonne dimezzano l'altezza senza costare niente a chi
+        # legge: sono voci brevi, non un testo continuo.
+        self.assertIn("guida-colonne", self._scheda(4))
 
     def test_con_un_paragrafo_solo_non_si_divide_niente(self):
         """Mezza colonna di testo e mezza vuota sarebbe peggio di una riga
@@ -333,3 +355,132 @@ class TestLAPROSADELLESCHEDESTAINCOLONNE(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLACOLONNADELLALEGENDANONRESTAVUOTA(unittest.TestCase):
+    """[Segnalazione di Lorenzo sull'anteprima: «dopo il titolo Basilica di
+    San Domenico c'e' uno spazio bianco orribile».]
+
+    Aveva ragione e il difetto era strutturale, non estetico: la cartina sta
+    a sinistra e la legenda a destra, ma la legenda e' alta un terzo della
+    cartina — sotto le sue righe restava mezza colonna bianca, su OGNI
+    giornata di OGNI documento.
+
+    La fotografia messa li' non allunga niente: occupa spazio che c'era gia'
+    ed era vuoto. Ed e' l'impianto delle brochure — cartina e immagini
+    affiancate, non una sotto l'altra.
+    """
+
+    def _cartina(self, quante_tappe=4):
+        from PIL import Image
+
+        fuori = io.BytesIO()
+        Image.new("RGB", (640, 400), (200, 210, 200)).save(fuori, format="PNG")
+        return {
+            "png": fuori.getvalue(),
+            "hotel_point": (43.3, 11.3),
+            "stops": [{"poi_id": f"P{i}", "label": str(i + 1),
+                       "name": f"Tappa {i}", "color": "blue"}
+                      for i in range(quante_tappe)],
+        }
+
+    def test_con_una_legenda_corta_la_colonna_si_riempie(self):
+        from src import pdf_renderer as R
+
+        photos = {f"P{i}": _scatto(f"p{i}", 3) for i in range(4)}
+        uscita = R._riempi_la_colonna_della_legenda(self._cartina(4), photos, set())
+        self.assertIn("<img", uscita)
+        self.assertIn("key-foto", uscita)
+
+    def test_con_una_legenda_lunga_non_si_infila_niente(self):
+        """Se le tappe sono tante la colonna e' gia' piena: una fotografia
+        li' allungherebbe il blocco invece di riempire un vuoto, ed e' il
+        difetto opposto — gia' misurato il 18 agosto attaccando la
+        fotografia alla cartina."""
+        from src import pdf_renderer as R
+
+        photos = {f"P{i}": _scatto(f"p{i}", 3) for i in range(14)}
+        self.assertEqual(
+            "", R._riempi_la_colonna_della_legenda(self._cartina(14), photos, set()))
+
+    def test_senza_fotografie_libere_la_colonna_resta_com_era(self):
+        from src import pdf_renderer as R
+
+        photos = {f"P{i}": _scatto(f"p{i}", 1) for i in range(4)}
+        usate = {R._impronta(photos[f"P{i}"]["scatti"][0]["png"]) for i in range(4)}
+        self.assertEqual(
+            "", R._riempi_la_colonna_della_legenda(self._cartina(4), photos, usate))
+
+    def test_senza_cartina_non_si_inventa_una_colonna(self):
+        from src import pdf_renderer as R
+
+        for niente in (None, {}, {"stops": []}):
+            with self.subTest(valore=niente):
+                self.assertEqual(
+                    "", R._riempi_la_colonna_della_legenda(niente, {}, set()))
+
+    def test_la_fotografia_esce_dal_registro_quindi_non_si_ripete(self):
+        from src import pdf_renderer as R
+
+        photos = {f"P{i}": _scatto(f"p{i}", 3) for i in range(4)}
+        usate = set()
+        prima = R._riempi_la_colonna_della_legenda(self._cartina(4), photos, usate)
+        dopo = R._riempi_la_colonna_della_legenda(self._cartina(4), photos, usate)
+        self.assertTrue(prima and dopo)
+        self.assertNotEqual(prima, dopo)
+
+
+class TestLEFASCEDIAPERTURACAPITOLO(unittest.TestCase):
+    """Le brochure aprono le sezioni con una fotografia a tutta larghezza e
+    sotto il numero col titolo. Qui la stessa cosa, con due limiti misurati.
+    """
+
+    def test_al_massimo_tre_e_non_una_per_capitolo(self):
+        """Undici fotografie di apertura su undici capitoli non sono una
+        rivista, sono un catalogo — e ogni fascia costa foglio."""
+        from src import pdf_renderer as R
+
+        self.assertLessEqual(R.FASCE_DI_CAPITOLO, 4)
+        self.assertGreaterEqual(R.FASCE_DI_CAPITOLO, 1)
+
+    def test_la_fascia_e_bassa_e_larga(self):
+        """[MISURATO, e la misura e' costata una pagina all'8.8%.]
+
+        Con un rapporto di 3.2 — cioe' una fascia alta cinque centimetri e
+        mezzo — il blocco «fotografia piu' titolo» non entrava piu' sotto la
+        testata del documento e scendeva alla pagina dopo, lasciando indietro
+        un foglio con sopra solo l'intestazione. A 5.5 entra.
+        """
+        from src import pdf_renderer as R
+
+        self.assertGreaterEqual(R.RAPPORTO_FASCIA_CAPITOLO, 4.5)
+
+    def test_fotografia_e_titolo_non_si_separano_mai(self):
+        from src import pdf_renderer as R
+
+        vestita = R._disegna_testata("fascia", "costi", "Costi", 3,
+                                     fascia_foto="<img src='x'>")
+        self.assertTrue(vestita.startswith("<table class='keep"),
+                        "la fotografia puo' restare da sola in cima a un "
+                        "foglio col titolo altrove")
+        self.assertIn("cap-fascia", vestita)
+
+    def test_senza_fotografia_la_testata_resta_quella_di_sempre(self):
+        from src import pdf_renderer as R
+
+        self.assertEqual(
+            R._disegna_testata("fascia", "costi", "Costi", 3),
+            R._disegna_testata("fascia", "costi", "Costi", 3, fascia_foto=""))
+
+    def test_la_fascia_non_esce_dalla_colonna(self):
+        """[LA MISURA CHE HA COSTATO DUE GIRI.]
+
+        Dentro una cella di tabella un margine negativo rende la tabella
+        piu' larga della pagina: il motore la sposta al foglio dopo e lascia
+        indietro una pagina all'8%. Misurato due volte, in tutte e due le
+        direzioni. La fascia resta larga quanto la colonna.
+        """
+        from src.pdf_renderer import _CSS
+
+        pezzo = _CSS.split(".cap-fascia-foto {", 1)[1].split("}", 1)[0]
+        self.assertNotIn("-1.8cm", pezzo)

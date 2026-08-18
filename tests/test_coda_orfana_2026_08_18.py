@@ -107,11 +107,20 @@ class TestQuandoUnaCodaSiCHIAMAORFANA(unittest.TestCase):
         with self._con_sonde({"documento-fine": (10, 120.0)}):
             self.assertFalse(impaginazione.coda_orfana(b"finto"))
 
-    def test_una_pagina_piena_a_meta_non_si_tocca(self):
-        """Meta' pagina di contenuto e' un capitolo che finisce, non un
-        difetto: e' esattamente il caso in cui stringere il testo sarebbe
-        uno scambio invece di un miglioramento."""
-        with self._con_sonde({"documento-fine": (10, impaginazione.ALTEZZA_A4_PT * 0.5)}):
+    def test_una_pagina_quasi_piena_non_si_tocca(self):
+        """[AGGIORNATA 2026-08-18, secondo giro.]
+
+        La soglia e' scesa dal 60% al 48% — cioe' si interviene su una
+        pagina finale piena per meno di poco piu' di meta'. Il motivo e'
+        misurato: da quando i capitoli scorrono invece di prendersi una
+        pagina a testa (richiesta di Lorenzo, «evita di spezzare troppo le
+        pagine»), quella pagina finale capita spesso intorno alla meta' e
+        restava fuori dalla riparazione per un soffio.
+
+        Il confine resta e va difeso dall'altro lato: una pagina piena per
+        due terzi e' un capitolo che finisce, non un difetto.
+        """
+        with self._con_sonde({"documento-fine": (10, impaginazione.ALTEZZA_A4_PT * 0.35)}):
             self.assertFalse(impaginazione.coda_orfana(b"finto"))
 
     def test_un_documento_di_una_pagina_sola_non_ha_niente_da_stringere(self):
