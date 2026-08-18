@@ -75,7 +75,13 @@ class TestIlBloccoDellaCopertinaCEDAVVERO(unittest.TestCase):
         # Si cerca l'ATTRIBUTO e non il nome della classe: il nome compare
         # anche nel foglio di stile, quindi cercarlo li' direbbe di si' anche
         # su una copertina che non ha disegnato niente. Ci sono cascato.
-        for pezzo in ("class='cover-blocco'", "class='cover-bollo'",
+        # [AGGIORNATO 2026-08-18] `cover-blocco` porta ora anche
+        # `cover-al-vivo`: il blocco del titolo arriva ai bordi del foglio
+        # come nelle brochure che Lorenzo ha portato. Si cerca quindi
+        # l'inizio dell'attributo e non la stringa chiusa — altrimenti la
+        # prova diventa rossa a ogni classe aggiunta, che e' il modo piu'
+        # rapido di far ignorare una prova.
+        for pezzo in ("class='cover-blocco", "class='cover-bollo'",
                       "class='cover-tonda'"):
             with self.subTest(pezzo=pezzo):
                 self.assertIn(pezzo, html)

@@ -91,17 +91,21 @@ class TestLaCopertinaHaUnaFotografia(unittest.TestCase):
         self.html = completo.split("<body>", 1)[1]
 
     def test_la_fascia_c_e(self):
-        self.assertIn("<div class='cover-foto'>", self.html,
+        # [AGGIORNATA 2026-08-18] La fascia e' diventata una fotografia che
+        # arriva ai bordi del foglio e riempie mezza pagina: `cover-piena`
+        # al posto di `cover-foto`. Cambia il vestito, non il fatto — la
+        # copertina deve avere un'immagine.
+        self.assertIn("<div class='cover-piena'>", self.html,
                       "la copertina e' tornata senza immagini")
 
     def test_la_fotografia_sta_prima_del_titolo(self):
         # Sotto il titolo sarebbe un'illustrazione qualunque; sopra e'
         # un'apertura. La differenza si vede in mezzo secondo.
-        self.assertLess(self.html.find("cover-foto"), self.html.find("cover-title"))
+        self.assertLess(self.html.find("cover-piena"), self.html.find("cover-title"))
 
     def test_porta_il_suo_credito(self):
         # Regola di tutto il progetto: nessuna immagine senza chi l'ha fatta.
-        fascia = self.html.split("<div class='cover-foto'>", 1)[1].split("</div>", 1)[0]
+        fascia = self.html.split("<div class='cover-piena'>", 1)[1].split("</div>", 1)[0]
         self.assertIn("<img", fascia)
         self.assertIn("Foto: Prova / Test", self.html[:self.html.find("cover-hero")])
 
@@ -168,21 +172,50 @@ class TestLaCopertinaIllustrataStaInUNAPagina(unittest.TestCase):
         sfondato — e il cliente si trova un foglio quasi bianco al posto
         numero due, che e' la posizione peggiore possibile.
         """
-        seconda = self._testo_pagina(1)
+        # [RISCRITTA 2026-08-18 — la copertina e' diventata di DUE pagine,
+        # e per scelta.]
+        #
+        # Prima l'indice stava in fondo alla copertina per non lasciare mezza
+        # pagina bianca. Da quando la fotografia arriva ai bordi del foglio
+        # la copertina e' piena da sola, e l'indice ha una pagina sua con le
+        # miniature accanto alle voci — e' cosi' che sono fatte tutte e
+        # quattro le brochure che Lorenzo ha portato il 18 agosto.
+        #
+        # Il difetto da cui questa prova nasce resta lo stesso e va ancora
+        # difeso: la pagina 2 non deve essere la CODA della copertina, cioe'
+        # due righe e poi il bianco. Ora deve essere l'indice, pieno.
+        # Minuscolo da tutte e due le parti: l'occhiello e' stampato in
+        # maiuscolo dal foglio di stile, e `pdftotext` restituisce cio' che
+        # e' stampato, non cio' che c'e' scritto nel sorgente.
+        seconda = self._testo_pagina(1).lower()
         self.assertIn(
-            "Itinerario Ottimizzato", seconda,
-            "la seconda pagina non comincia col documento: la copertina ha "
-            "sfondato e ha lasciato un foglio quasi bianco")
+            "cosa troverai dentro", seconda,
+            "la seconda pagina non e' l'indice: la copertina ha sfondato")
+        self.assertNotIn(
+            "itinerario su misura", seconda,
+            "a pagina 2 c'e' ancora roba di copertina: ha sfondato")
+        terza = self._testo_pagina(2)
+        self.assertIn(
+            "Itinerario Ottimizzato", terza,
+            "il documento vero non comincia a pagina 3: qualcosa e' sbordato")
 
     def test_la_copertina_dice_gia_tutto_quello_che_deve(self):
         # Se per farla stare in una pagina qualcuno domani togliesse
         # l'indice, il controllo qui sopra resterebbe verde e la copertina
         # avrebbe perso il suo lavoro.
+        # [AGGIORNATA 2026-08-18] Le stesse quattro cose ci sono ancora,
+        # divise su due pagine: la copertina si tiene l'identita' e i numeri
+        # di consegna, l'indice si prende l'elenco e le istruzioni. Nessuna
+        # e' sparita — ed e' esattamente cio' che questa prova esiste per
+        # impedire.
         prima = self._testo_pagina(0)
-        for atteso in ("Itinerario su misura", "Cosa troverai dentro",
-                       "Budget indicato", "Come si legge"):
-            with self.subTest(atteso=atteso):
+        for atteso in ("Itinerario su misura", "Budget indicato"):
+            with self.subTest(pagina=1, atteso=atteso):
                 self.assertIn(atteso.lower(), prima.lower())
+        seconda = self._testo_pagina(1)
+        for atteso in ("Cosa troverai dentro", "Come si legge"):
+            with self.subTest(pagina=2, atteso=atteso):
+                self.assertIn(atteso.lower(), seconda.lower())
 
 
 class TestIlColoreDelPostoArrivaFinoAlDocumento(unittest.TestCase):

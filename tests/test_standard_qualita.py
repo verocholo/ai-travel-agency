@@ -1289,7 +1289,12 @@ class TestPrimaDiPartireStaInFondo(unittest.TestCase):
         dove finisce l'indice di copertina, che ha un marcatore suo.
         """
         testo = _leggibile(_documento())
-        fine = testo.rindex("cover-toc-item")
+        # [AGGIORNATO 2026-08-18] L'indice non e' piu' in fondo alla
+        # copertina: e' una pagina sua, con le miniature accanto alle voci,
+        # e il marcatore di ogni voce e' `toc-voce` al posto di
+        # `cover-toc-item`. Il taglio resta lo stesso: dove finisce l'ultima
+        # voce dell'indice comincia il corpo.
+        fine = testo.rindex("toc-voce")
         return testo[:fine], testo[fine:]
 
     def test_prima_di_partire_viene_dopo_il_programma_e_dopo_le_guide(self):
