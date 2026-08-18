@@ -974,12 +974,28 @@ class TestLaCartaNonRestaMezzaVuota(unittest.TestCase):
             f"il documento scrive {attesi} rimandi interni ma sulla carta ne "
             f"funzionano {saltano}: qualcuno è tornato a essere solo testo blu",
         )
-        bersagli = len(set(pdf_links.RIFERIMENTI_NELL_HTML.findall(_documento())))
+        # [CORRETTO 2026-08-18] Non tutte le sonde sono punti di atterraggio:
+        # da quando il documento misura anche se stesso ce ne sono alcune che
+        # servono solo a sapere dove finiscono le cose sulla carta
+        # (`giorno-N-fine`, `guida-banda-inizio`). Contarle qui faceva
+        # scattare un allarme falso — e un controllo che grida senza motivo
+        # si impara a ignorarlo. La distinzione la dichiara il prodotto, in
+        # `src/impaginazione.py`, non la indovina questa prova.
+        from src import impaginazione
+
+        documento_html = _documento()
+        bersagli = len(set(pdf_links.RIFERIMENTI_NELL_HTML.findall(documento_html)))
+        di_misura = len({
+            nome for nome in re.findall(
+                r"id='([^']+)' class='anchor-probe'", documento_html)
+            if impaginazione.e_sonda_di_misura(nome)
+        })
         self.assertEqual(
-            bersagli, senza_destinazione,
-            f"i segnaposto di atterraggio sono {senza_destinazione} per "
-            f"{bersagli} bersagli distinti: se non coincidono, qualche àncora "
-            f"non è stata piazzata dove il rimando la cerca",
+            bersagli + di_misura, senza_destinazione,
+            f"i segnaposto rimasti sono {senza_destinazione}: attesi "
+            f"{bersagli} di atterraggio piu' {di_misura} di misura. Se non "
+            f"coincidono, qualche àncora non è stata piazzata dove il rimando "
+            f"la cerca",
         )
 
 

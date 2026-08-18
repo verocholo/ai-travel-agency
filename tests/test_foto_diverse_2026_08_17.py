@@ -19,8 +19,26 @@ La riparazione, in tre pezzi:
   2. `foto.raccogli_foto()` la scarica separatamente, entro un tetto di
      spesa suo (`MAX_FOTO_SECONDARIA`), SOLO per i luoghi con gia' una
      fotografia vera;
-  3. `poi_pdf._altre_foto()` la usa al posto della principale quando
-     presta un luogo alle guide vicine.
+  3. `poi_pdf._altre_foto()` la stampa in fondo alla scheda del SUO luogo.
+
+## IL PUNTO 3 E' STATO RISCRITTO IL 18 AGOSTO, E VALE LA PENA DIRE PERCHE'
+
+Nella prima stesura il punto 3 diceva un'altra cosa: la seconda fotografia
+serviva a PRESTARE un luogo alle guide vicine senza ripetere lo scatto gia'
+usato nella sua apertura. Due sessioni stavano riparando lo stesso difetto
+nello stesso momento, e quella era la riparazione dell'altra.
+
+Lorenzo ha bocciato il prestito in blocco, guardando il fascicolo vero:
+«le foto sono messe a caso senza alcun ordine (cosa c'entra il tortellino)»
+e, subito dopo, «per scegliere le foto devi scegliere tra una scelta molto
+piu' ampia andando a scegliere foto **inerenti ai testi**». Una seconda
+fotografia del tortellino nella scheda delle Due Torri resta una fotografia
+del tortellino nella scheda delle Due Torri: cambia lo scatto, non il difetto.
+
+Quindi la REGOLA e' «una fotografia sta nella pagina di cui parla, o non
+c'e'», e il MECCANISMO (`png_alt`) resta — applicato al luogo giusto. I
+controlli qui sotto difendono la regola nuova, e uno di essi e' scritto
+apposta per fallire se il prestito dovesse tornare dentro di nascosto.
 """
 
 import io
@@ -160,10 +178,16 @@ class TestRaccogliFotoScaricaLaSeconda(unittest.TestCase):
         self.assertNotIn("png_alt", uscita["A"])
 
 
-class TestAltreFotoPreferisceLaSeconda(unittest.TestCase):
-    """`poi_pdf._altre_foto()`: quando un luogo presta se stesso alle guide
-    vicine, deve prestare la SUA seconda foto se ce l'ha — non quella gia'
-    usata come apertura della sua guida."""
+class TestAltreFotoStampaLaSecondaDELSUOLUOGO(unittest.TestCase):
+    """`poi_pdf._altre_foto()`: la scheda di un luogo chiude con la SECONDA
+    fotografia di QUEL luogo, quando esiste. Con nient'altro, mai.
+
+    Il terzo parametro si chiama ancora `escluso` per ragioni di storia — era
+    «il luogo da NON prestare» quando la funzione prestava. Oggi e' il
+    contrario: e' l'unico luogo ammesso. Il nome resta perche' cambiarlo
+    tocca tre punti di chiamata senza cambiare niente di cio' che si vede
+    sulla carta; questo commento e' li' per chi lo legge fra sei mesi.
+    """
 
     def _scatto(self, nome, con_alt=False):
         base = {"png": f"principale-{nome}".encode(),
@@ -173,42 +197,74 @@ class TestAltreFotoPreferisceLaSeconda(unittest.TestCase):
             base["credito_alt"] = f"Foto alt: {nome} / Prova"
         return base
 
-    def test_con_una_seconda_foto_disponibile_viene_usata_quella(self):
-        tutte = {
-            "A": self._scatto("a"),
-            "B": self._scatto("b", con_alt=True),
-            "C": self._scatto("c"),
-        }
-        risultato = poi_pdf._altre_foto(tutte, escluso="A", giro=0)
-        per_png = {r["png"] for r in risultato}
-        self.assertIn(b"alternativa-b", per_png,
-                      "il luogo B ha una seconda foto: deve essere quella "
-                      "prestata, non la principale gia' usata nella sua "
-                      "guida")
-        self.assertNotIn(b"principale-b", per_png)
-
-    def test_senza_seconda_foto_si_usa_comunque_la_principale(self):
-        """Meglio una foto ripetuta che nessuna foto: la regola vecchia
-        resta la rete di sicurezza quando la nuova non si applica."""
-        tutte = {"A": self._scatto("a"), "B": self._scatto("b"),
-                 "C": self._scatto("c")}
-        risultato = poi_pdf._altre_foto(tutte, escluso="A", giro=0)
-        per_png = {r["png"] for r in risultato}
-        self.assertIn(b"principale-b", per_png)
-        self.assertIn(b"principale-c", per_png)
-
-    def test_il_luogo_escluso_resta_escluso_anche_con_una_seconda_foto(self):
+    def test_con_una_seconda_foto_sua_la_scheda_chiude_con_quella(self):
         tutte = {
             "A": self._scatto("a", con_alt=True),
+            "B": self._scatto("b", con_alt=True),
+        }
+        risultato = poi_pdf._altre_foto(tutte, escluso="A", giro=0)
+        self.assertEqual([b"alternativa-a"], [r["png"] for r in risultato])
+        self.assertEqual(["Foto alt: a / Prova"],
+                         [r["credito"] for r in risultato])
+
+    def test_lo_scatto_di_apertura_non_si_ripete_in_fondo(self):
+        """Chiudere la scheda con la stessa immagine con cui si apre e' il
+        difetto originale — «si ripetono ancora» — solo spostato in fondo."""
+        tutte = {"A": self._scatto("a", con_alt=True)}
+        risultato = poi_pdf._altre_foto(tutte, escluso="A", giro=0)
+        self.assertNotIn(b"principale-a", {r["png"] for r in risultato})
+
+    def test_senza_seconda_foto_la_scheda_non_chiude_con_niente(self):
+        """La regola vecchia («meglio una foto ripetuta che nessuna foto»)
+        e' stata annullata da Lorenzo, non dimenticata: una pagina che
+        finisce senza fila di immagini e' corretta."""
+        tutte = {"A": self._scatto("a"), "B": self._scatto("b"),
+                 "C": self._scatto("c")}
+        self.assertEqual([], poi_pdf._altre_foto(tutte, escluso="A", giro=0))
+
+    def test_NESSUNA_foto_di_un_altro_luogo_entra_mai_qui(self):
+        """[IL CONTROLLO CHE VALE PIU' DI TUTTI GLI ALTRI IN QUESTO FILE.]
+
+        E' il tortellino. Se qualcuno rimettesse dentro il prestito — per
+        riempire una pagina, per «non sprecare» immagini gia' pagate, o
+        semplicemente ripescando la versione vecchia di questo file — questo
+        controllo diventa rosso e dice perche'.
+        """
+        tutte = {
+            "A": self._scatto("a"),  # la scheda in esame: NIENTE seconda foto
             "B": self._scatto("b", con_alt=True),
             "C": self._scatto("c", con_alt=True),
         }
         risultato = poi_pdf._altre_foto(tutte, escluso="A", giro=0)
-        per_png = {r["png"] for r in risultato}
-        self.assertNotIn(b"principale-a", per_png)
-        self.assertNotIn(b"alternativa-a", per_png)
-        self.assertIn(b"alternativa-b", per_png)
-        self.assertIn(b"alternativa-c", per_png)
+        estranee = {b"principale-b", b"alternativa-b",
+                    b"principale-c", b"alternativa-c"}
+        self.assertEqual(
+            set(), {r["png"] for r in risultato} & estranee,
+            "e' rientrata la fotografia di un altro luogo: e' il difetto "
+            "che Lorenzo ha chiamato «cosa c'entra il tortellino»")
+
+    def test_un_luogo_senza_foto_vera_non_ne_presta_una_alternativa(self):
+        """Se la principale non e' arrivata, la scheda mostra la grafica
+        disegnata in casa: attaccarci sotto una fila di fotografie vere
+        farebbe sembrare la grafica un errore di caricamento."""
+        tutte = {"A": {"png_alt": b"alternativa-a",
+                       "credito_alt": "Foto alt: a / Prova"}}
+        self.assertEqual([], poi_pdf._altre_foto(tutte, escluso="A", giro=0))
+
+    def test_una_seconda_foto_senza_credito_non_si_stampa(self):
+        """Stampare una fotografia di Google senza attribuzione e' un
+        problema di licenza, non di estetica: meglio non stamparla."""
+        tutte = {"A": {"png": b"principale-a", "credito": "Foto: a / Prova",
+                       "png_alt": b"alternativa-a"}}  # manca credito_alt
+        self.assertEqual([], poi_pdf._altre_foto(tutte, escluso="A", giro=0))
+
+    def test_un_luogo_sconosciuto_non_fa_saltare_la_stampa(self):
+        """Il fascicolo si costruisce anche quando la raccolta foto ha
+        saltato un luogo: qui si ritorna vuoto, non si solleva niente."""
+        for tutte in ({}, {"B": self._scatto("b", con_alt=True)}, None):
+            with self.subTest(tutte=tutte):
+                self.assertEqual(
+                    [], poi_pdf._altre_foto(tutte, escluso="A", giro=0))
 
 
 if __name__ == "__main__":
