@@ -106,15 +106,20 @@ _CSS_MODELLO = """
        non sono un vezzo — la grande deve restare chiaramente la protagonista,
        altrimenti la scheda sembra parlare di tre posti invece che di uno. */
     /* [AGGIUNTA 2026-08-15] La fascia di tre fotografie, in cima e in fondo
-       alla scheda. La larghezza delle celle e' dichiarata: senza, una fila
-       incompleta allargherebbe le immagini rimaste a riempire il posto delle
-       mancanti, e sarebbero grandi il doppio delle altre. */
+       alla scheda.
+       [CORRETTO 2026-08-17 — pagine 15/18/21/26, «due foto piccole e tutto
+       lo spazio vuoto».] La larghezza della cella ORA la dichiara ogni
+       singola cella (`style='width:...'`, scritta da `_banda_di_foto()` in
+       base a quante fotografie ci sono DAVVERO): un `width` fisso qui nel
+       foglio di stile vincerebbe sempre su quello scritto in linea per la
+       stessa identica proprieta', e due o una fotografia resterebbero
+       strette a un terzo di pagina come se fossero sempre tre. */
     .keep { width: 100%; border-collapse: collapse;
             page-break-inside: avoid; }
     .keep td { padding: 0; border: none; }
     .guida-banda { width: 100%; border-collapse: separate; border-spacing: 6px;
                    margin: 0 -6px 6px -6px; page-break-inside: avoid; }
-    .guida-banda td { vertical-align: top; padding: 0; width: 33.33%; }
+    .guida-banda td { vertical-align: top; padding: 0; }
     .guida-banda img { width: 100%; display: block; }
 
     @page { size: A4; margin: 1.6cm 1.6cm; }
@@ -147,7 +152,19 @@ _CSS_MODELLO = """
     }
     .foto { text-align: center; margin: 12px 0 4px 0; }
     .foto img { max-width: 100%; border-radius: 0; }
-    .foto .credito { font-size: 9.5px; color: #8a97a5; margin-top: 3px; }
+    /* [CORRETTO 2026-08-17 — pagina 13: «i crediti delle foto sono scritti
+       troppo in grande».]
+       La regola valeva SOLO `.foto .credito`, cioe' solo per la fotografia
+       singola in testa alla scheda. La fascia di tre fotografie
+       (`_banda_di_foto`, quella di pagina 13) scrive lo stesso
+       `<div class='credito'>` ma DENTRO una `<td>`, non dentro `.foto`: la
+       regola non lo trovava, e il credito ereditava la dimensione del
+       corpo del testo — tredici punti, quasi quanto il testo della scheda.
+       La regola ora vale OVUNQUE compaia un credito, indipendentemente da
+       cosa lo contiene: un font chiaro e piccolo, che non compete con la
+       lettura, come chiesto. */
+    .credito { font-size: 8px; color: #98a4b0; margin-top: 3px;
+               font-weight: normal; line-height: 1.3; }
     .sottotitolo {
       font-family: Georgia, 'Times New Roman', serif;
       font-size: 17px; font-weight: normal; color: #16212f;
@@ -422,33 +439,64 @@ def _immagine(scatto, larghezza_max: int | None = None, alt: str = "",
 # fascia, tre immagini di forme diverse fanno disordine. E il ritaglio non e'
 # solo estetica — e' quello che rende l'altezza della banda PREVEDIBILE, e
 # quindi la lunghezza della scheda.
-RAPPORTO_DELLA_BANDA = 1.55
+#
+# [ABBASSATO 2026-08-17, poi RIMISURATO — task #226/224.] Provato ad
+# abbassarlo da 1.55 a 1.2 sperando di alzare la banda quando cade da sola su
+# una pagina quasi vuota (pagine 13/15/17/19/21/23/25/27 del fascicolo di
+# Bologna). Misurato: NESSUN effetto sulle fotografie orizzontali, che sono
+# la maggioranza. Il motivo e' nel ritaglio stesso: `foto.ritaglia_panoramica`
+# non alza mai il rapporto di una foto GIA' piu' panoramica di quello
+# richiesto (non puo' aggiungere pixel che non esistono), quindi abbassare
+# il numero qui non allunga una foto orizzontale che era gia' oltre quella
+# soglia — cambia solo le foto con un rapporto nativo fra 1.2 e 1.55, una
+# minoranza. Resta a 1.2 perche' non fa danno e aiuta quel caso minore, ma
+# NON e' la riparazione del difetto vero.
+#
+# La riparazione vera e' un'altra: la banda cade sola su una pagina quasi
+# vuota perche' il resto della scheda (testata + corpo) riempie quasi tutta
+# la prima pagina, e non le resta spazio. Serve lo stesso metodo gia' usato
+# per il bianco a fine giornata (misura la prima stampa, decide, ristampa) —
+# qui pero' non ancora costruito: la scheda di ogni guida e' un documento a
+# se', stampato una volta sola, senza la seconda passata che il documento
+# principale ha gia'. E' il prossimo pezzo, non ancora fatto.
+RAPPORTO_DELLA_BANDA = 1.2
 
 
 def _banda_di_foto(scatti, alt: str = "") -> str:
-    """Tre fotografie in fila, tutte della stessa forma. "" se non bastano.
+    """Fino a tre fotografie in fila, larghe quanto serve. "" se non ce n'è.
 
-    Perche' una tabella e non tre riquadri affiancati: affiancare, con questo
-    motore di stampa, si fa solo con le tabelle — `float` e `flex` li ignora
-    in silenzio, e il risultato sarebbero tre fotografie una sotto l'altra,
-    cioe' mezza pagina di immagini invece di una fascia.
+    [CORRETTA 2026-08-17 — segnalazione di Lorenzo sulle pagine 15, 18, 21 e
+    26 del fascicolo di Bologna: «due foto piccole e tutto lo spazio vuoto».]
 
-    Le celle hanno una larghezza dichiarata anche quando sono vuote: senza,
-    una fila incompleta allargherebbe le immagini rimaste a riempire il posto
-    delle mancanti, e sarebbero grandi il doppio delle altre. Si nota subito
-    e sembra un errore di stampa.
+    Prima la tabella aveva SEMPRE tre colonne, anche con una o due
+    fotografie vere: le celle mancanti restavano vuote (`<td></td>`), e le
+    fotografie presenti restavano strette a un terzo della pagina —
+    esattamente la larghezza che sarebbe toccata a tre, anche quando erano
+    due o una sola. Con un itinerario piccolo (5-6 luoghi illustrati in
+    tutto) la fila in fondo alla scheda, che esclude il luogo di cui la
+    scheda gia' parla, quasi non arriva mai a tre: due e' la norma, non
+    l'eccezione.
+
+    La riparazione e' la stessa gia' usata per la fila di chiusura giornata
+    (`src/pdf_renderer._render_striscia_foto`): le colonne si dividono per
+    le fotografie DAVVERO disponibili, non per un numero fisso. Con due
+    fotografie le celle diventano larghe il 50% invece del 33%, e la
+    fotografia — il cui ritaglio resta lo stesso, vedi `RAPPORTO_DELLA_BANDA`
+    — viene di conseguenza piu' ALTA: niente margini toccati, solo meno
+    colonne piu' larghe.
     """
-    celle = []
+    pezzi: list[str] = []
     for scatto in (scatti or []):
-        if len(celle) >= 3:
+        if len(pezzi) >= 3:
             break
         pezzo = _immagine(scatto, LARGHEZZA_FOTO_DI_CONTORNO, alt=alt,
                           rapporto=RAPPORTO_DELLA_BANDA)
         if pezzo:
-            celle.append(f"<td>{pezzo}</td>")
-    if not celle:
+            pezzi.append(pezzo)
+    if not pezzi:
         return ""
-    celle += ["<td></td>"] * (3 - len(celle))
+    larghezza = 100 // len(pezzi)
+    celle = [f"<td style='width:{larghezza}%'>{pezzo}</td>" for pezzo in pezzi]
     return "<table class='guida-banda'><tr>" + "".join(celle) + "</tr></table>"
 
 
@@ -497,6 +545,24 @@ def build_guide_html(
     # [AGGIUNTO 2026-08-13 — task #217] Altre fotografie del viaggio, per la
     # fila in fondo alla scheda. Lista di `{"png", "credito"}`.
     foto_extra=None,
+    # [AGGIUNTO 2026-08-17 — task #227, ultimo dei nove difetti del
+    # fascicolo di Bologna: pagine 13/15/17/19/21/23/25/27, «due foto
+    # piccole e tutto lo spazio vuoto».]
+    #
+    # Quando la fila di fotografie in fondo cade da sola su una pagina
+    # quasi vuota — perche' il resto della scheda ha gia' riempito la
+    # pagina prima — questa fila deve ingrandirsi per occupare quello
+    # spazio, con lo stesso principio gia' usato per la fila di chiusura
+    # giornata del documento principale: meno fotografie, piu' grandi.
+    # Lo decide `costruisci_capitoli()`, misurando la prima stampa di
+    # QUESTA guida — vedi la sonda `guida-banda-inizio` piu' sotto.
+    banda_ingrandita: bool = False,
+    # La sonda serve SOLO alla modalita' fascicolo (`costruisci_capitoli`):
+    # e' li' che la seconda stampa la legge per decidere. Nella modalita'
+    # pubblicata (`publish_guides`) la guida esce com'era prima — nessuna
+    # sonda orfana in un documento pubblico che nessuno ripara mai. Falso
+    # di default apposta: aggiungere una sonda va CHIESTO, non presunto.
+    sonda_banda: bool = False,
 ) -> str:
     """L'HTML di UNA guida, completo e autonomo.
 
@@ -676,6 +742,26 @@ def build_guide_html(
             "torna al documento principale che hai ricevuto per email.</div>"
         )
 
+    # [AGGIUNTO 2026-08-17 — task #227] La sonda che dice se la fila di
+    # fotografie in fondo sta per cadere da sola su una pagina quasi vuota.
+    #
+    # Stessa lezione gia' imparata (e corretta due volte) per la sonda di
+    # fine giornata del documento principale: la sonda va DENTRO l'ultimo
+    # elemento gia' presente, non accanto — un elemento a se' stante, anche
+    # minuscolo, puo' spostare l'impaginazione di quello che segue in modi
+    # imprevedibili. Qui l'ultimo elemento e' sempre un `<div>` (la nota, o
+    # l'ultimo bottone di ritorno): la sonda entra prima della sua chiusura.
+    #
+    # [CORRETTO 2026-08-17, stesso giorno — trovato da un test gia'
+    # scritto.] La prima versione la seminava SEMPRE, incondizionatamente:
+    # rompeva `test_senza_fascicolo_la_guida_resta_quella_di_prima`, che
+    # protegge le guide PUBBLICATE singolarmente (`publish_guides`) dal
+    # portare sonde che li' nessuno ripara mai. Ora la sonda si semina solo
+    # se esplicitamente chiesta — `costruisci_capitoli()` la chiede,
+    # `publish_guides()` no.
+    if sonda_banda and parti and parti[-1].endswith("</div>"):
+        parti[-1] = parti[-1][: -len("</div>")] + _sonda("guida-banda-inizio") + "</div>"
+
     # [AGGIUNTO 2026-08-13 — task #217] La fila di fotografie in fondo.
     #
     # Nasce da DUE cose che si sono rivelate la stessa. Lorenzo: «vorrei che
@@ -705,7 +791,18 @@ def build_guide_html(
     # o entra, o scende INTERA sulla pagina dopo, dove arriva da sola. Legata
     # all'ultimo pezzo di testo che la precede, o scendono insieme — e allora
     # la pagina nuova ha anche del testo — o restano dove sono.
-    in_fondo = _banda_di_foto((foto_extra or [])[2:5])
+    #
+    # [ESTESA 2026-08-17 — task #227, pagine 13/15/17/19/21/23/25/27: «due
+    # foto piccole e tutto lo spazio vuoto».] Quando `banda_ingrandita` e'
+    # vero — deciso da `costruisci_capitoli()` misurando la prima stampa —
+    # la fila usa al MASSIMO due fotografie invece di tre: colonne piu'
+    # larghe, e a parita' di ritaglio, figure piu' alte. Riempie di piu' la
+    # pagina isolata senza toccare un solo margine, la stessa idea gia'
+    # applicata alla fila di chiusura giornata del documento principale.
+    candidate_finali = (foto_extra or [])[2:5]
+    if banda_ingrandita:
+        candidate_finali = candidate_finali[:2]
+    in_fondo = _banda_di_foto(candidate_finali)
     if in_fondo:
         coda = parti.pop() if parti else ""
         parti.append("<table class='keep'><tr><td>"
@@ -794,18 +891,85 @@ def _altre_foto(tutte, escluso: str, giro: int) -> list:
     La funzione resta al suo posto, e non e' un residuo: il giorno in cui
     Google restituira' piu' di una fotografia per luogo, le altre di QUEL
     luogo entreranno da qui senza toccare nient'altro.
+
+    [UNITE LE DUE STRADE — 2026-08-18.] Due sessioni avevano riparato lo
+    stesso difetto in due modi diversi, e la fusione tiene il meglio di
+    tutti e due:
+
+      - la REGOLA e' quella qui sopra: solo fotografie del luogo di cui
+        parla la scheda. E' cio' che Lorenzo ha chiesto — «foto inerenti
+        ai testi» — e nessuna rotazione di immagini altrui la soddisfa;
+      - il MECCANISMO e' il loro: `png_alt`/`credito_alt`, la seconda
+        fotografia dello stesso luogo raccolta da `foto.raccogli_foto`.
+        Serviva a non ripetere lo stesso scatto, e serve ancora — ma
+        applicato al luogo giusto invece che a un altro.
+
+    Risultato: la scheda chiude con una SECONDA fotografia del suo stesso
+    luogo, quando c'e'. Quando non c'e', non chiude con niente.
     """
     if not isinstance(tutte, dict) or not escluso:
         return []
     proprie = tutte.get(escluso)
-    if not isinstance(proprie, (list, tuple)):
+    if not isinstance(proprie, dict):
         return []
-    utili = [s for s in proprie
-             if isinstance(s, dict) and s.get("png") and s.get("credito")]
-    if len(utili) < 2:
+    if not proprie.get("png") or not proprie.get("credito"):
         return []
-    taglio = giro % len(utili)
-    return (utili[taglio:] + utili[:taglio])[1:4]
+    # La seconda fotografia dello stesso luogo, se `foto.raccogli_foto` e'
+    # riuscita a prenderla: e' quella che chiude la scheda senza ripetere
+    # l'immagine gia' vista in apertura.
+    alt_png = proprie.get("png_alt")
+    alt_credito = proprie.get("credito_alt")
+    if not alt_png or not alt_credito:
+        return []
+    return [{"png": alt_png, "credito": alt_credito}]
+
+
+# Quanto deve restare, come minimo, sopra la sonda perche' una fila di
+# fotografie si consideri "caduta sola su una pagina quasi vuota".
+#
+# [AGGIUNTO 2026-08-17 — task #227, ultimo dei nove difetti del fascicolo di
+# Bologna: pagine 13/15/17/19/21/23/25/27, «due foto piccole e tutto lo
+# spazio vuoto».] Stessa soglia, stesso ragionamento di
+# `src/impaginazione.QUOTA_BIANCO_GIORNATA`: se la sonda che precede la fila
+# si ferma alta sulla pagina — sopra il 70% dell'altezza del foglio — vuol
+# dire che quasi niente la precede su QUELLA pagina, cioe' che la fila e'
+# rimasta isolata. Il numero e' piu' alto della soglia gemella (0.30 contro
+# 0.70, ma sono la stessa misura guardata da parti opposte: qui si guarda
+# quanto resta SOPRA la sonda, li' quanto resta SOTTO l'ultima fotografia)
+# perche' qui la sonda sta appena PRIMA della fila, non alla fine della
+# giornata: se la pagina fosse gia' per meta' piena la fila non sarebbe
+# affatto isolata.
+QUOTA_BANDA_ISOLATA = 0.70
+
+
+def banda_isolata(dati: bytes, quota: float = QUOTA_BANDA_ISOLATA) -> bool:
+    """La fila di fotografie in fondo a QUESTA guida e' caduta da sola su
+    una pagina quasi vuota?
+
+    [AGGIUNTO 2026-08-17 — task #227.] Stesso metodo di
+    `impaginazione.giornate_con_bianco_finale`, applicato a un documento
+    piu' piccolo: si stampa, si guarda dove e' caduta la sonda
+    `guida-banda-inizio` seminata da `build_guide_html()`, si decide.
+
+    Non serve confrontare con "la pagina dopo", come per le giornate: qui
+    non c'e' nessuna pagina dopo — la fila e' l'ultima cosa che la guida
+    stampa. Basta guardare quanto resta SOPRA la sonda: se e' quasi tutta
+    la pagina, quella pagina era vuota prima che la fila cominciasse.
+
+    Torna `False` — mai solleva — se le sonde non si leggono: una guida
+    senza questa riparazione resta comunque una guida.
+    """
+    try:
+        from src import impaginazione
+
+        dove = impaginazione.posizioni(dati)
+        posizione = dove.get("guida-banda-inizio")
+        if not posizione:
+            return False
+        _pagina, altezza = posizione
+        return altezza >= impaginazione.ALTEZZA_A4_PT * quota
+    except Exception:
+        return False
 
 
 def costruisci_capitoli(
@@ -875,8 +1039,39 @@ def costruisci_capitoli(
                 ritorni=ritorni.get(poi_id),
                 tavolozza=tinte,
                 foto_extra=_altre_foto(foto, poi_id, len(capitoli)),
+                sonda_banda=True,
             )
             blob = render_guide_pdf(html)
+
+            # [AGGIUNTO 2026-08-17 — task #227] LA SECONDA STAMPA. Si stampa
+            # una volta, si guarda se la fila di foto in fondo e' caduta da
+            # sola su una pagina quasi vuota (`banda_isolata()`), e SOLO in
+            # quel caso si ristampa con la fila ingrandita.
+            #
+            # Raddoppia le stampe SOLO per le guide che ne hanno davvero
+            # bisogno — non tutte, come per il documento principale: e' la
+            # differenza fra un miglioramento e uno scambio. Se la seconda
+            # stampa fallisce o non e' piu' piccola, si tiene la prima:
+            # una scheda con una pagina un po' vuota e' molto meglio di
+            # nessuna scheda.
+            if blob and banda_isolata(blob):
+                html_ingrandito = build_guide_html(
+                    guide,
+                    destination=destination,
+                    place_card=schede.get(poi_id),
+                    photo=foto.get(poi_id),
+                    come_arrivare=str(tragitti.get(poi_id) or ""),
+                    open_hours=orari.get(poi_id),
+                    ancora_capitolo=fascicolo.ancora_capitolo(poi_id),
+                    ritorni=ritorni.get(poi_id),
+                    tavolozza=tinte,
+                    foto_extra=_altre_foto(foto, poi_id, len(capitoli)),
+                    banda_ingrandita=True,
+                    sonda_banda=True,
+                )
+                blob_ingrandito = render_guide_pdf(html_ingrandito)
+                if blob_ingrandito:
+                    blob = blob_ingrandito
         except Exception:
             blob = None
         if not blob:

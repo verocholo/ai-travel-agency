@@ -938,6 +938,15 @@ _CSS_MODELLO = """
        la scheda del paese e i fatti di copertina sono la stessa cosa — dati
        secchi da leggere in un colpo d'occhio — e devono sembrarlo. */
     .pre-facts { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0 18px 0; }
+    /* [MODO COMPATTO 2026-08-18] Le due forme strette dell'ultimo capitolo.
+       Si usano SOLO quando la prima stampa ha lasciato il corpo con una coda
+       orfana — mezzo foglio bianco in mezzo al fascicolo cucito — e si
+       tengono solo se quella pagina sparisce davvero. Vedi
+       `impaginazione.coda_orfana` e il cancello in `render_pdf`. */
+    .pre-facts.stretta { margin: 2px 0 4px 0; }
+    .pre-facts.stretta td { padding: 3px 4px; }
+    .riga-stretta { font-size: 12px; margin: 4px 0 6px 0; }
+    .footer.stretto { margin-top: 4px; }
     .pre-facts td { padding: 7px 4px; border-bottom: 1px solid {{sfondo_tenue}}; vertical-align: top; }
     .pre-facts td.k {
       color: #6b7a89; width: 34%; text-transform: uppercase;
@@ -1423,11 +1432,16 @@ _CSS_MODELLO = """
       margin: 0 -7px 8px -7px; page-break-inside: avoid;
     }
     .day-eroe td, .day-numerone td { padding: 0; vertical-align: middle; }
-    .day-eroe-grande { width: 61%; }
-    .day-eroe-lato { width: 39%; }
-    /* Le due larghezze qui sopra devono restare quelle di `LARGHEZZA_EROE`
-       in `src/pdf_renderer.py`: da li' si ricava il ritaglio che fa venire
-       le due fotografie alte uguali. C'e' un controllo che lo verifica. */
+    /* [CORRETTO 2026-08-17, due volte — pagina 4: «una foto e' troppo piu'
+       piccola dell'altra», poi «le foto affiancate devono avere sempre la
+       stessa dimensione».] Le due larghezze sono scritte in linea sulla
+       singola cella (50%/50%, fisse) da `_apertura_di_giornata()`: prima
+       erano state rese variabili per compensare le fotografie molto
+       verticali, ma Lorenzo ha chiarito che le vuole sempre uguali fra
+       loro. Quello che resta variabile e' il rapporto di ritaglio
+       CONSEGNATO da ciascuna fotografia (misurato, non presunto): la quasi
+       totalita' delle coppie viene comunque alla stessa altezza, perche'
+       entrambe chiedono lo stesso rapporto di ritaglio. */
     /* Il numerone: grande abbastanza da essere un elemento grafico, non un
        numero scritto grosso. In grigio chiaro perche' deve fare da fondale
        alla fotografia accanto, non contenderle l'occhio. */
@@ -1529,22 +1543,47 @@ _ANCHOR_PROBE_PREFIX = pdf_links.PROBE_PREFIX
 
 # Quanto e' larga la fascia fotografica di copertina rispetto alla sua
 # altezza. Non e' un gusto: e' altezza di pagina. A 2,6 la copertina del
-# campione sfondava sul foglio dopo; a 3,2 ci sta, e come banda sta pure
-# meglio — una striscia larga si legge come un'apertura, un rettangolo alto
-# si legge come una figura messa li'.
-_RAPPORTO_FASCIA = 3.2
+# campione sfondava sul foglio dopo; a 3,2 ci stava.
+#
+# [ALZATO A 4.2 — 2026-08-17, richiesta di Lorenzo: «immagini così grosse
+# non sono necessarie, nemmeno sulla copertina».] Una fascia piu' larga a
+# parita' di larghezza pagina e' una fascia piu' BASSA: da 3,2 a 4,2 la
+# fotografia di copertina occupa un quarto di pagina in meno, restando
+# comunque un colpo d'occhio riconoscibile — non un rettangolo cosi'
+# stretto da sembrare un ritaglio a caso.
+_RAPPORTO_FASCIA = 4.2
 
 # Il rapporto delle fotografie in fila a chiusura di giornata. Con tre celle
 # larghe un terzo del foglio, 1.5 da' figure alte poco meno di quattro
 # centimetri: si vedono, e non rubano la pagina al programma.
 RAPPORTO_FILA = 1.5
 
-# L'apertura «eroe laterale»: quanto e' larga la cella grande, in percentuale,
-# e con che rapporto si ritaglia la sua fotografia. Il rapporto della piccola
-# si RICAVA da questi due (vedi `_apertura_di_giornata`), perche' le due
-# figure devono venire alte uguali: e' l'unico modo perche' sembrino una
-# coppia e non un errore.
-LARGHEZZA_EROE = 61
+# L'apertura «eroe laterale»: con che rapporto si CHIEDE di ritagliare le sue
+# due fotografie. Le due colonne sono sempre al 50% — vedi la nota sul
+# rovesciamento di rotta piu' sotto.
+#
+# [CORRETTO 2026-08-16 poi 2026-08-17, due volte sullo stesso difetto.]
+# Cronistoria breve perche' non si ripeta un terzo giro:
+#
+# - Fino al 16 agosto: due larghezze FISSE (61%/39%), un solo rapporto di
+#   ritaglio derivato da quelle. Difetto: una fotografia molto verticale
+#   (le due torri di Bologna) chiesta a quel rapporto veniva fermata dal
+#   tetto di ritaglio (`foto.TAGLIO_MASSIMO`) *prima* di raggiungerlo — le
+#   due figure non venivano piu' alte uguali, e quella piccola sembrava un
+#   errore. Segnalato da Lorenzo.
+# - 17 agosto, primo giro: le larghezze diventano CALCOLATE dal rapporto
+#   DAVVERO ottenuto dal ritaglio (misurato, non presunto), cosi' le due
+#   figure tornano alte uguali qualunque sia la loro forma di partenza.
+#   Funzionava per l'altezza — ma cambiava la larghezza delle due celle.
+# - 17 agosto, stesso giorno, secondo giro: Lorenzo chiarisce la direttiva
+#   («le foto affiancate devono avere sempre la stessa dimensione»): la
+#   vuole ferma al 50/50 anche per questa coppia, non piu' "grande +
+#   piccola". Si torna a colonne fisse — ma stavolta UGUALI fra loro, non
+#   61/39 — con lo STESSO rapporto di ritaglio richiesto per entrambe le
+#   fotografie: nella grandissima maggioranza dei casi coincidono anche in
+#   altezza, e nei rari casi limite (una fotografia nativa piu' verticale
+#   del tetto di ritaglio) la differenza residua e' minima — molto meno
+#   vistosa del vecchio 61%/39%.
 RAPPORTO_EROE = 1.25
 
 
@@ -3105,7 +3144,18 @@ LIMITE_PROSA_UNITA = 900
 # le righe di una tabella, le tappe di una giornata e i riquadri hanno gia'
 # le loro protezioni, e avvolgerli una seconda volta creerebbe tabelle
 # annidate senza motivo.
-_CLASSI_PROSA = ("guide-para", "corpo", "section-intro", "disclaimer")
+#
+# [ESTESA 2026-08-17 — direttiva di Lorenzo: «non devono spezzarsi non solo
+# i vari capitoli, ma anche i vari paragrafi».] `summary-box` mancava, ed e'
+# esattamente il caso che si vedeva nel fascicolo di Bologna: il riquadro
+# «Il viaggio in breve» — un paragrafo vero, scritto di getto — si spezzava
+# fra le pagine 2 e 3. Non era dimenticanza di design: era mancato
+# nell'elenco quando la regola e' stata scritta, perche' a quella data
+# `summary-box` badge conteneva solo brevi frasi di sistema; da quando porta
+# anche l'`executive_summary` (un paragrafo lungo, scritto in prosa) e' un
+# blocco di prosa a tutti gli effetti e va protetto come gli altri.
+_CLASSI_PROSA = ("guide-para", "corpo", "section-intro", "disclaimer",
+                 "summary-box")
 
 _RE_PROSA = re.compile(
     r"<(p|div) class='(" + "|".join(_CLASSI_PROSA) + r")'>"
@@ -3512,7 +3562,8 @@ def _foto_vere_della_giornata(blocks, photos: dict | None) -> list:
     return uscita
 
 
-def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "") -> str:
+def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "",
+                          ingrandita: bool = False) -> str:
     """Fino a tre fotografie in fila, in chiusura di giornata.
 
     [AGGIUNTO 2026-08-13 — richiesta di Lorenzo: «inserisci piu' foto,
@@ -3534,9 +3585,54 @@ def _render_striscia_foto(blocks, photos: dict | None, gia_usata: str = "") -> s
       - `page-break-inside: avoid` sulla tabella: se la fila non ci sta,
         scende intera invece di spezzarsi in due pagine — la stessa regola
         della nota di copertina, e per lo stesso motivo.
+
+    ## `ingrandita`, e perche' esiste
+
+    [AGGIUNTO 2026-08-16 — l'ultimo dei nove difetti segnalati da Lorenzo sul
+    fascicolo di Bologna: pagine 15, 18, 21, 26, «due foto piccole e spazio
+    vuoto». La sua indicazione, testuale: «le foto devono occupare lo spazio
+    bianco», e la strada e' ingrandire le fotografie, non allargare i
+    margini.]
+
+    Lo decide `src/impaginazione.giornate_con_bianco_finale`, misurando la
+    prima stampa: quella funzione dice QUALI giornate finiscono con troppo
+    spazio bianco sotto l'ultima foto, e chi chiama passa qui il verdetto per
+    la singola giornata.
+
+    Quando e' vero, la fila usa **due** fotografie invece di tre — o UNA,
+    a tutta larghezza, se e' l'unica disponibile. Non e' un trucco nuovo:
+    l'altezza di ogni figura la governa sempre il ritaglio applicato alla
+    LARGHEZZA della sua cella (vedi `foto.ritaglia_panoramica`), quindi una
+    cella piu' larga produce da sola una figura piu' alta — niente margini
+    toccati, niente `max-height`, la stessa identica regola che tiene le
+    fotografie di questa fila non deformate da agosto.
     """
+    massimo = 2 if ingrandita else 3
     candidate = [c for c in _foto_vere_della_giornata(blocks, photos)
-                 if c[0] != gia_usata][:3]
+                 if c[0] != gia_usata][:massimo]
+
+    if ingrandita and len(candidate) == 1:
+        # Una fila di UNA fotografia sola, altrove, sembrerebbe un errore in
+        # mezzo a una riga pensata per tre. Qui non c'e' nessuna riga da
+        # confrontare: e' la stessa forma gia' usata per l'apertura
+        # "foto-sola" (vedi `_apertura_di_giornata`), riusata a chiusura di
+        # giornata invece che in apertura.
+        _poi_id, scatto, nome = candidate[0]
+        grezzi = scatto.get("png") if isinstance(scatto, dict) else None
+        ritagliata = foto.ritaglia_panoramica(grezzi, 2.9) or grezzi
+        try:
+            b64 = base64.b64encode(ritagliata).decode("ascii")
+        except (TypeError, ValueError, KeyError):
+            return ""
+        tipo = foto.mime_immagine(ritagliata)
+        return (
+            f"<div class='day-larga'>"
+            f"<img src='data:{tipo};base64,{b64}' alt='{_esc(nome)}' "
+            "style='width:100%; display:block;'>"
+            f"<div class='didascalia'>{_esc(scatto.get('credito') or '')}</div>"
+            "</div>"
+        )
+
     if len(candidate) < 2:
         return ""
     larghezza = 100 // len(candidate)
@@ -3614,12 +3710,39 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
         {"impianto": {"nome": apertura_precedente or ""}, "ornamenti": []})
     ornamenti = ricetta["ornamenti"]
 
+    def _ritaglio_misurato(png, rapporto_richiesto):
+        """Ritaglia una fotografia e torna `(byte, rapporto_davvero_ottenuto)`.
+
+        [AGGIUNTO 2026-08-17 — task #224, pagina 4: «una foto e' troppo piu'
+        piccola dell'altra».]
+
+        Il rapporto CHIESTO e il rapporto CONSEGNATO non sono sempre lo
+        stesso numero: `foto.ritaglia_panoramica` ha un tetto
+        (`foto.TAGLIO_MASSIMO`) che le impedisce di sbucciare una fotografia
+        molto verticale fino al rapporto richiesto, e in quel caso consegna
+        il rapporto piu' vicino che il tetto permette. Un calcolo che
+        continua a ragionare sul rapporto CHIESTO — come faceva questa
+        apertura prima — produce due fotografie affiancate di altezza
+        diversa, perche' una delle due non ha davvero ottenuto la forma che
+        il calcolo presumeva.
+
+        Qui si ritaglia e poi si MISURA quello che e' uscito davvero: e' la
+        stessa disciplina di tutto il resto del prodotto — non si presume,
+        si guarda.
+        """
+        ritagliata = foto.ritaglia_panoramica(png, rapporto_richiesto) or png
+        misura = foto.dimensioni(ritagliata)
+        rapporto_reale = (
+            misura[0] / misura[1] if misura and misura[1] else rapporto_richiesto
+        )
+        return ritagliata, rapporto_reale
+
     def _figura(scatto, larghezza_html, rapporto, sfumata=False):
         png = scatto.get("png") if isinstance(scatto, dict) else None
         credito = str((scatto or {}).get("credito") or "").strip()
         if not png or not credito:
             return ""
-        ritagliata = foto.ritaglia_panoramica(png, rapporto) or png
+        ritagliata, _rapporto_reale = _ritaglio_misurato(png, rapporto)
         if sfumata:
             ritagliata = foto.sfuma_in_basso(ritagliata) or ritagliata
         try:
@@ -3629,6 +3752,28 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
         tipo = foto.mime_immagine(ritagliata)
         return (f"<img src='data:{tipo};base64,{b64}' alt='' {larghezza_html}>"
                 f"<div class='didascalia'>{_credito(credito)}</div>")
+
+    def _cella_figura(scatto, rapporto, larghezza_percento):
+        """Come `_figura`, ma per una cella di UNA tabella a colonne: la
+        larghezza e' quella calcolata da `_larghezze_per_altezza_uguale`,
+        non una misura fissa scritta nel foglio di stile."""
+        png = scatto.get("png") if isinstance(scatto, dict) else None
+        credito = str((scatto or {}).get("credito") or "").strip()
+        if not png or not credito:
+            return "", 0
+        ritagliata, rapporto_reale = _ritaglio_misurato(png, rapporto)
+        try:
+            b64 = base64.b64encode(ritagliata).decode("ascii")
+        except (TypeError, ValueError):
+            return "", 0
+        tipo = foto.mime_immagine(ritagliata)
+        html = (
+            f"<td style='width:{larghezza_percento}%'>"
+            f"<img src='data:{tipo};base64,{b64}' alt='' "
+            "style='width:100%; display:block;'>"
+            f"<div class='didascalia'>{_credito(credito)}</div></td>"
+        )
+        return html, rapporto_reale
 
     def _tonda(scatto):
         png = scatto.get("png") if isinstance(scatto, dict) else None
@@ -3665,11 +3810,27 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
     # --- l'apertura fotografica -------------------------------------------
     scelta = apertura
     if apertura == "mosaico":
-        celle = []
-        for scatto, _nome in disponibili[:3]:
-            figura = _figura(scatto, "style='width:100%; display:block;'", 1.35)
-            if figura:
-                celle.append(f"<td style='width:33%'>{figura}</td>")
+        # [CORRETTO 2026-08-17 — pagina 6: «le foto sono stretchate».]
+        #
+        # Le tre celle erano larghe un terzo fisso, e le tre fotografie
+        # ritagliate tutte allo stesso rapporto (1.35) — pensato per una
+        # fotografia orizzontale. Una fotografia molto verticale (le due
+        # torri) chiesta a quel rapporto viene fermata dal tetto di
+        # ritaglio (`foto.TAGLIO_MASSIMO`) *molto* prima di raggiungerlo, e
+        # il risultato — una fetta stretta di una foto che voleva restare
+        # alta — si legge come una fotografia deformata, anche se nessun
+        # pixel e' stato stirato davvero.
+        #
+        # Ogni fotografia mantiene il rapporto che il ritaglio le concede
+        # DAVVERO (misurato, non presunto — vedi `_ritaglio_misurato`), e la
+        # riga accetta di avere tre celle di altezza diversa piuttosto che
+        # forzarle tutte alla stessa forma: e' la stessa regola di tutto il
+        # prodotto — meglio una cosa vera e un po' meno ordinata che una
+        # composta e falsa.
+        celle_e_rapporti = [
+            _cella_figura(scatto, 1.35, 33) for scatto, _nome in disponibili[:3]
+        ]
+        celle = [c for c, _r in celle_e_rapporti if c]
         if len(celle) >= 3:
             pezzi.append("<table class='day-striscia'><tr>" + "".join(celle)
                          + "</tr></table>")
@@ -3682,32 +3843,38 @@ def _apertura_di_giornata(chiave, giorno_numero, blocks, photos,
     # di stampa, si fa solo con le tabelle — `float` e `flex` li ignora in
     # silenzio, e il risultato sarebbe la colonna stretta SOTTO quella larga.
     if scelta == "eroe-laterale":
-        # [CORRETTO 2026-08-16 — pagina 4: «una foto e' troppo piu' piccola
-        # dell'altra».]
+        # [CORRETTO 2026-08-17, di nuovo — richiesta esplicita di Lorenzo:
+        # «sempre stessa larghezza quando affiancate». Sostituisce la
+        # correzione di poco prima, che calcolava due larghezze DIVERSE
+        # apposta per farle venire alla stessa altezza.]
         #
-        # Le due fotografie stavano in due celle larghe il 61% e il 39%, ed
-        # erano ritagliate con lo stesso criterio: a parita' di criterio, la
-        # cella stretta produce una figura molto piu' BASSA, e sulla pagina
-        # sembrano due immagini di importanza diversa messe li' a caso.
+        # Il giro precedente aveva risolto "una foto piu' piccola dell'altra"
+        # rendendo le DUE CELLE di larghezza variabile (calcolata dal
+        # rapporto vero del ritaglio) cosi' che le due figure uscissero
+        # alla stessa ALTEZZA. Funzionava, ma cambiava la larghezza — e
+        # Lorenzo ha chiarito che la vuole sempre uguale, anche per questa
+        # coppia: due colonne al 50%, non piu' una "grande" e una "piccola".
         #
-        # Perche' abbiano la STESSA ALTEZZA i due rapporti devono stare fra
-        # loro come le larghezze delle celle: l'altezza di una figura larga
-        # `L` con rapporto `r` e' `L/r`, quindi 61/r1 = 39/r2. Da qui i due
-        # numeri qui sotto, che non sono a occhio: 1.25 e 1.25*39/61 = 0.80.
-        # La grande resta orizzontale, la piccola diventa verticale, e in
-        # pagina fanno una coppia invece di uno scarto.
-        piccolo = RAPPORTO_EROE * (100 - LARGHEZZA_EROE) / LARGHEZZA_EROE
-        grande = _figura(disponibili[0][0],
-                         "style='width:100%; display:block;'", RAPPORTO_EROE)
-        piccola = (_figura(disponibili[1][0],
-                           "style='width:100%; display:block;'", piccolo)
-                   if len(disponibili) >= 2 else "")
-        if grande and piccola:
+        # Con colonne uguali e lo STESSO rapporto di ritaglio richiesto per
+        # entrambe le fotografie, le due figure vengono alla stessa altezza
+        # per costruzione nella grandissima maggioranza dei casi — l'unica
+        # eccezione resta una fotografia nativa cosi' verticale che il tetto
+        # di ritaglio (`foto.TAGLIO_MASSIMO`) le impedisce di raggiungere il
+        # rapporto chiesto: in quel caso resta un poco piu' alta dell'altra,
+        # ma la differenza e' minima — molto meno vistosa del 61%/39% fisso
+        # di prima del 16 agosto, che e' il difetto originale segnalato.
+        grande_scatto = disponibili[0][0]
+        piccola_scatto = disponibili[1][0] if len(disponibili) >= 2 else None
+        cella_grande, _ = _cella_figura(grande_scatto, RAPPORTO_EROE, 50)
+        cella_piccola, _ = (
+            _cella_figura(piccola_scatto, RAPPORTO_EROE, 50)
+            if piccola_scatto else ("", 0)
+        )
+        if cella_grande and cella_piccola:
             pezzi.append(
                 "<table class='day-eroe'><tr>"
-                f"<td class='day-eroe-grande'>{grande}</td>"
-                f"<td class='day-eroe-lato'>{piccola}</td>"
-                "</tr></table>")
+                + cella_grande + cella_piccola
+                + "</tr></table>")
         else:
             scelta = "banda"
 
@@ -4095,14 +4262,14 @@ def _render_predeparture(predeparture: dict | None) -> str:
     return "".join(parts)
 
 
-def _camminate_in_due_colonne(voci) -> str:
-    """Le giornate a due a due, invece che una per riga.
+def _righe_delle_camminate(voci) -> str:
+    """Le giornate a due a due, come RIGHE di tabella — senza la tabella.
 
-    [MISURATO, 2026-08-15.] In colonna sola l'elenco era alto quanto mezza
-    pagina: non ci stava in fondo al capitolo, scendeva tutto intero sulla
-    pagina dopo (viaggia dentro un guscio, quindi o entra o scende) e quella
-    pagina restava piena all'undici per cento. A due a due ci sta, e un
-    elenco di numeri corti su due colonne si legge anche meglio.
+    Estratta il 18 agosto da `_camminate_in_due_colonne` per un motivo
+    preciso: in modo compatto queste righe vanno dentro la tabella dei
+    numeri utili invece che in una tabella loro, e due tabelle attaccate
+    costano ventisei punti di margini che nel modo compatto sono
+    esattamente quello che manca.
     """
     righe = []
     for i in range(0, len(voci), 2):
@@ -4114,12 +4281,25 @@ def _camminate_in_due_colonne(voci) -> str:
             # riga e sembrerebbe piu' importante delle altre.
             celle += "<td></td><td></td>"
         righe.append(f"<tr>{celle}</tr>")
-    return "<table class='pre-facts'>" + "".join(righe) + "</table>"
+    return "".join(righe)
+
+
+def _camminate_in_due_colonne(voci) -> str:
+    """Le giornate a due a due, invece che una per riga.
+
+    [MISURATO, 2026-08-15.] In colonna sola l'elenco era alto quanto mezza
+    pagina: non ci stava in fondo al capitolo, scendeva tutto intero sulla
+    pagina dopo (viaggia dentro un guscio, quindi o entra o scende) e quella
+    pagina restava piena all'undici per cento. A due a due ci sta, e un
+    elenco di numeri corti su due colonne si legge anche meglio.
+    """
+    return ("<table class='pre-facts'>" + _righe_delle_camminate(voci)
+            + "</table>")
 
 
 def _render_numeri_utili(predeparture: dict | None, hotels=None,
                         directions_by_day: dict | None = None,
-                        days=None) -> str:
+                        days=None, compatta: bool = False) -> str:
     """Il capitolo che si cerca quando qualcosa va storto (task #220).
 
     [AGGIUNTO 2026-08-15. Lorenzo: «manca ancora qualcosa».]
@@ -4202,6 +4382,14 @@ def _render_numeri_utili(predeparture: dict | None, hotels=None,
         return ""
 
     pezzi: list[str] = []
+    # [PROVATO E SCARTATO, 2026-08-18 — vale la pena scriverlo.] Il primo
+    # modo compatto infilava le camminate DENTRO la tabella dei numeri
+    # utili, per risparmiare i margini fra due tabelle. Misurato: peggiorava.
+    # Quella tabella viaggia dentro un guscio che non si spezza, e
+    # allungarla di due righe la faceva scendere INTERA sulla pagina dopo —
+    # la coda orfana passava dal 6% al 23% e la pagina restava li'.
+    # Il modo compatto di oggi non unisce niente: toglie i punti che stanno
+    # SOPRA le camminate, cosi' le camminate risalgono.
     if righe_paese:
         # [COMPATTATA 2026-08-15, MISURANDO.] Una riga per voce faceva un
         # capitolo alto mezza pagina che non stava mai in fondo a quella
@@ -4228,14 +4416,25 @@ def _render_numeri_utili(predeparture: dict | None, hotels=None,
                 celle += "<td></td><td></td>"
             righe.append(f"<tr>{celle}</tr>")
         pezzi.append(_keep_together(
-            "<table class='pre-facts'>" + "".join(righe) + "</table>"))
+            "<table class='pre-facts"
+            + (" stretta" if compatta else "")
+            + "'>" + "".join(righe) + "</table>"))
 
     if indirizzo:
         # Su una riga sola, dentro lo stesso guscio del resto: e' la riga che
         # si mostra a un tassista, non un capitolo a se'.
-        pezzi.append(_keep_together(
-            f"<div class='summary-box'><strong>Dove dormi:</strong> "
-            f"{_esc(nome_base)} — {_esc(indirizzo)}</div>"))
+        #
+        # [MODO COMPATTO 2026-08-18] Senza il riquadro colorato: il suo
+        # riempimento costa quattordici punti sopra e altrettanti sotto, piu'
+        # i margini del guscio. La riga dice la stessa identica cosa.
+        if compatta:
+            pezzi.append(_keep_together(
+                f"<div class='riga-stretta'><strong>Dove dormi:</strong> "
+                f"{_esc(nome_base)} — {_esc(indirizzo)}</div>"))
+        else:
+            pezzi.append(_keep_together(
+                f"<div class='summary-box'><strong>Dove dormi:</strong> "
+                f"{_esc(nome_base)} — {_esc(indirizzo)}</div>"))
 
     if camminate:
         # Dentro il guscio: senza, l'elenco si spezza fra due pagine e
@@ -4250,12 +4449,27 @@ def _render_numeri_utili(predeparture: dict | None, hotels=None,
         #
         # Resta unita l'INTESTAZIONE con la prima riga: una riga di
         # presentazione da sola in fondo al foglio sarebbe orfana.
-        pezzi.append(
-            "<div class='mid-intro'>Quanto si cammina, giorno per giorno — "
-            "misurato sui tragitti veri del tuo programma, non stimato. "
-            "E' il numero che decide le scarpe.</div>"
-            + _camminate_in_due_colonne(camminate)
-        )
+        #
+        # [MODO COMPATTO 2026-08-18] La presentazione di tre righe diventa
+        # mezza riga dentro la tabella, e la tabella perde i suoi margini.
+        # Sono i punti che decidono se questa coda risale sulla pagina prima
+        # o si porta dietro un foglio quasi vuoto — e le due colonne di
+        # numeri, che sono la sostanza, restano identiche.
+        if compatta:
+            pezzi.append(
+                "<table class='pre-facts stretta'>"
+                "<tr><td class='k' colspan='4'>Quanto si cammina, giorno per "
+                "giorno — misurato sui tuoi tragitti</td></tr>"
+                + _righe_delle_camminate(camminate)
+                + "</table>"
+            )
+        else:
+            pezzi.append(
+                "<div class='mid-intro'>Quanto si cammina, giorno per giorno — "
+                "misurato sui tragitti veri del tuo programma, non stimato. "
+                "E' il numero che decide le scarpe.</div>"
+                + _camminate_in_due_colonne(camminate)
+            )
     return "".join(pezzi)
 
 
@@ -4689,6 +4903,25 @@ def render_html(
     # `src/impaginazione.py`). Vuoto = documento che scorre, cioe' il
     # comportamento di sempre.
     capitoli_a_capo=None,
+    # [AGGIUNTO 2026-08-16 — ultimo dei nove difetti del fascicolo di
+    # Bologna: pagine 15, 18, 21, 26, «due foto piccole e spazio vuoto».]
+    # I NUMERI delle giornate la cui fila di chiusura va ingrandita, decisi
+    # anche loro MISURANDO la prima stampa (vedi
+    # `src/impaginazione.giornate_con_bianco_finale`). La strada scelta da
+    # Lorenzo e' ingrandire le fotografie, non allargare i margini: vuoto =
+    # ogni giornata stampa la sua fila di sempre, fino a tre fotografie.
+    giornate_da_ingrandire=None,
+    # [AGGIUNTO 2026-08-18] Vero quando la prima stampa ha lasciato il corpo
+    # del documento con una coda orfana: ultima pagina piena per meno di due
+    # quinti (vedi `src/impaginazione.coda_orfana`). Stringe l'ULTIMO
+    # capitolo — quello dei numeri utili — quel tanto che basta perche' la
+    # sua coda risalga sulla pagina prima e la pagina sparisca.
+    #
+    # Non e' un modo "piu' compatto" migliore dell'altro: e' peggiore, e si
+    # usa solo quando l'alternativa e' mezzo foglio bianco in mezzo al
+    # fascicolo. Chi stampa lo accende MISURANDO, e lo tiene solo se la
+    # pagina e' sparita davvero.
+    coda_compatta: bool = False,
 ) -> str:
     """
     Funzione pura (nessuna chiamata di rete/subprocess) — costruisce
@@ -4870,7 +5103,8 @@ def render_html(
     # qualcosa va storto: emergenze, valuta, prese, dove dormi, quanto si
     # cammina. Tutto da dati che abbiamo gia': non costa una chiamata.
     numeri_utili_html = _render_numeri_utili(
-        predeparture, hotels, directions_by_day, days)
+        predeparture, hotels, directions_by_day, days,
+        compatta=bool(coda_compatta))
     vademecum_html = _render_vademecum(vademecum, checklist_sheet)
     tips_html = _render_tips(tips, itinerary.get("architect_tips"))
     rain_html = _render_rain_plans(tips)
@@ -5112,6 +5346,19 @@ def render_html(
     ]
     _apertura_precedente = ""
 
+    # Normalizzata una volta sola, fuori dal ciclo: chi chiama passa spesso
+    # un `set` gia' di interi, ma la seconda stampa lo costruisce leggendo
+    # nomi di sonde e non c'e' ragione di fidarsi del tipo esatto.
+    _giornate_da_ingrandire: frozenset = frozenset()
+    if giornate_da_ingrandire:
+        _numeri = set()
+        for _n in giornate_da_ingrandire:
+            try:
+                _numeri.add(int(_n))
+            except (TypeError, ValueError):
+                continue
+        _giornate_da_ingrandire = frozenset(_numeri)
+
     for day in days:
         # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
         # il rendering PDF NON è gated sull'esito PASS del Nodo 9 (main.py e
@@ -5203,7 +5450,8 @@ def render_html(
         _foto_disponibili = _foto_vere_della_giornata(blocks, photos)
         _striscia_html = _render_striscia_foto(
             blocks, photos,
-            gia_usata=(_foto_disponibili[0][0] if _foto_disponibili else ""))
+            gia_usata=(_foto_disponibili[0][0] if _foto_disponibili else ""),
+            ingrandita=(day_number in _giornate_da_ingrandire))
         _MAX_BLOCKS_PER_DAY_CARD = 20
         chunks = [
             blocks[i : i + _MAX_BLOCKS_PER_DAY_CARD]
@@ -5394,6 +5642,70 @@ def render_html(
                 parts.append(riga)
             parts.append("</div></div>")
 
+        # [AGGIUNTO 2026-08-16 — task #223] La sonda di CHIUSURA giornata.
+        # Dice a che altezza dal fondo pagina si e' fermato davvero il
+        # contenuto di questa giornata, fila di foto compresa. `giorno-{N}`
+        # dice dove COMINCIA; questa dice dove FINISCE, ed e' la seconda
+        # meta' di cui `src/impaginazione.giornate_con_bianco_finale` ha
+        # bisogno per sapere se la giornata ha lasciato spazio bianco in
+        # fondo alla sua ultima pagina.
+        #
+        # [CORRETTA DUE VOLTE, stessa sessione — entrambe trovate da una
+        # prova gia' scritta, non a occhio, non dopo la consegna.]
+        #
+        # La PRIMA versione appendeva la sonda come testo libero fra due
+        # `div`, fuori da qualunque contenitore: un paio di punti di altezza
+        # in piu' per ogni giornata, sommati su un intero itinerario,
+        # bastavano a spostare capitoli successivi oltre la soglia che li fa
+        # considerare "caduti in fondo" — misurato:
+        # `test_impaginazione_capitoli_2026_08_15` e' diventato rosso, con
+        # «prima di partire» passato da fuori soglia a dentro soglia.
+        #
+        # La SECONDA versione incapsulava la sonda in un contenitore ad
+        # altezza dichiarata ZERO (`height:0; overflow:hidden`) per togliere
+        # quel margine: cosi' facendo pero' toglieva anche la sonda — un
+        # elemento a superficie zero non riceve un'annotazione di link
+        # misurabile da questo motore di stampa, e `impaginazione.posizioni`
+        # smetteva di trovarla del tutto. Una riparazione che cancella la
+        # cosa che doveva riparare non e' una riparazione.
+        #
+        # La sonda va quindi DENTRO l'ultimo elemento REALE gia' presente,
+        # non accanto: il testo o la fotografia che la precede ha gia' una
+        # sua altezza, e un carattere invisibile in coda a un contenuto che
+        # occupa gia' spazio non ne aggiunge. Tre punti di innesto, in
+        # ordine di preferenza — il primo che esiste vince:
+        _sonda_fine = _anchor(f"giorno-{day_number}-fine")
+        if avanzati:
+            # Il rientro e' l'ultima cosa stampata: la sonda entra nel testo
+            # dell'ultimo tragitto, non dopo il blocco che lo contiene.
+            parts[-1] = parts[-1][: -len("</div></div>")] + _sonda_fine + "</div></div>"
+        elif _striscia_html:
+            # La fila di foto e' l'ultima cosa stampata: la sonda entra
+            # nella didascalia dell'ULTIMA fotografia — la cella e' gia'
+            # alta quanto la fotografia, un paio di punti in coda alla sua
+            # didascalia non spostano niente.
+            _chiusura_cella = "</div></td>"
+            _dove = _striscia_html.rfind(_chiusura_cella)
+            if _dove >= 0:
+                parts[-1] = (
+                    _striscia_html[:_dove] + _sonda_fine
+                    + _striscia_html[_dove:]
+                )
+            else:  # forma imprevista: meglio la sonda mal posizionata che persa
+                parts[-1] = _striscia_html + _sonda_fine
+        elif parts and parts[-1].endswith("</div>"):
+            # Nessuna fila di foto e nessun rientro: quello che resta e' il
+            # tronco del programma, che chiude sempre con la stessa coppia
+            # di `</div>` (blocco piu' day-card).
+            parts[-1] = parts[-1][: -len("</div>")] + _sonda_fine + "</div>"
+        else:
+            # Non dovrebbe succedere — ogni ramo sopra chiude con un `</div>`
+            # — ma se un domani cambiasse, la sonda si stampa comunque
+            # invece di sparire in silenzio: un salto interno che non
+            # atterra da nessuna parte e' peggio di una sonda con una
+            # posizione leggermente meno precisa.
+            parts.append(_sonda_fine)
+
     if costs_html:
         parts.append(
             _titolo_capitolo("costi", "Stima dei costi e dettaglio budget")
@@ -5499,9 +5811,20 @@ def render_html(
             # [ACCORCIATA 2026-08-16] Quattro righe di presentazione facevano
             # sbordare la coda del capitolo sulla pagina dopo, che restava
             # piena al sette per cento. Due righe dicono la stessa cosa.
-            "<div class='section-intro'>Da cercare quando serve qualcosa subito. "
-            "Niente qui è scritto da un'intelligenza artificiale: sono dati "
-            "verificati a mano e misure prese sul tuo programma.</div>"
+            #
+            # [E ANCORA, SOLO SE SERVE, 2026-08-18] Nel modo compatto la
+            # riga diventa una. La frase sull'intelligenza artificiale non
+            # si perde: e' scritta per esteso nei Termini e nella pagina
+            # dell'ordine, qui era una rassicurazione in piu'. Fra una
+            # rassicurazione in piu' e mezzo foglio bianco in mezzo al
+            # fascicolo, Lorenzo ha gia' detto quale delle due tenere.
+            "<div class='section-intro'>"
+            + ("Da cercare quando serve qualcosa subito."
+               if coda_compatta else
+               "Da cercare quando serve qualcosa subito. "
+               "Niente qui è scritto da un'intelligenza artificiale: sono dati "
+               "verificati a mano e misure prese sul tuo programma.")
+            + "</div>"
         )
         parts.append(numeri_utili_html)
 
@@ -5518,10 +5841,27 @@ def render_html(
     # non pacchetto turistico — non compariva in nessun punto del documento che
     # il cliente porta con sé, e il PDF è l'unico artefatto che gli resta in
     # mano e che eventualmente gira. Va scritto qui, non solo nei Termini.
+    #
+    # [SONDA AGGIUNTA 2026-08-18] `documento-fine` e' l'ultima cosa che il
+    # corpo stampa, quindi la sua altezza dal fondo del foglio E' lo spazio
+    # bianco rimasto sull'ultima pagina del corpo. Serve a
+    # `impaginazione.coda_orfana()` per sapere se quella pagina e' finita
+    # con tre righe e mezzo foglio vuoto — che nel fascicolo cucito non e'
+    # una chiusura ma una pagina in mezzo al documento.
+    #
+    # Sta DENTRO la nota, non accanto: un elemento a superficie zero non
+    # riceve un'annotazione misurabile da questo motore di stampa (lezione
+    # gia' pagata con le sonde di fine giornata).
     parts.append(
-        "<div class='footer'>Documento generato automaticamente — verificare sempre orari "
+        "<div class='footer"
+        # Nel modo compatto anche la nota si stringe al foglio: dieci punti
+        # di margine sopra sono, misurati, esattamente la riga che restava
+        # da sola sulla pagina dopo. Il TESTO non cambia di una virgola —
+        # e' una nota legale, si stringe lo spazio, mai le parole.
+        + (" stretto" if coda_compatta else "")
+        + "'>Documento generato automaticamente — verificare sempre orari "
         "di apertura e disponibilità prima della partenza.<br>"
-        f"{_esc(legal_notices.NATURE_SHORT)}</div>"
+        f"{_esc(legal_notices.NATURE_SHORT)}{_anchor('documento-fine')}</div>"
     )
     parts.append("</body></html>")
 
@@ -5673,7 +6013,7 @@ def render_pdf(
     ]
     mappa_capitoli = {c["poi_id"]: c["ancora"] for c in capitoli_pronti}
 
-    def _componi(a_capo=()):
+    def _componi(a_capo=(), ingrandire=(), coda_compatta=False):
         return render_html(
             itinerary, trip, hotels=hotels, guides=guides, guide_urls=guide_urls,
             capitoli=mappa_capitoli,
@@ -5685,7 +6025,24 @@ def render_pdf(
             predeparture=predeparture, vademecum=vademecum,
             checklist_sheet=checklist_sheet,
             capitoli_a_capo=a_capo,
+            giornate_da_ingrandire=ingrandire,
+            coda_compatta=coda_compatta,
         )
+
+    # I numeri delle giornate DAVVERO presenti in questo itinerario, per la
+    # seconda stampa qui sotto: `giornate_con_bianco_finale` ha bisogno di
+    # sapere quali sonde `giorno-{N}-fine` cercare.
+    _numeri_giorni = [
+        d.get("day") for d in (itinerary.get("days") or [])
+        if isinstance(d, dict) and d.get("day") is not None
+    ]
+    # I capitoli che, nel documento, possono comparire DOPO il programma
+    # giorno per giorno: servono a `giornate_con_bianco_finale` per sapere se
+    # quello che segue l'ULTIMA giornata comincia su una pagina nuova.
+    _capitoli_dopo_giorni = tuple(
+        nome for nome in CAPITOLI_DEL_DOCUMENTO
+        if nome not in ("colpo-docchio", "alloggio", "selezione", "giorno-per-giorno")
+    )
 
     html_content = _componi()
 
@@ -5763,16 +6120,49 @@ def render_pdf(
         # non converge — sposta il problema di un capitolo ogni volta — e
         # costerebbe secondi di stampa dentro un tetto di tempo che e' gia'
         # stretto.
-        # [SPENTA 2026-08-15] La seconda stampa serviva a scovare le testate
-        # cadute in fondo al foglio. Da quando OGNI capitolo comincia su una
-        # pagina nuova non ne resta nessuna, quindi la seconda stampa non
-        # troverebbe mai niente e costerebbe solo tempo. `src/impaginazione.py`
-        # resta: e' il modo di MISURARE dove cadono i capitoli, e serve ogni
-        # volta che si vuole verificare che la regola stia funzionando.
+        # [SPENTA 2026-08-15] Il ramo che mandava a capo le testate serviva
+        # a scovare quelle cadute in fondo al foglio. Da quando OGNI
+        # capitolo comincia su una pagina nuova non ne resta nessuna, quindi
+        # quel ramo non troverebbe mai niente e costerebbe solo tempo.
+        # `src/impaginazione.py` resta: e' il modo di MISURARE dove cadono i
+        # capitoli, e serve ogni volta che si vuole verificare che la regola
+        # stia funzionando.
         da_spostare = set()
-        if da_spostare:
+
+        # [AGGIUNTO 2026-08-16 — task #223, l'ultimo dei nove difetti del
+        # fascicolo di Bologna: pagine 15, 18, 21, 26, «due foto piccole e
+        # spazio vuoto».]
+        #
+        # STESSO METODO, problema diverso: si guarda dove sono cadute le
+        # sonde di CHIUSURA giornata (`giorno-{N}-fine`, seminate da
+        # `_render_striscia_foto`'s chiamante) e si ingrandisce la fila di
+        # foto SOLO delle giornate che hanno lasciato spazio bianco sotto
+        # l'ultima. A differenza delle testate, qui il bisogno non e'
+        # sparito il 15 agosto: ogni giornata puo' ancora finire a meta'
+        # pagina, ed e' esattamente il caso che questa passata ripara.
+        _prima_pdf_bytes = Path(tmp_pdf_path).read_bytes()
+        giornate_da_ingrandire = impaginazione.giornate_con_bianco_finale(
+            _prima_pdf_bytes, _numeri_giorni, _capitoli_dopo_giorni)
+
+        # [AGGIUNTO 2026-08-18 — l'ultimo difetto misurato sul campione:
+        # «pagina 11: il contenuto si ferma al 6.0% del foglio».]
+        #
+        # LA CODA ORFANA. L'ultimo capitolo del corpo sbordava di due righe,
+        # e quelle due righe si portavano dietro un foglio intero. Nel
+        # fascicolo cucito quel foglio NON e' l'ultima pagina — dietro
+        # ricominciano le schede delle guide — quindi non e' «una chiusura
+        # che finisce dove finisce»: e' mezzo documento bianco in mezzo alle
+        # pagine, esattamente cio' che Lorenzo ha chiesto di togliere.
+        #
+        # Stesso metodo delle altre due riparazioni: si stampa, si guarda
+        # dove e' caduta la sonda di chiusura, e SOLO se e' rimasta alta si
+        # ristampa stringendo l'ultimo capitolo.
+        coda_compatta = impaginazione.coda_orfana(_prima_pdf_bytes)
+
+        if da_spostare or giornate_da_ingrandire or coda_compatta:
             with open(tmp_html_path, "w", encoding="utf-8") as rifatto:
-                rifatto.write(_componi(da_spostare))
+                rifatto.write(_componi(da_spostare, giornate_da_ingrandire,
+                                       coda_compatta))
             seconda = subprocess.run(
                 [*COMANDO_STAMPA, tmp_html_path, tmp_pdf_path],
                 capture_output=True, text=True, timeout=60,
@@ -5780,9 +6170,38 @@ def render_pdf(
             # Se la seconda stampa non riesce si tiene la prima: un documento
             # con un capitolo impaginato male e' molto meglio di nessun
             # documento.
-            if seconda.returncode != 0 or not Path(tmp_pdf_path).stat().st_size:
+            _fallita = (seconda.returncode != 0
+                        or not Path(tmp_pdf_path).stat().st_size)
+
+            # IL CANCELLO. Stringere il testo si paga — una riga di
+            # presentazione in meno — e si paga per una ragione sola: far
+            # sparire una pagina. Se la pagina non e' sparita, il prezzo e'
+            # stato pagato per niente e si torna al testo per esteso.
+            #
+            # Non e' prudenza generica: e' la stessa regola della seconda
+            # stampa delle schede (`banda_isolata`), ed e' cio' che
+            # distingue un miglioramento da uno scambio. Il confronto si fa
+            # sul NUMERO DI PAGINE, che e' il difetto vero, non su una
+            # percentuale di riempimento che potrebbe migliorare di un
+            # soffio senza togliere niente a chi sfoglia.
+            _peggiorata = False
+            if coda_compatta and not _fallita:
+                _prima = impaginazione.quante_pagine(_prima_pdf_bytes)
+                _dopo = impaginazione.quante_pagine(
+                    Path(tmp_pdf_path).read_bytes())
+                _peggiorata = bool(_prima and _dopo and _dopo >= _prima)
+
+            if _fallita or _peggiorata:
                 with open(tmp_html_path, "w", encoding="utf-8") as indietro:
-                    indietro.write(html_content)
+                    # Si torna alla stampa che aveva senso: se la coda era
+                    # l'unico motivo della ristampa si torna all'originale,
+                    # altrimenti si rifa' senza la sola compattazione — le
+                    # altre due riparazioni restano, non c'entrano niente.
+                    indietro.write(
+                        html_content
+                        if _fallita or not (da_spostare or giornate_da_ingrandire)
+                        else _componi(da_spostare, giornate_da_ingrandire)
+                    )
                 subprocess.run([*COMANDO_STAMPA, tmp_html_path, tmp_pdf_path],
                                capture_output=True, text=True, timeout=60)
 

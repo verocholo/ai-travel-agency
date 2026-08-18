@@ -99,6 +99,161 @@ def posizioni(dati: bytes) -> dict:
         return {}
 
 
+# Quanto deve restare, come minimo, sotto l'ultima fotografia di una
+# giornata perche' quella giornata si consideri "finita con spazio bianco".
+#
+# [AGGIUNTO 2026-08-16 — l'ultimo dei nove difetti segnalati da Lorenzo sul
+# fascicolo di Bologna: pagine 15, 18, 21, 26, «due foto piccole e spazio
+# vuoto».] Trenta per cento e' la stessa soglia, vista dal lato opposto, di
+# `ARRIVO_MINIMO` in `scripts_qualita_pagina.py` (70% di riempimento minimo
+# = 30% di margine massimo tollerato): le due misurano la stessa cosa con
+# strumenti diversi — quella sui pixel della pagina stampata, questa sui
+# punti di una sonda — e usare lo stesso numero evita due definizioni
+# diverse dello stesso difetto che un domani potrebbero disallinearsi.
+QUOTA_BIANCO_GIORNATA = 0.30
+
+
+def giornate_con_bianco_finale(dati: bytes, numeri_giorni,
+                               ancore_successive=(),
+                               quota: float = QUOTA_BIANCO_GIORNATA) -> set:
+    """Quali giornate finiscono con troppo spazio bianco sotto l'ultima foto.
+
+    [AGGIUNTO 2026-08-16 — l'ultimo dei nove difetti segnalati da Lorenzo sul
+    fascicolo di Bologna: pagine 15, 18, 21, 26, «due foto piccole e spazio
+    vuoto». La strada scelta e' ingrandire le fotografie di chiusura
+    giornata, non allargare i margini — vedi
+    `src/pdf_renderer._render_striscia_foto`.]
+
+    Stesso metodo di `capitoli_da_mandare_a_capo`, applicato a un problema
+    diverso: non si indovina, si stampa, si guarda dove sono cadute le sonde,
+    si ripara SOLO quello che serve. La sonda qui non e' la testata di un
+    capitolo ma la chiusura di ogni giornata (`giorno-{N}-fine`, seminata da
+    `src/pdf_renderer.py` subito dopo l'ultima cosa che quella giornata
+    stampa): dice a che altezza dal fondo pagina si e' fermato il contenuto,
+    fila di foto compresa.
+
+    Una giornata entra nel risultato SOLO se tutte e tre le condizioni sono
+    vere — le prime due esistono per non riparare un difetto che non c'e':
+
+    - **non e' l'ultima pagina del documento intero.** Quella e' la
+      chiusura, finisce dove finisce, e allungarla per riempirla e' il
+      difetto opposto — stessa regola che usa
+      `scripts_qualita_pagina.problemi()` saltando l'ultima pagina.
+    - **quello che viene dopo comincia su una pagina SUCCESSIVA.** Se la
+      giornata dopo (o, per l'ultima giornata, il primo capitolo dopo)
+      comincia sulla STESSA pagina, lo spazio lo riempie gia' lei:
+      ingrandire qui sposterebbe soltanto il problema, non lo toglierebbe.
+      `ancore_successive` e' l'elenco dei nomi da controllare per l'ultima
+      giornata, nell'ordine in cui possono comparire nel documento — di
+      solito `CAPITOLI_DEL_DOCUMENTO` di `src/pdf_renderer.py`, filtrato ai
+      capitoli che vengono dopo il programma.
+    - **la sonda di chiusura si e' fermata alta sulla pagina**, sopra la
+      soglia `quota` dell'altezza del foglio: e' la misura diretta dello
+      spazio bianco rimasto sotto.
+
+    Torna un insieme di NUMERI di giornata (non di nomi di sonda): e' quello
+    che `_render_striscia_foto` chiede per decidere, giornata per giornata,
+    se ingrandire la propria fila di chiusura.
+    """
+    dove = posizioni(dati)
+    if not dove:
+        return set()
+    pagine_note = [pagina for pagina, _altezza in dove.values()]
+    if not pagine_note:
+        return set()
+    ultima_pagina = max(pagine_note)
+
+    try:
+        ordinati = sorted({int(n) for n in (numeri_giorni or [])})
+    except (TypeError, ValueError):
+        return set()
+
+    trovate = set()
+    for indice, numero in enumerate(ordinati):
+        fine = dove.get(f"giorno-{numero}-fine")
+        if not fine:
+            continue
+        pagina, altezza = fine
+        if pagina >= ultima_pagina:
+            continue
+
+        prossima_pagina = None
+        if indice + 1 < len(ordinati):
+            prossima = dove.get(f"giorno-{ordinati[indice + 1]}")
+            if prossima:
+                prossima_pagina = prossima[0]
+        else:
+            for nome in (ancore_successive or ()):
+                trovata = dove.get(nome)
+                if trovata:
+                    prossima_pagina = trovata[0]
+                    break
+
+        if prossima_pagina is None or prossima_pagina <= pagina:
+            continue
+
+        if altezza >= ALTEZZA_A4_PT * quota:
+            trovate.add(numero)
+    return trovate
+
+
+# Quanto deve restare SOTTO la fine del documento perche' l'ultima pagina
+# del corpo si consideri "una coda orfana".
+#
+# [AGGIUNTO 2026-08-18 — l'ultimo difetto rimasto sul campione misurato:
+# «pagina 11: il contenuto si ferma al 6.0% del foglio».]
+#
+# Sessanta per cento vuol dire: la pagina finale del corpo e' piena per meno
+# di due quinti. Sotto quella soglia non e' piu' «un capitolo che finisce
+# dove finisce» — e' tre righe e poi mezzo foglio bianco, con dietro le
+# schede delle guide che ricominciano. Nel fascicolo cucito quella pagina
+# sta in MEZZO al documento, non in fondo: e' li' la differenza con
+# `scripts_qualita_pagina.problemi()`, che l'ultima pagina la salta.
+QUOTA_CODA_ORFANA = 0.60
+
+
+def quante_pagine(dati: bytes) -> int:
+    """Quante pagine ha questo PDF. Zero se non si riesce a leggerlo.
+
+    Serve al cancello della ristampa: una ristampa che compatta la coda ha
+    senso SOLO se toglie una pagina. Se non la toglie si tiene la prima, che
+    ha il testo per esteso.
+    """
+    try:
+        from . import pdf_links
+
+        return len(pdf_links._page_order(pdf_links._Pdf(dati)))
+    except Exception:
+        return 0
+
+
+def coda_orfana(dati: bytes, sonda: str = "documento-fine",
+                quota: float = QUOTA_CODA_ORFANA) -> bool:
+    """Vero se il corpo del documento finisce con una pagina quasi vuota.
+
+    Si legge dalla sonda che il documento semina nell'ultima cosa che stampa
+    (la nota di chiusura): la sua altezza dal fondo del foglio E' lo spazio
+    bianco rimasto sotto. Alta sulla pagina = poco contenuto sopra di lei.
+
+    Due condizioni, e la prima non e' una formalita':
+
+    - **la sonda non e' sulla prima pagina.** Un documento di una pagina
+      sola finisce dove finisce, e non c'e' niente da compattare;
+    - **e' rimasta alta**, sopra `quota` dell'altezza del foglio.
+
+    Non solleva mai: senza sonde torna falso e chi chiama non fa niente —
+    il documento esce come sempre.
+    """
+    dove = posizioni(dati)
+    trovata = dove.get(sonda) if dove else None
+    if not trovata:
+        return False
+    pagina, altezza = trovata
+    if pagina <= 0:
+        return False
+    return altezza >= ALTEZZA_A4_PT * quota
+
+
 def capitoli_da_mandare_a_capo(dati: bytes, nomi,
                                quota: float = QUOTA_MINIMA_SOTTO) -> set:
     """Quali capitoli cominciano troppo in fondo alla loro pagina.
@@ -119,3 +274,32 @@ def capitoli_da_mandare_a_capo(dati: bytes, nomi,
         nome for nome in interessanti
         if nome != primo and dove[nome][1] < soglia
     }
+
+
+# --------------------------------------------------------------------------
+# LE SONDE CHE NON SONO ANCORE (2026-08-18)
+#
+# Dal 17 agosto il documento semina anche sonde che NON sono punti di
+# atterraggio: servono solo a misurare dove finiscono le cose sulla carta —
+# `giorno-N-fine` per sapere quanto bianco resta in fondo a una giornata,
+# `guida-banda-inizio` per sapere se la fila di fotografie di una scheda e'
+# rimasta isolata in cima a una pagina.
+#
+# La differenza va dichiarata QUI e non indovinata da chi controlla: il
+# controllo che pretende «ogni ancora ha un rimando che ci porta» resta
+# giusto per le ancore di navigazione, e diventerebbe un falso allarme se
+# contasse anche queste. Un controllo che grida senza motivo si impara a
+# ignorarlo, ed e' il modo in cui i controlli veri smettono di funzionare.
+# `documento-fine` non e' elencata qui: la regola sul suffisso `-fine` la
+# copre gia'. Elencarla due volte darebbe l'idea che le due strade siano
+# alternative, e il giorno in cui qualcuno togliesse il suffisso resterebbe
+# un elenco che sembra completo e non lo e'.
+SONDE_DI_MISURA = ("guida-banda-inizio",)
+SUFFISSI_DI_MISURA = ("-fine",)
+
+
+def e_sonda_di_misura(nome: str) -> bool:
+    """Vero se questa sonda serve a MISURARE, non a farci atterrare qualcuno."""
+    testo = str(nome or "")
+    return (testo in SONDE_DI_MISURA
+            or testo.endswith(SUFFISSI_DI_MISURA))
