@@ -109,6 +109,9 @@ _CSS_MODELLO = """
        alla scheda. La larghezza delle celle e' dichiarata: senza, una fila
        incompleta allargherebbe le immagini rimaste a riempire il posto delle
        mancanti, e sarebbero grandi il doppio delle altre. */
+    .keep { width: 100%; border-collapse: collapse;
+            page-break-inside: avoid; }
+    .keep td { padding: 0; border: none; }
     .guida-banda { width: 100%; border-collapse: separate; border-spacing: 6px;
                    margin: 0 -6px 6px -6px; page-break-inside: avoid; }
     .guida-banda td { vertical-align: top; padding: 0; width: 33.33%; }
@@ -697,9 +700,16 @@ def build_guide_html(
     # Le prime due fotografie di contorno sono gia' in cima: ristamparle qui
     # vorrebbe dire la stessa immagine due volte nella stessa scheda, che e'
     # il difetto piu' rapido da notare sfogliando.
+    # [LEGATA AL TESTO 2026-08-16 — «se la pagina inizia con una foto non
+    # mettere la foto».] La fascia viaggia dentro `page-break-inside: avoid`:
+    # o entra, o scende INTERA sulla pagina dopo, dove arriva da sola. Legata
+    # all'ultimo pezzo di testo che la precede, o scendono insieme — e allora
+    # la pagina nuova ha anche del testo — o restano dove sono.
     in_fondo = _banda_di_foto((foto_extra or [])[2:5])
     if in_fondo:
-        parti.append(in_fondo)
+        coda = parti.pop() if parti else ""
+        parti.append("<table class='keep'><tr><td>"
+                     + coda + in_fondo + "</td></tr></table>")
 
     parti.append("</body></html>")
 
