@@ -209,7 +209,17 @@ def giornate_con_bianco_finale(dati: bytes, numeri_giorni,
 # schede delle guide che ricominciano. Nel fascicolo cucito quella pagina
 # sta in MEZZO al documento, non in fondo: e' li' la differenza con
 # `scripts_qualita_pagina.problemi()`, che l'ultima pagina la salta.
-QUOTA_CODA_ORFANA = 0.60
+# [ALZATA A 0.55 il 2026-08-18 — richiesta di Lorenzo: «evita di spezzare
+# troppo le pagine» e, prima, «le foto devono occupare lo spazio bianco».]
+#
+# Era 0.60, cioe' si interveniva solo quando l'ultima pagina del corpo era
+# piena per meno di due quinti. Da quando i capitoli scorrono invece di
+# prendersi una pagina a testa, quella pagina finale capita spesso intorno
+# alla meta' — misurato: 49.6% — e restava fuori dalla riparazione per un
+# soffio. Sotto il 55% la pagina si riempie con una fotografia mai usata,
+# ed e' esattamente cio' che Lorenzo ha chiesto di fare con lo spazio
+# bianco.
+QUOTA_CODA_ORFANA = 0.48
 
 
 def quante_pagine(dati: bytes) -> int:
@@ -254,6 +264,50 @@ def coda_orfana(dati: bytes, sonda: str = "documento-fine",
     return altezza >= ALTEZZA_A4_PT * quota
 
 
+# Quanto foglio deve restare SOTTO l'inizio di una scheda perche' la sua
+# fotografia di apertura ci stia.
+#
+# [AGGIUNTO 2026-08-18 — Lorenzo su pagina 16 dell'anteprima: «non mi piace
+# come e' impaginata, togli lo spazio bianco».] La fotografia di una scheda
+# e' alta circa dodici centimetri fra figura e didascalia: su un foglio A4
+# sono quattro decimi di pagina. Sotto quella soglia la figura non entra,
+# scende alla pagina dopo e si porta dietro tutto il testo — mezzo foglio
+# bianco sotto un titolo solo.
+#
+# Il numero e' piu' alto di `QUOTA_MINIMA_SOTTO` di proposito: quello dice
+# «la testata e' appiccicata al bordo, manda a capo il capitolo», questo dice
+# «c'e' posto per il testo ma non per la figura, sposta la figura». Sono due
+# riparazioni diverse per due difetti diversi, e la prima ha la precedenza.
+QUOTA_PER_LA_FOTOGRAFIA = 0.55
+
+
+def capitoli_con_foto_in_coda(dati: bytes, nomi,
+                              quota: float = QUOTA_PER_LA_FOTOGRAFIA) -> set:
+    """Quali schede cominciano troppo in basso perche' la loro fotografia
+    ci stia sotto.
+
+    Restituisce i nomi delle ancore. Chi chiama ristampa QUELLE schede con la
+    fotografia dopo la storia invece che prima: il testo comincia subito
+    sotto il titolo e riempie il foglio.
+
+    Non comprende le schede che vanno gia' mandate a capo: per quelle il
+    problema e' un altro e la riparazione pure — cominciano su una pagina
+    nuova, dove di posto ce n'e' tutto.
+    """
+    dove = posizioni(dati)
+    if not dove:
+        return set()
+    interessanti = [n for n in (nomi or []) if n in dove]
+    if not interessanti:
+        return set()
+    gia_a_capo = capitoli_da_mandare_a_capo(dati, nomi)
+    soglia = ALTEZZA_A4_PT * quota
+    return {
+        nome for nome in interessanti
+        if nome not in gia_a_capo and dove[nome][1] < soglia
+    }
+
+
 def capitoli_da_mandare_a_capo(dati: bytes, nomi,
                                quota: float = QUOTA_MINIMA_SOTTO) -> set:
     """Quali capitoli cominciano troppo in fondo alla loro pagina.
@@ -277,6 +331,137 @@ def capitoli_da_mandare_a_capo(dati: bytes, nomi,
 
 
 # --------------------------------------------------------------------------
+# DUE DIFETTI CHE NON SI MISURANO CON UNA SOGLIA (2026-08-18, sesto giro)
+#
+# Richiesta di Lorenzo, alla lettera: «non spezzare la pagina su due facciate
+# nella guida turistica non mi piace, ed evita di mettere i titoli come ultima
+# cosa della pagina, piuttosto vai alla pagina successiva ma solo in quel
+# caso».
+#
+# Sono due difetti, e nessuno dei due e' una questione di quanti centimetri
+# restano sotto il titolo — che e' l'unica cosa che sanno dire
+# `capitoli_da_mandare_a_capo` e `capitoli_con_foto_in_coda`.
+#
+# La soglia sbaglia in tutte e due le direzioni:
+#
+#  - un titolo che comincia al 40% dell'altezza sembra stare comodo, ma se
+#    subito sotto c'e' una fotografia alta dodici centimetri — che non si
+#    spezza mai — la fotografia scende e il titolo resta l'ultima cosa della
+#    pagina. Nessuna soglia sull'altezza del titolo lo vede;
+#  - un titolo al 12% con quattro righe di testo sotto non e' orfano, e
+#    mandarlo a capo regalerebbe un ottavo di pagina bianca.
+#
+# Quindi non si misura il titolo: si misura **dove e' finita la prima riga di
+# testo** rispetto al titolo. Se e' su una pagina diversa, allora il titolo e'
+# davvero l'ultima cosa che si vede — non per stima, per constatazione. Ogni
+# scheda semina due sonde in piu' (`{ancora}-testo` all'inizio del primo
+# paragrafo, `{ancora}-fine` in fondo a tutto) e le due funzioni qui sotto le
+# leggono.
+#
+# I margini verticali del foglio, in punti tipografici. Servono a una cosa
+# sola: sapere quanta carta c'e' davvero fra il primo rigo e l'ultimo, perche'
+# «questa scheda ci starebbe in una facciata» dev'essere una sottrazione e non
+# un parere. Un centimetro e sei sono i margini della guida — regola `@page`
+# in `poi_pdf._css()`. Chi stampa con margini diversi li passa come parametro:
+# meglio un numero esplicito qui che una misura sbagliata di nascosto.
+MARGINE_VERTICALE_GUIDA_PT = 1.6 * 28.3465
+
+
+def titoli_orfani(dati: bytes, coppie) -> set:
+    """Quali schede stampano il titolo come ULTIMA cosa della pagina.
+
+    `coppie` sono `(ancora_del_titolo, sonda_del_primo_testo)`. Il difetto
+    c'e' quando le due sonde cadono su pagine diverse: il titolo sta sul
+    foglio di prima, tutto il resto della scheda sul foglio dopo.
+
+    Non e' una stima. E' il difetto stesso, letto sul documento stampato.
+
+    Torna i nomi delle ANCORE, cioe' cio' che `poi_pdf.unisci_le_schede()`
+    chiede per mandare quelle schede — e solo quelle — a inizio pagina.
+
+    La prima scheda non puo' comparire nel risultato per costruzione: chi
+    chiama non la mette fra le coppie, perche' mandarla a capo vorrebbe dire
+    aprire il blocco delle guide con un foglio bianco.
+    """
+    dove = posizioni(dati)
+    if not dove:
+        return set()
+    orfani = set()
+    for ancora, sonda in (coppie or ()):
+        titolo = dove.get(ancora)
+        testo = dove.get(sonda)
+        if not titolo or not testo:
+            continue
+        if testo[0] > titolo[0]:
+            orfani.add(ancora)
+    return orfani
+
+
+def schede_spezzate(dati: bytes, coppie,
+                    margine_pt: float = MARGINE_VERTICALE_GUIDA_PT) -> set:
+    """Quali schede sono tagliate a meta' fra due facciate PUR STANDOCI in una.
+
+    `coppie` sono `(ancora_del_titolo, sonda_di_fine_scheda)`.
+
+    ## Perche' «pur standoci» non e' un dettaglio
+
+    Una scheda lunga due pagine e mezzo si spezza per forza, in questo come in
+    qualunque libro, e mandarla a capo non toglierebbe niente: sposterebbe il
+    taglio di qualche riga e lascerebbe indietro mezzo foglio bianco. E' la
+    lezione gia' pagata due volte su questo prodotto — un salto di pagina non
+    toglie il bianco, lo sposta indietro.
+
+    Il difetto vero e' un altro: una scheda che **starebbe tutta in una
+    facciata** e invece comincia a meta' foglio, cosi' che il lettore ne vede
+    un pezzo qui e un pezzo voltando pagina. Quella si ripara davvero, e la
+    riparazione non costa niente di nuovo: la carta che si lascia indietro e'
+    la stessa che la scheda avrebbe comunque sprecato.
+
+    ## Come si sa se ci starebbe
+
+    Con una sottrazione, sulle sonde del documento stampato:
+
+        altezza usata = (quanto scende sulla prima facciata)
+                      + (facciate intere in mezzo)
+                      + (quanto scende sull'ultima facciata)
+
+    e la si confronta con l'altezza utile del foglio, cioe' l'A4 meno i due
+    margini. Se ci sta, e' una scheda spezzata inutilmente; se non ci sta, si
+    lascia stare — e il conto la esclude da solo, senza bisogno di un caso a
+    parte: una facciata intera in mezzo basta gia' a sforare.
+
+    Non solleva mai: senza sonde torna un insieme vuoto e il documento esce
+    come sempre.
+    """
+    dove = posizioni(dati)
+    if not dove:
+        return set()
+    try:
+        margine = float(margine_pt)
+    except (TypeError, ValueError):
+        return set()
+    utile = ALTEZZA_A4_PT - 2 * margine
+    if utile <= 0:
+        return set()
+
+    spezzate = set()
+    for ancora, sonda in (coppie or ()):
+        inizio = dove.get(ancora)
+        fine = dove.get(sonda)
+        if not inizio or not fine:
+            continue
+        facciate = fine[0] - inizio[0]
+        if facciate <= 0:
+            continue  # sta tutta su una facciata: e' gia' come la vuole Lorenzo
+        sulla_prima = inizio[1] - margine
+        sull_ultima = (ALTEZZA_A4_PT - margine) - fine[1]
+        usata = sulla_prima + sull_ultima + (facciate - 1) * utile
+        if usata <= utile:
+            spezzate.add(ancora)
+    return spezzate
+
+
+# --------------------------------------------------------------------------
 # LE SONDE CHE NON SONO ANCORE (2026-08-18)
 #
 # Dal 17 agosto il documento semina anche sonde che NON sono punti di
@@ -294,8 +479,12 @@ def capitoli_da_mandare_a_capo(dati: bytes, nomi,
 # copre gia'. Elencarla due volte darebbe l'idea che le due strade siano
 # alternative, e il giorno in cui qualcuno togliesse il suffisso resterebbe
 # un elenco che sembra completo e non lo e'.
+# [ESTESO 2026-08-18, sesto giro] `-testo` e' la sonda che ogni scheda semina
+# all'inizio del suo primo paragrafo: serve a sapere se il titolo e' rimasto
+# l'ultima cosa della pagina. Come `-fine`, non e' un posto dove atterrare —
+# nessun bottone ci porta, e il controllo dei rimandi non deve aspettarselo.
 SONDE_DI_MISURA = ("guida-banda-inizio",)
-SUFFISSI_DI_MISURA = ("-fine",)
+SUFFISSI_DI_MISURA = ("-fine", "-testo")
 
 
 def e_sonda_di_misura(nome: str) -> bool:

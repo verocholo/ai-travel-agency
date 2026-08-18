@@ -215,10 +215,32 @@ _CSS_MODELLO = """
        peggiore misurato. */
     @page { size: A4; margin: 2cm 1.8cm 2.2cm; }
     * { box-sizing: border-box; }
+    /* --- LETTO DAL TELEFONO (2026-08-18) --------------------------------
+       Richiesta di Lorenzo: «ottimizza al massimo il layout per il mobile».
+
+       Questo documento non si stampa: si apre in piedi, in strada, su uno
+       schermo da sei pollici — lo dice il documento stesso nella lista della
+       valigia («questo itinerario si legge dal telefono»). Su un A4 ridotto
+       a sei pollici ogni carattere vale circa un terzo di quanto vale sulla
+       carta: un corpo che su un foglio e' comodo, sul telefono e' piccolo.
+
+       Tre numeri cambiano, e tutti e tre nella stessa direzione:
+
+       - il corpo del testo da 12 a 13 punti e mezzo. Non e' molto, ed e'
+         il massimo che si puo' prendere senza allungare il documento:
+         misurato, oltre i 14 il fascicolo guadagna pagine;
+       - l'interlinea da 1.5 a 1.58: su schermo le righe fitte si
+         confondono molto piu' che sulla carta;
+       - i bottoni piu' alti, perche' su un telefono si centrano col
+         pollice — vedi `.btn-guida` e `.bottone-torna`.
+
+       Quello che NON si tocca sono le didascalie e le note di licenza:
+       piccole devono restare, e nessuno le cerca col dito. */
     body {
       font-family: 'Helvetica Neue', Arial, sans-serif;
       color: #22303f;
-      line-height: 1.5;
+      font-size: 13.5px;
+      line-height: 1.58;
       margin: 0;
     }
     .header {
@@ -832,6 +854,12 @@ _CSS_MODELLO = """
     .day-map-grid td { vertical-align: top; padding: 0; }
     .day-map-figure { width: 62%; padding-right: 14px !important; }
     .day-map-key { width: 38%; }
+    /* La fotografia che riempie la colonna sotto la legenda: occupa spazio
+       che c'era gia' ed era bianco, quindi non allunga il blocco di un
+       millimetro. Vedi `_riempi_la_colonna_della_legenda`. */
+    .key-foto { margin-top: 10px; }
+    .key-foto img { width: 100%; display: block; }
+    .key-foto .didascalia { font-size: 7.5px; color: #a8b2bb; margin-top: 2px; }
     .map-caption {
       font-size: 8.5px; color: #7c8a99; line-height: 1.35;
       margin: 4px 0 0 0; padding: 0 2px;
@@ -1196,10 +1224,17 @@ _CSS_MODELLO = """
     .place-meta { font-size: 10px; color: #8a97a3; margin-top: 2px; }
 
     /* --- Guida turistica tascabile ------------------------------------- */
-    .guide-link { font-size: 11px; margin-top: 3px; }
+    /* [INGRANDITI PER IL POLLICE 2026-08-18] Erano alti quattordici pixel:
+       su un telefono e' meno di quattro millimetri, cioe' un bersaglio che
+       si centra a fortuna. Con dieci punti di riempimento sopra e sotto il
+       bottone arriva a circa nove millimetri, che e' la misura sotto la
+       quale ogni linea guida di interfaccia mobile dice di non scendere.
+       Costa qualche punto di altezza per riga e vale: questi bottoni sono
+       il modo in cui il cliente naviga il documento in strada. */
+    .guide-link { font-size: 12px; margin-top: 5px; }
     .guide-link a {
       display: inline-block; color: #ffffff; background: {{scuro}}; text-decoration: none;
-      border-radius: 0; padding: 2px 10px;
+      border-radius: 0; padding: 9px 16px; font-weight: bold;
     }
     /* [CAMBIATO 2026-08-02 (quinquies)] La scheda NON porta più `.page-break`.
        La regola "non spezzare a metà" è giusta per un riquadro alto un quarto
@@ -1344,6 +1379,21 @@ _CSS_MODELLO = """
        testata, alla prima, era caduta in fondo al foglio: `page-break-before`
        questo motore lo onora, `page-break-after: avoid` no — misurato. */
     .cap-a-capo { page-break-before: always; margin-top: 0; }
+    /* La fascia fotografica che apre un capitolo, al vivo come la copertina.
+       Sta SOPRA la banda del titolo e non dentro: sopra il colore, una
+       fotografia si legge come un'apertura; dentro, come un francobollo
+       incollato su un fondo. Vedi `_fasce_di_capitolo`. */
+    /* [SENZA MARGINI NEGATIVI, e la ragione e' misurata.] Dentro una cella
+       di tabella — che e' dove questa fascia vive, per non staccarsi dal
+       titolo — un margine negativo rende la tabella piu' larga della pagina:
+       il motore la sposta al foglio dopo e lascia indietro una pagina all'8%.
+       Provato. Fuori dalla tabella si staccherebbe dal titolo, che e' peggio.
+       La fotografia resta larga quanto la colonna: un'apertura, non un
+       francobollo. */
+    .cap-fascia-foto { margin: 0; page-break-inside: avoid; }
+    .cap-fascia-foto img { width: 100%; display: block; }
+    .cap-fascia-foto .didascalia { font-size: 7.5px; color: #b6bfc8;
+                                   text-align: right; margin: 2px 0 0 0; }
     .cap .section-title { margin: 0; }
     /* L'occhiello: due parole in maiuscoletto sopra il titolo. Serve a dare
        alla testata una seconda riga su cui variare — senza, "fascia" e
@@ -1468,9 +1518,15 @@ _CSS_MODELLO = """
       letter-spacing: .02em;
     }
     .toc-riga { width: 100%; border-collapse: collapse; margin-top: 14px; }
-    .toc-riga td { padding: 0 0 14px 0; border: none; vertical-align: top; }
-    .toc-mini { width: 172px; padding-right: 18px !important; }
-    .toc-mini img { width: 160px; display: block; }
+    /* [RIMPICCIOLITE 2026-08-18, secondo giro.] Con dieci voci illustrate
+       invece di sei, l'indice arrivava a filo di pagina e spingeva
+       l'intestazione del documento su un foglio tutto suo — misurato: una
+       pagina al 4.7%. Quaranta pixel in meno per miniatura fanno stare
+       tutto e non si vedono: la fotografia resta larga tre centimetri e
+       mezzo, che accanto a una riga di testo e' gia' generosa. */
+    .toc-riga td { padding: 0 0 10px 0; border: none; vertical-align: top; }
+    .toc-mini { width: 136px; padding-right: 16px !important; }
+    .toc-mini img { width: 124px; display: block; }
     .toc-larga { padding-left: 0 !important; }
     .toc-testo { border-bottom: 1px solid {{sfondo_tenue}}; }
     .toc-n {
@@ -1806,7 +1862,7 @@ _RE_TITOLO_DI_CAPITOLO = re.compile(
 
 
 def _disegna_testata(modo: str, nome: str, dentro: str, numero: int,
-                     a_capo: bool = False) -> str:
+                     a_capo: bool = False, fascia_foto: str = "") -> str:
     """Il vestito di UNA testata. Quattro modi, tutti fatti degli stessi pezzi.
 
     Non c'e' un `else` che ricade su un modo qualunque: se il compositore
@@ -1822,6 +1878,39 @@ def _disegna_testata(modo: str, nome: str, dentro: str, numero: int,
     occhiello = f"<div class='cap-occhiello'>Capitolo {numero}</div>"
     titolo = f"<div class='section-title' data-capitolo='{_esc(nome)}'>{dentro}</div>"
     if modo == "fascia":
+        # [ILLUSTRATA 2026-08-18 — richiesta di Lorenzo con quattro brochure
+        # di viaggio in mano.] Tutte e quattro aprono le sezioni allo stesso
+        # modo: una fotografia a tutta larghezza e sotto il numero col
+        # titolo. Qui la fotografia arriva gia' pronta da chi chiama, e solo
+        # per i capitoli che aprono con la testata piu' forte — quelli di
+        # racconto. Sugli altri sarebbe rumore: undici fotografie di apertura
+        # su undici capitoli non sono una rivista, sono un catalogo.
+        if fascia_foto:
+            # [SEMPRE A CAPO — 2026-08-18, misurato due volte.]
+            #
+            # La testata illustrata e' un'apertura di sezione: nelle
+            # brochure quelle cominciano sempre su una pagina nuova, e qui
+            # c'e' anche una ragione tecnica che non lascia scelta. La banda
+            # del titolo esce dai margini con un margine negativo; dentro
+            # una cella di tabella — dove deve stare per non staccarsi dalla
+            # fotografia — un margine negativo rende la tabella piu' larga
+            # della pagina, e il motore la butta al foglio dopo lasciando
+            # indietro una pagina al 9%. Misurato.
+            #
+            # Cominciando su una pagina nuova la tabella parte dall'alto e
+            # non ha piu' niente da cui essere spinta. Sono tre capitoli su
+            # dieci: il resto del documento continua a scorrere.
+            salto = " cap-a-capo"
+            # Fotografia e banda del titolo dentro lo STESSO guscio: sono
+            # un'apertura sola. Provato a lasciarle due blocchi fratelli
+            # con `page-break-after: avoid` sulla fotografia — che questo
+            # motore ignora in silenzio, come tutte le regole «non spezzare
+            # DOPO» — e il risultato e' stato una pagina all'8.8%: la
+            # fotografia da sola in cima a un foglio e il titolo altrove.
+            return (f"<table class='keep cap{salto}'><tr><td>"
+                    f"<div class='cap-fascia-foto'>{fascia_foto}</div>"
+                    f"<div class='cap cap-fascia'>{occhiello}{titolo}</div>"
+                    "</td></tr></table>")
         return f"<div class='cap{salto} cap-fascia'>{occhiello}{titolo}</div>"
     if modo == "laterale":
         return f"<div class='cap{salto} cap-laterale'>{occhiello}{titolo}</div>"
@@ -1835,7 +1924,8 @@ def _disegna_testata(modo: str, nome: str, dentro: str, numero: int,
     raise ValueError(f"testata sconosciuta: {modo!r}")
 
 
-def _testate_dei_capitoli(documento: str, chiave: str, a_capo=None) -> str:
+def _testate_dei_capitoli(documento: str, chiave: str, a_capo=None,
+                          fasce=None) -> str:
     """Passata finale: veste ogni capitolo, mai due di fila allo stesso modo.
 
     [AGGIUNTA 2026-08-15 — task #216.]
@@ -1874,6 +1964,7 @@ def _testate_dei_capitoli(documento: str, chiave: str, a_capo=None) -> str:
     }
 
     stato = {"numero": 0, "precedente": None}
+    disponibili = [f for f in (fasce or []) if f]
 
     def _sostituisci(m: "re.Match[str]") -> str:
         nome, dentro = m.group(1), m.group(2)
@@ -1897,12 +1988,45 @@ def _testate_dei_capitoli(documento: str, chiave: str, a_capo=None) -> str:
         # bianco a fondo pagina, ed e' una scelta sua: un documento che si
         # sfoglia per capitoli invece che un flusso continuo.
         if a_capo is None:
-            abbastanza_lungo = lunghezze.get(m.start(), 0) >= CAPITOLO_CORTO
-            salta = stato["numero"] > 1 and abbastanza_lungo
+            # [CAMBIATO 2026-08-18, e annulla la scelta del 15 agosto —
+            # richiesta di Lorenzo: «evita di spezzare troppo le pagine,
+            # piuttosto accorpa».]
+            #
+            # Il 15 agosto ogni capitolo cominciava su una pagina nuova, e
+            # l'aveva chiesto lui: «cerca di fare terminare i capitoli a
+            # fine pagina». Quella regola risolveva un difetto vero — un
+            # titolo appiccicato al bordo del foglio — al prezzo del bianco
+            # in fondo a ogni capitolo.
+            #
+            # Da allora il documento ha imparato a riempire: le schede
+            # scorrono, le colonne vuote si riempiono, la coda si stringe.
+            # Il prezzo, adesso, non vale piu' la pena — e Lorenzo, che
+            # guarda il documento vero, ha visto prima di me che il conto
+            # era cambiato.
+            #
+            # Quindi si torna a mandare a capo SOLO i capitoli lunghi che
+            # comincerebbero troppo in fondo alla pagina. Chi decide non e'
+            # piu' una regola scritta a priori: e' la misura sulla prima
+            # stampa (`impaginazione.capitoli_da_mandare_a_capo`), che
+            # arriva qui dentro `a_capo`. Questo ramo resta per la PRIMA
+            # stampa, quella che ancora non ha nessuna misura: li' si
+            # scorre e basta.
+            salta = False
         else:
             salta = nome in (a_capo or ())
+        # La fotografia di apertura si spende sui capitoli che hanno la
+        # testata piu' forte, uno alla volta, finche' ce n'e'. Finite, i
+        # capitoli restanti tornano alla testata di sempre: nessun buco,
+        # nessuna immagine ripetuta per riempire.
+        fascia = ""
+        # MAI al primo capitolo: la testata illustrata comincia su una
+        # pagina nuova (vedi `_disegna_testata`), e darla al primo vorrebbe
+        # dire lasciare indietro un foglio con sopra solo l'intestazione del
+        # documento. Misurato: pagina al 9%.
+        if modo == "fascia" and disponibili and stato["numero"] > 1:
+            fascia = disponibili.pop(0)
         return _disegna_testata(modo, nome, dentro, stato["numero"],
-                                a_capo=salta)
+                                a_capo=salta, fascia_foto=fascia)
 
     return _RE_TITOLO_DI_CAPITOLO.sub(_sostituisci, documento)
 
@@ -3443,6 +3567,19 @@ def _render_day_map(
     day_map: dict | None,
     title_html: str = "",
     pin_targets: dict | None = None,
+    # [AGGIUNTO 2026-08-18 — segnalazione di Lorenzo sull'anteprima: «dopo il
+    # titolo Basilica di San Domenico c'e' uno spazio bianco orribile».]
+    #
+    # Aveva ragione e il difetto e' strutturale, non estetico: la cartina sta
+    # a sinistra e la legenda a destra, ma la legenda e' alta un terzo della
+    # cartina — sotto le sue cinque righe restava mezza colonna bianca, su
+    # OGNI giornata di OGNI documento.
+    #
+    # Qui entra cio' che riempie quella colonna. La fotografia messa li' non
+    # allunga niente: occupa spazio che c'era gia' ed era vuoto — ed e'
+    # esattamente l'impianto delle brochure che Lorenzo ha portato, dove la
+    # cartina e le immagini stanno affiancate.
+    accanto_alla_legenda: str = "",
 ) -> str:
     """
     [richiesta di Lorenzo: "nelle mappe varie che generi non si capisce cosa
@@ -3607,6 +3744,8 @@ def _render_day_map(
                 + "</div>"
             )
         parts.append("</div>")
+    if side_by_side and accanto_alla_legenda:
+        parts.append(accanto_alla_legenda)
     if side_by_side:
         parts.append("</td></tr></table>")
     parts.append("</div>")
@@ -3742,7 +3881,161 @@ def _tavola_di_chiusura(photos, usate) -> str:
     return ""
 
 
-def _miniature_per_indice(days, photos, usate, quante: int = 6) -> list:
+# Quanto e' alta, all'incirca, una riga di legenda: undici pixel di corpo per
+# uno e mezzo di interlinea, piu' sei di padding. Serve a stimare quanto
+# spazio resta sotto la legenda, e una stima basta — se sbaglia di qualche
+# punto la colonna resta un po' piu' vuota o la fotografia un po' piu' bassa,
+# non si rompe niente.
+ALTEZZA_RIGA_LEGENDA_PX = 23.0
+
+# Sotto questa altezza libera non si mette niente: una fotografia alta due
+# centimetri in una colonna larga sei e' un francobollo, e un francobollo in
+# mezzo al bianco e' peggio del bianco.
+ALTEZZA_MINIMA_RIEMPIMENTO_PX = 90.0
+
+
+def _riempi_la_colonna_della_legenda(day_map, photos, usate) -> str:
+    """La fotografia che riempie la colonna vuota accanto alla cartina.
+
+    [AGGIUNTO 2026-08-18 — «dopo il titolo Basilica di San Domenico c'e' uno
+    spazio bianco orribile».]
+
+    La cartina sta a sinistra e la legenda a destra, ma la legenda e' alta un
+    terzo della cartina: sotto le sue righe resta mezza colonna bianca su
+    OGNI giornata di OGNI documento. Non e' un caso limite, e' l'impianto.
+
+    ## Perche' una fotografia e non piu' aria
+
+    Perche' e' spazio che c'e' gia' ed e' vuoto: mettendoci un'immagine il
+    blocco non diventa piu' alto di un millimetro. E' anche l'impianto delle
+    brochure che Lorenzo ha portato — cartina e immagini affiancate, non una
+    sotto l'altra.
+
+    ## Come si decide l'altezza
+
+    Si stima: altezza della cartina meno altezza della legenda. La cartina si
+    misura davvero (i pixel del PNG, scalati alla larghezza della sua
+    colonna); la legenda si stima contando le righe. Una stima basta — se
+    sbaglia di qualche punto la colonna resta un po' piu' vuota o la
+    fotografia un po' piu' bassa. Se lo spazio libero e' poco non si mette
+    niente: un francobollo in mezzo al bianco e' peggio del bianco.
+
+    La fotografia esce dal registro come tutte le altre, quindi non ripete
+    niente. Se non ne restano, la colonna resta com'era.
+    """
+    if not isinstance(day_map, dict):
+        return ""
+    png = day_map.get("png")
+    if not png or not (day_map.get("stops") or []):
+        return ""
+
+    # La colonna di sinistra e' il 62% della larghezza utile, quella di
+    # destra il 38%: sono i due numeri scritti nel foglio di stile, e se
+    # cambiano li' vanno cambiati qui — c'e' un controllo che se ne accorge.
+    LARGHEZZA_UTILE_PX = 493.0   # 17.4 cm alla risoluzione del foglio di stile
+    larghezza_cartina = LARGHEZZA_UTILE_PX * 0.62
+    larghezza_colonna = LARGHEZZA_UTILE_PX * 0.38
+
+    misura = foto.dimensioni(png)
+    if not misura or not misura[0]:
+        return ""
+    altezza_cartina = larghezza_cartina * (misura[1] / misura[0])
+    # Il titolo della giornata e la didascalia stanno nella stessa cella
+    # della cartina: contano nell'altezza contro cui si misura la legenda.
+    altezza_cartina += 78.0
+
+    righe = len(day_map.get("stops") or []) + (1 if day_map.get("hotel_point") else 0)
+    libero = altezza_cartina - righe * ALTEZZA_RIGA_LEGENDA_PX - 14.0
+    if libero < ALTEZZA_MINIMA_RIEMPIMENTO_PX:
+        return ""
+
+    scelto = None
+    for identificativo in (s.get("poi_id") for s in (day_map.get("stops") or [])):
+        scatto = photos.get(identificativo) if isinstance(photos, dict) else None
+        if not isinstance(scatto, dict) or not scatto.get("reale"):
+            continue
+        scelto = _scatto_non_ancora_usato(scatto, usate)
+        if scelto:
+            break
+    if not scelto:
+        return ""
+
+    rapporto = max(0.55, min(2.4, larghezza_colonna / libero))
+    ritagliata = foto.ritaglia_panoramica(scelto["png"], rapporto) or scelto["png"]
+    ritagliata = foto.angoli_arrotondati(ritagliata) or ritagliata
+    try:
+        b64 = base64.b64encode(ritagliata).decode("ascii")
+    except (TypeError, ValueError):
+        return ""
+    return (f"<div class='key-foto'><img src='data:{foto.mime_immagine(ritagliata)};"
+            f"base64,{b64}' alt=''/>"
+            f"<div class='didascalia'>{_credito(scelto['credito'])}</div></div>")
+
+
+# Quante fotografie di apertura capitolo, al massimo. Tre e non undici: una
+# fotografia in cima a ogni capitolo non fa una rivista, fa un catalogo — e
+# ogni fascia costa cinque centimetri e mezzo di foglio.
+FASCE_DI_CAPITOLO = 3
+
+# La forma della fascia: larga tre volte e un po' la sua altezza. Su una
+# colonna di 17,4 cm fa cinque centimetri e mezzo — un'apertura, non una
+# pagina di fotografia.
+RAPPORTO_FASCIA_CAPITOLO = 5.5
+
+
+def _fasce_di_capitolo(days, photos, usate, quante: int = FASCE_DI_CAPITOLO) -> list:
+    """Le fotografie che aprono i capitoli, gia' vestite. Al massimo `quante`.
+
+    [AGGIUNTO 2026-08-18 — richiesta di Lorenzo con quattro brochure in mano.]
+
+    Tutte e quattro aprono le sezioni allo stesso modo: una fotografia a
+    tutta larghezza e sotto il numero col titolo. E' la cosa che, guardando
+    quelle pagine accanto alle nostre, si nota per prima dopo la copertina.
+
+    Le fotografie escono dal registro come tutte le altre — quindi non
+    ripetono niente — e valgono la stessa regola dell'indice: si prendono
+    solo se ne restano abbastanza per le giornate. Un'apertura bella pagata
+    con una giornata spoglia non e' un miglioramento, ed e' un errore che
+    questa settimana ho gia' fatto una volta.
+    """
+    if not isinstance(photos, dict) or not photos:
+        return []
+    fatte, visti = [], set()
+    for giorno in days or []:
+        if not isinstance(giorno, dict):
+            continue
+        for block in (giorno.get("blocks") or []):
+            if len(fatte) >= max(0, int(quante)):
+                return fatte
+            if not isinstance(block, dict):
+                continue
+            poi_id = block.get("poi_id")
+            if not isinstance(poi_id, str) or poi_id in visti:
+                continue
+            scatto = photos.get(poi_id)
+            if not isinstance(scatto, dict) or not scatto.get("reale"):
+                continue
+            visti.add(poi_id)
+            if _quanti_scatti_liberi(scatto, usate) < 3:
+                continue
+            scelto = _scatto_non_ancora_usato(scatto, usate)
+            if not scelto:
+                continue
+            ritagliata = (foto.ritaglia_panoramica(scelto["png"],
+                                                   RAPPORTO_FASCIA_CAPITOLO)
+                          or scelto["png"])
+            try:
+                b64 = base64.b64encode(ritagliata).decode("ascii")
+            except (TypeError, ValueError):
+                continue
+            fatte.append(
+                f"<img src='data:{foto.mime_immagine(ritagliata)};base64,{b64}' "
+                f"alt=''/><div class='didascalia'>"
+                f"{_credito(scelto['credito'])}</div>")
+    return fatte
+
+
+def _miniature_per_indice(days, photos, usate, quante: int = 12) -> list:
     """Fino a `quante` fotografie per le voci dell'indice, mai ripetute.
 
     [AGGIUNTO 2026-08-18 — l'indice illustrato delle brochure.]
@@ -3755,22 +4048,33 @@ def _miniature_per_indice(days, photos, usate, quante: int = 6) -> list:
     """
     if not isinstance(photos, dict) or not photos:
         return []
-    prese, visti = [], set()
+    identificativi = []
     for giorno in days or []:
         if not isinstance(giorno, dict):
             continue
         for block in (giorno.get("blocks") or []):
+            if isinstance(block, dict) and isinstance(block.get("poi_id"), str):
+                if block["poi_id"] not in identificativi:
+                    identificativi.append(block["poi_id"])
+
+    # PIU' GIRI sugli stessi luoghi, non uno solo. [2026-08-18, secondo
+    # giro: «ti sei dimenticato di mettere le foto negli ultimi punti».]
+    # I capitoli sono dieci e i luoghi illustrati spesso otto: con un giro
+    # solo — una fotografia per luogo — le ultime due voci restavano
+    # spoglie, e una voce spoglia in fondo a otto illustrate si legge come
+    # una dimenticanza. Al secondo giro si prende la fotografia SUCCESSIVA
+    # dello stesso luogo: immagine diversa, nessuna ripetizione.
+    prese = []
+    for _giro in range(3):
+        if len(prese) >= max(0, int(quante)):
+            break
+        preso_qualcosa = False
+        for poi_id in identificativi:
             if len(prese) >= max(0, int(quante)):
-                return prese
-            if not isinstance(block, dict):
-                continue
-            poi_id = block.get("poi_id")
-            if not isinstance(poi_id, str) or poi_id in visti:
-                continue
+                break
             scatto = photos.get(poi_id)
             if not isinstance(scatto, dict) or not scatto.get("reale"):
                 continue
-            visti.add(poi_id)
             # [LA REGOLA CHE EVITA IL DANNO — misurata.] L'indice prende una
             # fotografia di questo luogo SOLO se, dopo averla presa, ne resta
             # almeno un'altra per la giornata in cui il luogo compare.
@@ -3785,11 +4089,24 @@ def _miniature_per_indice(days, photos, usate, quante: int = 6) -> list:
             # uno: le miniature svuotavano lo stesso il documento e le
             # giornate restavano senza fila. L'indice si serve solo di cio'
             # che avanza davvero.
+            # TRE devono restare, non due. Provato con due: su un documento
+            # con poche fotografie l'indice si prendeva l'ultima riserva e
+            # le giornate restavano senza fila di chiusura — un collaudo
+            # l'ha preso subito. La giornata ne usa una in apertura e una in
+            # chiusura: quelle due non si toccano mai.
+            #
+            # A illustrare le ultime voci ci pensa il secondo giro qui
+            # sopra, non l'abbassamento della soglia: con la scorta vera
+            # (cinque per luogo) l'indice arriva a dieci voci senza togliere
+            # niente a nessuno.
             if _quanti_scatti_liberi(scatto, usate) < 3:
                 continue
             scelto = _scatto_non_ancora_usato(scatto, usate)
             if scelto:
                 prese.append((scelto["png"], scelto["credito"]))
+                preso_qualcosa = True
+        if not preso_qualcosa:
+            break
     return prese
 
 
@@ -5767,6 +6084,12 @@ def render_html(
     # copertina si serve per prima, le giornate dopo, in ordine di lettura.
     _immagini_usate: set = set()
 
+    # [CALCOLATE QUI, E NON ALLA FINE — 2026-08-18.] Le fotografie che
+    # aprono i capitoli si scelgono subito dopo la copertina, prima che le
+    # giornate si servano dal registro. Provato al contrario: alla fine del
+    # documento non restava piu' niente e le fasce non uscivano mai. La
+    # regola dei tre scatti liberi resta — le giornate hanno la precedenza
+    # su cio' che serve a loro, le fasce prendono solo cio' che avanza.
     parts = [
         "<!DOCTYPE html><html lang='it'><head><meta charset='utf-8'>",
         f"<title>Itinerario — {destination}</title>",
@@ -5804,6 +6127,30 @@ def render_html(
         "<div class='section-title'>Il viaggio in breve</div>",
         f"<div class='summary-box'>{_esc(itinerary.get('executive_summary', '[mancante]'))}</div>",
     ]
+
+    # Le fasce che apriranno i capitoli: si prendono ADESSO, subito dopo la
+    # copertina e prima che le giornate si servano. Si consegnano alla
+    # passata finale, che le distribuisce ai capitoli con la testata piu'
+    # forte. Provato a calcolarle alla fine: non restava piu' niente e non
+    # uscivano mai.
+    # [SPENTE 2026-08-18, poche ore dopo averle accese — richiesta di
+    # Lorenzo: «evita di spezzare troppo le pagine, piuttosto accorpa».]
+    #
+    # Le fasce fotografiche in apertura di capitolo sono la cosa piu' simile
+    # alle brochure che il documento abbia avuto, e sono incompatibili con
+    # quella richiesta. La ragione e' tecnica e misurata: la banda del
+    # titolo esce dai margini con un margine negativo, e dentro una cella di
+    # tabella — dove deve stare per non staccarsi dalla fotografia — un
+    # margine negativo rende la tabella piu' larga della pagina e il motore
+    # la butta al foglio dopo. L'unico modo di tenerle e' farle cominciare
+    # sempre su una pagina nuova, cioe' **spezzare** — e ogni salto costa il
+    # bianco sulla pagina prima: misurato, pagine al 9%, al 13% e al 7.5%.
+    #
+    # Fra «le aperture sono belle» e «il documento non ha pagine mezze
+    # vuote» Lorenzo ha gia' scelto, due volte. La funzione resta scritta e
+    # collaudata: il giorno in cui questo motore di stampa sapra' far
+    # sbordare un elemento dentro una tabella, si riaccende con una riga.
+    _fasce_dei_capitoli: list = []
 
     if itinerary.get("budget_alert"):
         parts.append(
@@ -5990,6 +6337,19 @@ def render_html(
         # c'entrano niente. Ora il totale viene stampato una volta sola ma per
         # due strade indipendenti: dentro l'apertura del giorno se la cartina
         # c'e', subito sotto il titolo del primo tronco se non c'e'.
+        # [ORDINE DI SERVIZIO — 2026-08-18, secondo giro.] La colonna della
+        # legenda si serve PRIMA dell'apertura di giornata, e non e' un
+        # dettaglio: quella colonna e' spazio gia' esistente e vuoto, quindi
+        # una fotografia messa li' non costa un millimetro di foglio, mentre
+        # una in apertura il foglio se lo prende. A parita' di fotografie
+        # disponibili, riempire un buco vale piu' che aggiungere un'immagine.
+        #
+        # Misurato al contrario: servendo prima l'apertura, dal secondo
+        # giorno in poi la scorta era finita e la colonna della legenda
+        # restava vuota — proprio il difetto che questa riparazione doveva
+        # togliere.
+        _riempimento_legenda = _riempi_la_colonna_della_legenda(
+            day_maps_by_day.get(day_number), photos, _immagini_usate)
         _foto_disponibili = _foto_vere_della_giornata(
             blocks, photos, _immagini_usate)
         # La riserva si chiede DOPO l'apertura, non prima: l'apertura deve
@@ -6010,6 +6370,7 @@ def render_html(
         day_title_html += _totale_html
         day_map_html = _render_day_map(
             day_maps_by_day.get(day_number), day_title_html, pin_targets=pin_targets,
+            accanto_alla_legenda=_riempimento_legenda,
         )
         if day_map_html:
             # [AGGIUNTO 2026-08-05 — task #191] I segnaposti di ritorno della
@@ -6524,7 +6885,7 @@ def render_html(
     # di testo — cioe' senza che nessuno se ne accorga.
     return _tieni_uniti_i_paragrafi(
         _testate_dei_capitoli("".join(parts), str(destination or ""),
-                              capitoli_a_capo)
+                              capitoli_a_capo, fasce=_fasce_dei_capitoli)
     )
 
 
@@ -6795,6 +7156,33 @@ def render_pdf(
         # `src/impaginazione.py` resta: e' il modo di MISURARE dove cadono i
         # capitoli, e serve ogni volta che si vuole verificare che la regola
         # stia funzionando.
+        # [RIACCESA 2026-08-18.] Il ramo era stato spento il 15 agosto
+        # perche' ogni capitolo cominciava gia' su una pagina nuova e non
+        # c'era piu' niente da scovare. Da oggi i capitoli scorrono —
+        # richiesta di Lorenzo: «evita di spezzare troppo le pagine,
+        # piuttosto accorpa» — e quindi questa misura torna a essere
+        # l'unica cosa che impedisce a una testata di cadere a due dita dal
+        # bordo del foglio.
+        #
+        # E' il ritorno al metodo di sempre: si stampa, si guarda dove sono
+        # cadute le testate, si manda a capo SOLO quelle cadute in fondo.
+        # [E RISPENTA, misurando — 2026-08-18.] Riaccesa poche ore fa
+        # quando i capitoli hanno smesso di prendersi una pagina a testa, e
+        # spenta di nuovo subito dopo: **ogni capitolo mandato a capo lascia
+        # bianca la pagina prima**. Misurato sul campione: tre pagine al
+        # 59%, al 36% e al 55% comparse solo per questo.
+        #
+        # E' la stessa aritmetica di sempre, vista dal lato giusto: un salto
+        # di pagina non toglie il bianco, lo SPOSTA indietro. Lorenzo lo ha
+        # detto con parole sue — «evita di spezzare troppo le pagine,
+        # piuttosto accorpa» — e i numeri gli danno ragione.
+        #
+        # Cosa impedisce a una testata di cadere a due dita dal bordo, se
+        # nessuno la manda a capo: `_keep_together`, che la tiene attaccata
+        # al suo primo pezzo di contenuto. Non e' garanzia assoluta come un
+        # salto di pagina, ma costa il movimento di due righe invece di
+        # mezzo foglio.
+        _prima_pdf_bytes = Path(tmp_pdf_path).read_bytes()
         da_spostare = set()
 
         # [AGGIUNTO 2026-08-16 — task #223, l'ultimo dei nove difetti del
@@ -6808,7 +7196,6 @@ def render_pdf(
         # l'ultima. A differenza delle testate, qui il bisogno non e'
         # sparito il 15 agosto: ogni giornata puo' ancora finire a meta'
         # pagina, ed e' esattamente il caso che questa passata ripara.
-        _prima_pdf_bytes = Path(tmp_pdf_path).read_bytes()
         giornate_da_ingrandire = impaginazione.giornate_con_bianco_finale(
             _prima_pdf_bytes, _numeri_giorni, _capitoli_dopo_giorni)
 

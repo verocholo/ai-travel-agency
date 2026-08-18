@@ -103,7 +103,22 @@ MAX_FOTO_SECONDARIA = 6
 # luoghi illustrati la scorta e' abbastanza larga da non ripetere mai niente
 # in un documento di venti pagine — misurato sul fascicolo di Bologna, che ne
 # stampava quattordici di cui dieci diverse.
-SCATTI_PER_LUOGO = 3
+# [ALZATO A 4 il 2026-08-18] Con tre, l'indice illustrato restava mezzo
+# pieno: le prime voci con la fotografia e le ultime senza — «ti sei
+# dimenticato di mettere le foto negli ultimi punti». La quarta immagine e'
+# un altro scaricamento da Commons, gratis, dentro lo stesso cronometro:
+# l'unico costo resta il tempo, e quattro per luogo lo tengono ampiamente
+# dentro i quarantacinque secondi gia' fissati.
+# [ALZATO A 5 il 2026-08-18, secondo giro] Con quattro, l'ultima voce
+# dell'indice restava senza fotografia — e una voce spoglia in fondo a nove
+# illustrate si legge come una dimenticanza, che e' esattamente la parola
+# che ha usato Lorenzo.
+#
+# Il tetto vero non e' questo numero: e' il cronometro
+# (`SECONDI_MASSIMI_LIBERE`). La raccolta si ferma da sola quando il tempo
+# finisce, quindi alzare la scorta non puo' far arrivare tardi un fascicolo:
+# puo' solo farlo uscire con qualche immagine in meno se la rete e' lenta.
+SCATTI_PER_LUOGO = 5
 
 # Larghezza massima in pixel dell'immagine che finisce nel documento.
 # [ALZATO 2026-08-11 — segnalazione di Lorenzo: «le foto sono stretchate o in

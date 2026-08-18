@@ -197,8 +197,8 @@ _CSS_MODELLO = """
     .bottone-torna a {
       display: inline-block;
       background-color: {{scuro}}; color: #ffffff; text-decoration: none;
-      padding: 10px 18px; border-radius: 0; font-weight: bold;
-      font-size: 13px;
+      padding: 13px 20px; border-radius: 0; font-weight: bold;
+      font-size: 13.5px;
     }
 
     /* [AGGIUNTO 2026-08-05 — task #190] La sonda. Stesse identiche regole
@@ -348,6 +348,68 @@ def _sonda(nome: str) -> str:
         f"<span id='{sicuro}' class='anchor-probe'>"
         f"<a href='{PROBE_PREFIX}{sicuro}'>&#160;</a></span>"
     )
+
+
+def nome_sonda_testo(ancora) -> str:
+    """Il nome della sonda che dice dove comincia il TESTO di questa scheda.
+
+    [AGGIUNTO 2026-08-18, sesto giro — Lorenzo: «evita di mettere i titoli
+    come ultima cosa della pagina».] Sta in una funzione, e non scritto a
+    mano nei due punti che lo usano, perche' chi semina e chi misura devono
+    dire la stessa parola: un nome sbagliato non da' nessun errore, da' una
+    riparazione che non scatta mai.
+    """
+    testo = str(ancora or "").strip()
+    return f"{testo}-testo" if testo else ""
+
+
+def nome_sonda_fine(ancora) -> str:
+    """Il nome della sonda che dice dove FINISCE questa scheda."""
+    testo = str(ancora or "").strip()
+    return f"{testo}-fine" if testo else ""
+
+
+def _sonda_all_inizio(pezzo: str, nome: str) -> str:
+    """La sonda DENTRO il primo elemento del pezzo, subito dopo il suo tag.
+
+    Va messa dentro un elemento gia' esistente e non accanto: un elemento a
+    se' stante, anche invisibile, apre una riga sua e sposta di qualche punto
+    tutto quello che segue — e qui si sta misurando proprio dove cadono le
+    cose. Dentro un paragrafo la sonda viaggia sulla prima riga di testo, che
+    e' esattamente il punto che interessa sapere.
+
+    Se il pezzo non comincia con un tag si torna il pezzo com'e': meglio una
+    misura che non si fa che una misura che sposta cio' che misura.
+    """
+    marchio = _sonda(nome)
+    if not marchio or not pezzo:
+        return pezzo
+    if not pezzo.startswith("<"):
+        return pezzo
+    chiusura = pezzo.find(">")
+    if chiusura < 0:
+        return pezzo
+    return pezzo[:chiusura + 1] + marchio + pezzo[chiusura + 1:]
+
+
+def _sonda_in_coda(pezzo: str, nome: str) -> str:
+    """La sonda DENTRO l'ultimo elemento del pezzo, prima della sua chiusura.
+
+    Stessa ragione di `_sonda_all_inizio`, dal lato opposto. Le chiusure si
+    provano nell'ordine in cui possono comparire in fondo a una scheda: la
+    cella di una tabella (quando l'ultima cosa e' la fila di fotografie), un
+    paragrafo, un riquadro. Fuori da una cella un `<span>` non e' HTML
+    valido, e questo motore di stampa lo butterebbe via in silenzio — cioe'
+    la sonda sparirebbe e la riparazione non scatterebbe mai.
+    """
+    marchio = _sonda(nome)
+    if not marchio or not pezzo:
+        return pezzo
+    for chiusura in ("</td>", "</p>", "</div>"):
+        taglio = pezzo.rfind(chiusura)
+        if taglio > 0:
+            return pezzo[:taglio] + marchio + pezzo[taglio:]
+    return pezzo
 
 
 def _paragraphi_separati(testo) -> list:
@@ -525,7 +587,60 @@ def _banda_di_foto(scatti, alt: str = "") -> str:
     return "<table class='guida-banda'><tr>" + "".join(celle) + "</tr></table>"
 
 
-def _testa_illustrata(photo, compagne, nome: str) -> str:
+# I ritagli con cui si fa rientrare una scheda in una facciata sola.
+#
+# [AGGIUNTO 2026-08-18, settimo giro. Lorenzo, in maiuscolo: «NON VOGLIO CHE
+# SPEZZI A META' LE PAGINE DELLE GUIDE TURISTICHE. NON FARLO».]
+#
+# La scala e' MISURATA sul campione, non scelta a occhio. Con la fotografia
+# di apertura al suo rapporto naturale ogni scheda sborda fra il 17% e il 23%
+# della facciata: e' quasi tutta fotografia, alta undici centimetri e mezzo
+# su un foglio che ne ha ventisei di testo.
+#
+# I gradini non sono lineari, e nemmeno lo e' il difetto: l'ultimo blocco
+# della scheda («Torna dove eri» piu' la sua nota) viaggia dentro un
+# `page-break-inside: avoid` e quindi scende TUTTO INSIEME. Finche' non si
+# recupera abbastanza da farci stare quel blocco, lo sbordo non scende sotto
+# l'11% per quanto si stringa la fotografia — misurato: con ritagli 2.0, 2.4
+# e 2.8 lo sbordo resta identico. Il gradino che serve e' il terzo.
+#
+#   0 = la fotografia com'e' sempre stata (nessun ritaglio)
+#   1 = panoramica larga, per le schede che sbordano di un soffio
+#   2 = panoramica bassa
+#   3 = fascia, l'ultima carta prima di arrendersi
+#
+# Il quarto gradino non e' un ripensamento estetico: senza di lui, sul
+# campione, una scheda su nove restava fuori e si portava dietro una facciata
+# riempita al 14%. Con lui il blocco delle guide sta in NOVE facciate per
+# nove schede, tutte piene sopra il 92% — meglio anche delle dodici facciate
+# che costavano le schede accorpate.
+#
+# Piu' in giu' non si va: oltre il rapporto 4.4 la fotografia diventa un
+# filo, e a quel punto tanto varrebbe non metterla — che sarebbe perdere il
+# contenuto invece che l'impaginazione. Una scheda che non entra nemmeno
+# cosi' e' piu' lunga di una facciata davvero, e prosegue sul foglio dopo:
+# quella non e' una pagina spezzata a meta', e' un capitolo che continua.
+RITAGLI_DI_RIENTRO = (None, 2.2, 3.4, 4.4)
+
+
+def ritaglio_di_rientro(gradino) -> float | None:
+    """Il rapporto di ritaglio per questo gradino di rientro, o `None`.
+
+    Un gradino fuori scala non fa saltare niente: si prende l'ultimo. Una
+    scheda stampata un po' piu' stretta del previsto e' un difetto minore,
+    una guida non stampata e' un rimborso.
+    """
+    try:
+        indice = int(gradino or 0)
+    except (TypeError, ValueError):
+        return None
+    if indice <= 0:
+        return None
+    return RITAGLI_DI_RIENTRO[min(indice, len(RITAGLI_DI_RIENTRO) - 1)]
+
+
+def _testa_illustrata(photo, compagne, nome: str,
+                      rapporto: float | None = None) -> str:
     """La fascia di fotografie in cima alla scheda.
 
     [RIFATTA 2026-08-15 — richiesta di Lorenzo: «nelle guide turistiche
@@ -549,7 +664,13 @@ def _testa_illustrata(photo, compagne, nome: str) -> str:
     utili = [c for c in ([photo] + list(compagne or [])) if isinstance(c, dict)]
     if len(utili) >= 3:
         return _banda_di_foto(utili, nome)
-    grande = _immagine(photo, alt=nome)
+    # [RITAGLIO PIU' BASSO SU RICHIESTA — 2026-08-18, settimo giro] Quando la
+    # scheda sborda di poco, la fotografia di apertura si ritaglia piu'
+    # panoramica: la stessa immagine, meno alta. E' l'unico centimetro che si
+    # puo' togliere senza perdere una parola di contenuto, e serve a far
+    # stare la scheda in una facciata sola — che e' cio' che Lorenzo ha
+    # chiesto in maiuscolo. Vedi `RITAGLI_DI_RIENTRO`.
+    grande = _immagine(photo, alt=nome, rapporto=rapporto)
     return f"<div class='foto'>{grande}</div>" if grande else ""
 
 
@@ -582,12 +703,56 @@ def build_guide_html(
     # Lo decide `costruisci_capitoli()`, misurando la prima stampa di
     # QUESTA guida — vedi la sonda `guida-banda-inizio` piu' sotto.
     banda_ingrandita: bool = False,
+    # [AGGIUNTO 2026-08-18] Vero quando questa scheda comincia troppo in
+    # basso perche' la sua fotografia ci stia sotto: la figura si sposta
+    # dopo la storia, cosi' il testo riempie il foglio invece di lasciarlo
+    # bianco. Lo decide `costruisci_capitoli()` misurando la prima stampa.
+    foto_in_coda: bool = False,
     # La sonda serve SOLO alla modalita' fascicolo (`costruisci_capitoli`):
     # e' li' che la seconda stampa la legge per decidere. Nella modalita'
     # pubblicata (`publish_guides`) la guida esce com'era prima — nessuna
     # sonda orfana in un documento pubblico che nessuno ripara mai. Falso
     # di default apposta: aggiungere una sonda va CHIESTO, non presunto.
     sonda_banda: bool = False,
+    # [AGGIUNTO 2026-08-18, sesto giro — Lorenzo: «non spezzare la pagina su
+    # due facciate nella guida turistica, ed evita di mettere i titoli come
+    # ultima cosa della pagina».]
+    #
+    # Le due sonde che permettono di misurare quei due difetti invece di
+    # stimarli: `{ancora}-testo` sulla prima riga di testo della scheda,
+    # `{ancora}-fine` in fondo a tutto. Chi legge il documento non le vede,
+    # e nessun bottone ci atterra — `impaginazione.e_sonda_di_misura()` le
+    # riconosce come sonde di misura apposta.
+    #
+    # Falso di default, per la stessa ragione di `sonda_banda`: le guide
+    # pubblicate da sole non hanno nessuno che le ripari, e una sonda che
+    # nessuno legge e' solo un'annotazione in piu' in un documento pubblico.
+    sonde_di_scheda: bool = False,
+    # [AGGIUNTO 2026-08-18, settimo giro — Lorenzo, in maiuscolo: «NON
+    # VOGLIO CHE SPEZZI A META' LE PAGINE DELLE GUIDE TURISTICHE. NON
+    # FARLO».]
+    #
+    # Vero quando questa scheda deve STARE IN UNA FACCIATA e, misurando, per
+    # un soffio non ci sta. La fila di fotografie di chiusura e' l'unica cosa
+    # che si puo' togliere senza perdere una parola di contenuto: vale un
+    # quinto di foglio, che e' esattamente di quanto sbordano le schede di
+    # questo prodotto.
+    #
+    # Toglierla e' un peccato; spezzare la scheda su due facciate e' cio' che
+    # Lorenzo ha vietato. Fra le due, la scelta l'ha gia' fatta lui.
+    senza_banda_finale: bool = False,
+    # Quanto stringere questa scheda perche' entri in UNA facciata. Zero e'
+    # la scheda com'e' sempre stata; uno e due ritagliano la fotografia di
+    # apertura piu' bassa. Lo decide `costruisci_capitoli()` MISURANDO la
+    # stampa precedente, una scheda per volta: nessuna scheda viene stretta
+    # se non ce n'e' bisogno. Vedi `RITAGLI_DI_RIENTRO`.
+    rientro: int = 0,
+    # Vero quando alla scheda avanza foglio in fondo: la fila di fotografie
+    # di chiusura usa allora anche gli scatti che la testata non ha usato,
+    # invece di lasciare il bianco. E' la stessa risposta di sempre allo
+    # spazio vuoto su questo prodotto — riempirlo di fotografie del posto,
+    # non di parole inutili.
+    banda_di_riempimento: bool = False,
 ) -> str:
     """L'HTML di UNA guida, completo e autonomo.
 
@@ -660,7 +825,30 @@ def build_guide_html(
     # li ignora in silenzio, e il risultato sarebbero tre fotografie una
     # sotto l'altra — cioe' mezza pagina di immagini invece di una banda.
     compagne = [c for c in (foto_extra or [])[:2] if isinstance(c, dict)]
-    parti.append(_testa_illustrata(photo, compagne, nome or titolo))
+    # [FOTOGRAFIA IN CODA — 2026-08-18. Segnalazione di Lorenzo su pagina 16
+    # dell'anteprima: «non mi piace come e' impaginata, togli lo spazio
+    # bianco».]
+    #
+    # Il difetto: una scheda che comincia a meta' pagina stampa il titolo, e
+    # poi la sua fotografia — alta dodici centimetri fra figura e didascalia
+    # — non ci entra piu'. La fotografia scende alla pagina dopo e si porta
+    # dietro TUTTO il testo, lasciando mezzo foglio bianco sotto un titolo
+    # solo. E' la stessa famiglia del titolo orfano, con l'aggravante che
+    # qui il vuoto e' grande mezza pagina.
+    #
+    # Quando chi stampa se ne accorge — misurando dove e' atterrata l'ancora
+    # della scheda, vedi `costruisci_capitoli` — la fotografia si sposta
+    # DOPO la storia: il testo comincia subito sotto il titolo e riempie il
+    # foglio, e la fotografia apre la pagina successiva invece di lasciarne
+    # indietro una mezza vuota.
+    #
+    # Non e' un ripiego brutto: e' l'impaginazione di qualunque rivista che
+    # apre un pezzo con l'occhiello e il testo e mette la figura al giro di
+    # pagina.
+    testa = _testa_illustrata(photo, compagne, nome or titolo,
+                              rapporto=ritaglio_di_rientro(rientro))
+    if not foto_in_coda:
+        parti.append(testa)
 
     storia = guide.get("history_summary") or ""
     if storia:
@@ -676,9 +864,49 @@ def build_guide_html(
         #
         # Con UN paragrafo solo non si divide niente: mezza colonna di
         # testo e mezza vuota sarebbe peggio di una riga larga.
-        _pezzi_storia = _paragraphi_separati(storia)
-        _dentro = (_due_colonne(_pezzi_storia) if len(_pezzi_storia) > 1
-                   else _paragraphs(storia, "corpo"))
+        # [SU UNA COLONNA QUANDO LA SCHEDA COMINCIA IN BASSO — 2026-08-18,
+        # secondo giro. Lorenzo: «non hai risolto il problema, lo hai
+        # semplicemente spostato in un'altra pagina».]
+        #
+        # Le due colonne sono una TABELLA — l'unico modo che questo motore
+        # conosce — e una tabella non si spezza fra due pagine: o entra
+        # tutta o scende tutta. Su una scheda che comincia a due terzi del
+        # foglio non entra mai, e si porta dietro tutto: il titolo resta
+        # solo e sotto c'e' il bianco. E' esattamente il difetto che
+        # spostare la fotografia doveva togliere, ricomparso da un'altra
+        # porta — con la fotografia via, a bloccare era rimasto il testo.
+        #
+        # Su una colonna sola i paragrafi scorrono: la scheda comincia dove
+        # comincia, riempie il foglio e continua sulla pagina dopo. Si perde
+        # l'impaginazione a colonne su QUELLE schede, e vale la pena: fra due
+        # colonne belle e mezzo foglio bianco, Lorenzo ha gia' detto quale
+        # delle due tenere.
+        # [SU UNA COLONNA SEMPRE — 2026-08-18, e annulla la scelta di
+        # stamattina. Richiesta di Lorenzo: «ottimizza al massimo il layout
+        # per il mobile».]
+        #
+        # Le due colonne erano la cosa piu' da rivista del documento, e sono
+        # la peggiore per chi legge da un telefono: un A4 a due colonne, su
+        # uno schermo da sei pollici, obbliga a ingrandire, leggere mezza
+        # pagina, tornare su e rileggere l'altra meta'. Su carta si guadagna,
+        # su schermo si perde — e questo documento si legge in strada, lo
+        # dice il documento stesso.
+        #
+        # Restano a due colonne gli ELENCHI corti qui sotto («Cosa cercare»,
+        # «A due passi»): sono voci di poche righe, dove l'occhio non deve
+        # tornare indietro, e li' le colonne dimezzano l'altezza senza
+        # costare niente a chi legge.
+        _dentro = _paragraphs(storia, "corpo")
+        # [SONDA DEL PRIMO TESTO — 2026-08-18, sesto giro] Va sulla PRIMA
+        # riga di testo della scheda, non sul titolo e non sulla fotografia:
+        # e' l'unico punto che risponde alla domanda «di questa scheda, sulla
+        # pagina del titolo, si legge qualcosa?». Se questa sonda cade su una
+        # pagina diversa dall'ancora, il titolo e' rimasto li' da solo — che
+        # e' precisamente il difetto da riparare, constatato invece che
+        # stimato con una soglia.
+        if sonde_di_scheda:
+            _dentro = _sonda_all_inizio(_dentro,
+                                        nome_sonda_testo(ancora_capitolo))
         parti.append(f"<div class='corpo'>{_dentro}</div>")
 
     # [AGGIUNTO 2026-08-13 — task #223] Il corpo della scheda si
@@ -757,6 +985,15 @@ def build_guide_html(
         if isinstance(v, dict) and v.get("ancora")
     ]
     parti.append(_due_colonne(corpo))
+
+    if foto_in_coda and testa:
+        # In FONDO alla scheda, non subito dopo la storia. Misurato: dopo la
+        # storia il difetto si dimezzava e basta — tre righe di testo e poi
+        # ancora un terzo di foglio bianco, perche' la fotografia bloccava
+        # comunque il corpo della scheda. In fondo, il corpo riempie la
+        # pagina e la fotografia chiude la scheda: e' anche il posto in cui
+        # una rivista mette la figura quando apre un pezzo col testo.
+        parti.append(testa)
 
     if voci_ritorno:
         # [TENUTO INSIEME 2026-08-18 — pagina 18 del fascicolo di Bologna
@@ -862,13 +1099,37 @@ def build_guide_html(
     # pagina isolata senza toccare un solo margine, la stessa idea gia'
     # applicata alla fila di chiusura giornata del documento principale.
     candidate_finali = (foto_extra or [])[2:5]
+    if banda_di_riempimento:
+        # [2026-08-18, settimo giro] La testata usa le prime due immagini di
+        # contorno SOLO quando ce ne sono almeno due (con una sola stampa la
+        # fotografia grande da sola, vedi `_testa_illustrata`). Quando non le
+        # ha usate restavano inutilizzate — e la fila di chiusura, che
+        # pescava sempre dalla terza in poi, non compariva mai. Qui si
+        # riparte da quelle davvero libere: e' foglio bianco riempito con
+        # fotografie del posto che erano gia' in casa.
+        gia_in_testa = 2 if len(compagne) >= 2 else 0
+        candidate_finali = (foto_extra or [])[gia_in_testa:gia_in_testa + 3]
     if banda_ingrandita:
         candidate_finali = candidate_finali[:2]
+    if senza_banda_finale:
+        # Vedi il parametro: si sacrifica la fila di chiusura per far stare
+        # la scheda in una facciata sola. Nessuna parola persa, nessuna
+        # scheda spezzata.
+        candidate_finali = []
     in_fondo = _banda_di_foto(candidate_finali)
     if in_fondo:
         coda = parti.pop() if parti else ""
         parti.append("<table class='keep'><tr><td>"
                      + coda + in_fondo + "</td></tr></table>")
+
+    # [SONDA DI FINE SCHEDA — 2026-08-18, sesto giro] Dopo la fila di
+    # fotografie, cioe' davvero in fondo: e' il secondo estremo del righello
+    # con cui `impaginazione.schede_spezzate()` calcola quanta carta occupa
+    # questa scheda, e un righello che si ferma prima della fine misura
+    # corto. Dentro l'ultimo elemento, mai accanto — vedi `_sonda_in_coda`.
+    if sonde_di_scheda and parti:
+        parti[-1] = _sonda_in_coda(parti[-1],
+                                   nome_sonda_fine(ancora_capitolo))
 
     parti.append("</body></html>")
 
@@ -1003,6 +1264,17 @@ def _altre_foto(tutte, escluso: str, giro: int) -> list:
 # affatto isolata.
 QUOTA_BANDA_ISOLATA = 0.70
 
+# Quanto foglio deve restare sotto l'inizio di una scheda perche' la scheda
+# possa cominciare li'. Un ottavo di pagina sono quattro righe piu' il
+# titolo: l'inizio di un pezzo, non un titolo appiccicato al bordo.
+#
+# E' PIU' BASSA della soglia dei capitoli del documento principale
+# (`impaginazione.QUOTA_MINIMA_SOTTO`, un quarto) e la differenza e'
+# giustificata: li' sotto la testata c'e' subito un blocco che non si spezza
+# (una tabella, una cartina), qui c'e' prosa, che scorre. Alzarla di nuovo
+# vuol dire rimettere il bianco in fondo alla pagina prima.
+QUOTA_A_CAPO_SCHEDE = 0.125
+
 
 def banda_isolata(dati: bytes, quota: float = QUOTA_BANDA_ISOLATA) -> bool:
     """La fila di fotografie in fondo a QUESTA guida e' caduta da sola su
@@ -1124,6 +1396,61 @@ def unisci_le_schede(pezzi, a_capo=()) -> str:
     return guscio + "".join(corpo) + "</body></html>"
 
 
+# Quanto foglio deve avanzare in fondo a una scheda perche' valga la pena
+# riempirlo con la fila di fotografie di chiusura.
+#
+# [MISURATO 2026-08-18, settimo giro.] La fila e' alta circa un quarto di
+# facciata fra figure e didascalie: chiederla quando ne avanza meno vuol dire
+# farla sbordare, cioe' creare il difetto che si stava togliendo. Ventotto
+# per cento e' un quarto piu' il margine di sicurezza di una riga di
+# didascalia.
+#
+# Dall'altra parte c'e' la soglia del misuratore (`scripts_qualita_pagina`,
+# 70% di riempimento minimo): una facciata a cui avanza meno del 28% e' gia'
+# sopra quella soglia, quindi non ha bisogno di niente.
+QUOTA_DI_RIEMPIMENTO = 0.28
+
+
+def _misura_le_schede(dati: bytes, ancore) -> dict:
+    """Per ogni scheda: quante facciate in piu' occupa, e quanto foglio avanza.
+
+    `{ancora: (facciate_in_piu, avanzo)}` dove `avanzo` e' la quota di
+    facciata rimasta bianca sotto la fine della scheda — zero per le schede
+    che sbordano, perche' li' non avanza niente, manca.
+
+    Si legge dalle due sonde della scheda sul documento STAMPATO: l'ancora
+    dice dove comincia, `{ancora}-fine` dove finisce. Con una scheda per
+    facciata il conto e' diretto — ogni scheda comincia in cima al suo
+    foglio — e non serve nessuna stima.
+
+    Non solleva mai: senza sonde torna un dizionario vuoto, il ciclo di
+    rientro non fa niente e le schede escono come sono state costruite.
+    """
+    try:
+        from src import impaginazione
+
+        dove = impaginazione.posizioni(dati)
+        if not dove:
+            return {}
+        alto = impaginazione.ALTEZZA_A4_PT
+        margine = impaginazione.MARGINE_VERTICALE_GUIDA_PT
+        utile = alto - 2 * margine
+        if utile <= 0:
+            return {}
+        misure = {}
+        for ancora in (ancore or ()):
+            inizio = dove.get(ancora)
+            fine = dove.get(nome_sonda_fine(ancora))
+            if not inizio or not fine:
+                continue
+            facciate = fine[0] - inizio[0]
+            avanzo = 0.0 if facciate else max(0.0, (fine[1] - margine) / utile)
+            misure[ancora] = (facciate, avanzo)
+        return misure
+    except Exception:
+        return {}
+
+
 def costruisci_capitoli(
     guides,
     ritorni_per_poi=None,
@@ -1178,6 +1505,46 @@ def costruisci_capitoli(
     # Non si stampa ancora niente: si stampa una volta sola, tutte insieme,
     # ed e' il punto dell'intera modifica. Stampare qui vorrebbe dire N
     # documenti che non possono condividere una pagina.
+    per_identificativo = {}
+    for guide in elenco[:MAX_GUIDE]:
+        _pid = guide.get("poi_id")
+        if isinstance(_pid, str) and _pid:
+            per_identificativo.setdefault(_pid, guide)
+
+    def _html_di_scheda(poi_id, ancora, foto_in_coda=False, rientro=0,
+                        banda_di_riempimento=False):
+        """L'HTML di UNA scheda. Estratta per poterla RIFARE dopo la misura.
+
+        [2026-08-18] La seconda stampa non puo' limitarsi a rimescolare le
+        schede gia' costruite: una scheda che deve spostare la fotografia va
+        ricostruita da capo, con lo stesso identico contorno della prima
+        volta. Ricostruirla qui, in un posto solo, e' l'unico modo perche' le
+        due stampe non possano divergere per distrazione.
+        """
+        guide = per_identificativo.get(poi_id)
+        if not guide:
+            return ""
+        try:
+            return build_guide_html(
+                guide,
+                destination=destination,
+                place_card=schede.get(poi_id),
+                photo=foto.get(poi_id),
+                come_arrivare=str(tragitti.get(poi_id) or ""),
+                open_hours=orari.get(poi_id),
+                ancora_capitolo=ancora,
+                ritorni=ritorni.get(poi_id),
+                tavolozza=tinte,
+                foto_extra=_altre_foto(foto, poi_id, 0),
+                sonda_banda=False,
+                sonde_di_scheda=True,
+                foto_in_coda=foto_in_coda,
+                rientro=rientro,
+                banda_di_riempimento=banda_di_riempimento,
+            )
+        except Exception:
+            return ""
+
     pezzi: list[tuple] = []
     for guide in elenco[:MAX_GUIDE]:
         poi_id = guide.get("poi_id")
@@ -1206,6 +1573,9 @@ def costruisci_capitoli(
                 # una sonda con lo stesso nome per ogni scheda si
                 # pesterebbe i piedi da sola.
                 sonda_banda=False,
+                # Queste invece hanno il nome dell'ancora dentro, quindi una
+                # per scheda e nessuna collisione possibile.
+                sonde_di_scheda=True,
             )
         except Exception:
             html = ""
@@ -1215,8 +1585,28 @@ def costruisci_capitoli(
     if not pezzi:
         return []
 
-    # --- 2. una stampa sola, tutte le schede dentro ------------------------
-    blob = render_guide_pdf(unisci_le_schede([(a, h) for _p, a, h in pezzi]))
+    # --- 2. UNA SCHEDA, UNA PAGINA ----------------------------------------
+    # [RIFATTO 2026-08-18, settimo giro. Lorenzo, in maiuscolo: «NON VOGLIO
+    # CHE SPEZZI A META' LE PAGINE DELLE GUIDE TURISTICHE. NON FARLO».]
+    #
+    # E' l'annullamento della regola del 18 agosto mattina («piuttosto
+    # accorpa»), e va scritto qui perche' chi legge questo file fra sei mesi
+    # trovera' l'una e l'altra e dovra' sapere quale vale: **vale questa**.
+    #
+    # Ogni scheda comincia su una facciata sua. Nessuna facciata contiene la
+    # coda di una scheda e la testa di un'altra — che e' esattamente cio' che
+    # si vedeva sfogliando, e che Lorenzo chiama «spezzare a meta' la
+    # pagina».
+    #
+    # Il prezzo lo conosco, l'ho misurato ed e' alto: con le schede che
+    # scorrevano una nell'altra il blocco delle guide stava in 12 pagine
+    # piene al 92%; una scheda per facciata sono 18 pagine, di cui nove
+    # riempite al 20%. Per questo la regola non finisce qui — vedi il punto
+    # 3, che quelle nove pagine le fa sparire facendo RIENTRARE le schede
+    # invece di allungarle.
+    ancore = [a for _p, a, _h in pezzi]
+    blob = render_guide_pdf(
+        unisci_le_schede([(a, h) for _p, a, h in pezzi], set(ancore)))
     if not blob:
         # Nessun capitolo cucito: il documento principale torna a stampare
         # le schede al suo interno, che e' il comportamento di sempre
@@ -1224,28 +1614,76 @@ def costruisci_capitoli(
         # senza capitoli staccati che un fascicolo con i collegamenti morti.
         return []
 
-    # --- 3. LA SECONDA STAMPA: solo le schede cadute in fondo al foglio ----
-    # Stesso metodo del documento principale (`src/impaginazione.py`): si
-    # guarda dove sono atterrate le ancore, si mandano a capo SOLO quelle
-    # che cominciano a due dita dal fondo — una scheda che comincia li' si
-    # legge come un errore di stampa — e si ristampa.
+    # --- 3. FAR RIENTRARE LE SCHEDE, NON ALLUNGARLE -----------------------
+    # Una scheda per facciata risolve il difetto solo a meta': se la scheda
+    # e' lunga una facciata e un quinto, la coda finisce comunque sul foglio
+    # dopo e quel foglio resta vuoto per quattro quinti. Misurato sul
+    # campione: ogni scheda sbordava fra il 17% e il 23% della facciata.
     #
-    # Solo quelle: mandarle a capo tutte vorrebbe dire tornare esattamente
-    # al difetto che questa modifica toglie.
+    # Quel quinto e' quasi tutto fotografia — l'apertura e' alta undici
+    # centimetri e mezzo su un foglio che ne ha ventisei di testo. Quindi
+    # non si taglia contenuto e non si spezza niente: si RITAGLIA LA
+    # FOTOGRAFIA piu' bassa, un gradino per volta, finche' la scheda entra.
+    # Vedi `RITAGLI_DI_RIENTRO` per i numeri e per il motivo, misurato, per
+    # cui i gradini non sono lineari.
+    #
+    # E il caso opposto, che senza le schede accorpate torna a esistere: se
+    # alla scheda AVANZA foglio, la fila di fotografie di chiusura riempie
+    # il bianco. E' la stessa risposta di sempre su questo prodotto — lo
+    # spazio vuoto si riempie di fotografie del posto, non di parole
+    # inutili.
+    #
+    # Le due decisioni si prendono su una scheda per volta, sulla stampa
+    # vera, e si ripetono: stringere una scheda cambia dove finisce lei, non
+    # dove cominciano le altre (ognuna ha la sua facciata), quindi il ciclo
+    # converge invece di inseguirsi. Quattro passate bastano per una scala di
+    # tre gradini piu' il ripensamento sulla fila di chiusura.
     try:
         from src import impaginazione
 
-        a_capo = impaginazione.capitoli_da_mandare_a_capo(
-            blob, [a for _p, a, _h in pezzi])
-        if a_capo:
+        rientri = {a: 0 for a in ancore}
+        con_fila: set = set()
+        mai_piu_fila: set = set()
+
+        for _passata in range(4):
+            misure = _misura_le_schede(blob, ancore)
+            cambiato = False
+            for ancora, (facciate, avanzo) in misure.items():
+                if facciate > 0:
+                    # Sborda. Prima si toglie la fila di chiusura (se gliela
+                    # avevamo data noi), poi si stringe la fotografia.
+                    if ancora in con_fila:
+                        con_fila.discard(ancora)
+                        # Mai piu': rimettergliela vorrebbe dire tornare a
+                        # farla sbordare, e il ciclo oscillerebbe fra due
+                        # stampe entrambe sbagliate finche' non finiscono le
+                        # passate.
+                        mai_piu_fila.add(ancora)
+                        cambiato = True
+                    elif rientri[ancora] < len(RITAGLI_DI_RIENTRO) - 1:
+                        rientri[ancora] += 1
+                        cambiato = True
+                elif (avanzo >= QUOTA_DI_RIEMPIMENTO
+                      and ancora not in con_fila
+                      and ancora not in mai_piu_fila):
+                    con_fila.add(ancora)
+                    cambiato = True
+            if not cambiato:
+                break
+            pezzi = [(poi_id, ancora,
+                      _html_di_scheda(poi_id, ancora,
+                                      rientro=rientri.get(ancora, 0),
+                                      banda_di_riempimento=(ancora in con_fila)))
+                     for poi_id, ancora, _html in pezzi]
             rifatto = render_guide_pdf(
-                unisci_le_schede([(a, h) for _p, a, h in pezzi], a_capo))
-            if rifatto:
-                blob = rifatto
+                unisci_le_schede([(a, h) for _p, a, h in pezzi], set(ancore)))
+            if not rifatto:
+                break
+            blob = rifatto
     except Exception:
         pass  # una scheda impaginata meno bene e' meglio di nessuna scheda
 
-    # --- 4. dove e' finita ogni ancora ------------------------------------
+    # --- 5. dove e' finita ogni ancora ------------------------------------
     # Il conto per costruzione non si puo' piu' fare — le schede non hanno
     # piu' una pagina propria da contare — quindi la posizione si MISURA
     # sulle sonde del PDF appena stampato. Se le sonde non si leggono, tutte
