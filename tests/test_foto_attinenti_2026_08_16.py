@@ -85,7 +85,12 @@ class TestLaSceltaEPIUAMPIA(unittest.TestCase):
 
         from src import wikimedia
 
-        sorgente = inspect.getsource(wikimedia.cerca_immagine)
+        # [SPOSTATA 2026-08-18] La richiesta a Commons sta in
+        # `cerca_immagini` (plurale): `cerca_immagine` e' diventata la
+        # scorciatoia che ne chiede una sola. Il numero di candidati e'
+        # sempre lo stesso — e' la stessa singola richiesta — ma va letto
+        # dove la richiesta si scrive davvero.
+        sorgente = inspect.getsource(wikimedia.cerca_immagini)
         numero = int(sorgente.split('"gsrlimit": "', 1)[1].split('"', 1)[0])
         self.assertGreaterEqual(numero, 20)
 

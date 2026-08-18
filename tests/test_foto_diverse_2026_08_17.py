@@ -111,7 +111,7 @@ class TestPlacesClientEstraeAncheLaSecondaFoto(unittest.TestCase):
 class TestRaccogliFotoScaricaLaSeconda(unittest.TestCase):
 
     def setUp(self):
-        spenta = mock.patch.object(wikimedia, "cerca_immagine", return_value=None)
+        spenta = mock.patch.object(wikimedia, "cerca_immagini", return_value=[])
         self.wikimedia_spenta = spenta.start()
         self.addCleanup(spenta.stop)
 

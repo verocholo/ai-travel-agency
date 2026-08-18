@@ -206,6 +206,77 @@ class TestIlModoCompattoStringeLOSPAZIONONLEPAROLE(unittest.TestCase):
         self.assertNotIn("decide le scarpe", self.stretto)
 
 
+class TestLATAVOLADICHIUSURA(unittest.TestCase):
+    """Quando stringere non basta, il foglio si riempie invece di restare
+    bianco.
+
+    [AGGIUNTO 2026-08-18.] E' il caso misurato sul campione con le
+    fotografie: l'ultimo capitolo occupava il 26% dell'ultima pagina del
+    corpo, e nessuna compattazione poteva far sparire un quarto di foglio.
+    A quel punto la pagina c'e' comunque, e la scelta non e' piu' fra una
+    pagina e nessuna: e' fra riempirla e lasciarla bianca. Direttiva di
+    Lorenzo, testuale: «le foto devono occupare lo spazio bianco».
+    """
+
+    def _photos(self, quante=2, reale=True):
+        return {"A": {"png": b"jpeg-a-0", "credito": "Foto: a / Prova",
+                      "reale": reale,
+                      "scatti": [{"png": f"jpeg-a-{i}".encode(),
+                                  "credito": f"Foto: a{i} / Prova"}
+                                 for i in range(quante)] if reale else []}}
+
+    def test_la_tavola_usa_una_fotografia_mai_vista(self):
+        from src import pdf_renderer as R
+
+        usate = {R._impronta(b"jpeg-a-0")}
+        html = R._tavola_di_chiusura(self._photos(), usate)
+        self.assertIn("<img", html)
+        self.assertIn("a1", html, "la tavola non ha preso la fotografia nuova")
+
+    def test_finite_le_fotografie_non_si_stampa_niente(self):
+        """Ristampare qui un'immagine gia' vista sarebbe riparare una pagina
+        brutta con un difetto peggiore — ed e' esattamente quello che
+        Lorenzo ha bocciato guardando il fascicolo."""
+        from src import pdf_renderer as R
+
+        usate = {R._impronta(b"jpeg-a-0"), R._impronta(b"jpeg-a-1")}
+        self.assertEqual("", R._tavola_di_chiusura(self._photos(), usate))
+
+    def test_la_grafica_disegnata_in_casa_non_diventa_una_tavola(self):
+        from src import pdf_renderer as R
+
+        self.assertEqual("", R._tavola_di_chiusura(self._photos(reale=False),
+                                                   set()))
+
+    def test_senza_fotografie_non_solleva(self):
+        from src import pdf_renderer as R
+
+        for niente in (None, {}, {"A": "non un dizionario"}):
+            with self.subTest(valore=niente):
+                self.assertEqual("", R._tavola_di_chiusura(niente, set()))
+
+    def test_la_tavola_non_si_spezza_fra_due_pagine(self):
+        from src import pdf_renderer as R
+
+        html = R._tavola_di_chiusura(self._photos(), set())
+        self.assertIn("<table class='keep'>", html)
+
+    def test_il_documento_normale_non_ha_nessuna_tavola(self):
+        """Si stampa SOLO quando serve: e' una riparazione, non un
+        ornamento. Un documento che finisce bene non deve pagare una
+        fotografia in piu' di peso."""
+        import scripts_sample_pdf
+        from src.pdf_renderer import render_html
+
+        itinerario, viaggio, kwargs, _ = scripts_sample_pdf.build_sample_render_kwargs()
+        kwargs = dict(kwargs)
+        kwargs.pop("output_path", None)
+        normale = render_html(itinerario, viaggio, **kwargs)
+        illustrato = render_html(itinerario, viaggio, coda_illustrata=True,
+                                 **kwargs)
+        self.assertLessEqual(len(normale), len(illustrato))
+
+
 class TestSULFASCICOLOVEROLAPAGINAQUASIVUOTANONCE(unittest.TestCase):
     """[SOGLIA VERA, misurata sul fascicolo cucito.]
 

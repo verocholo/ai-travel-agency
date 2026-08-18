@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from src.directions import (
     ALTERNATIVE_MODE_MIN_MINUTES, DEPARTURE_BUFFER_MINUTES,
+    METRI_AL_MINUTO_A_PIEDI,
     build_directions_by_day, build_directions_url, build_day_legs,
     build_travel_time_lookup, compute_departure_time, travel_mode_label,
 )
@@ -155,9 +156,42 @@ class TestDayLegs(unittest.TestCase):
         self.assertTrue(all(leg["minutes"] is None for leg in legs))
 
     def test_misura_reale_usata_quando_ce(self):
+        """[AGGIORNATA 2026-08-18 — dal fascicolo di Bologna vero.]
+
+        La misura di Google resta quella che comanda, e infatti la seconda
+        tratta — sette minuti a piedi — e' identica a prima.
+
+        Cambia la PRIMA, ed e' voluto: Google la misurava in quattro minuti
+        **in auto** per settecentosettanta metri. Su un itinerario che il
+        documento dichiara tutto a piedi, in un centro storico, quella riga
+        diceva una cosa vera e inutilizzabile — Lorenzo l'ha vista a pagina
+        6 del suo fascicolo, nella forma «circa 12 min in auto · circa 960
+        m», e ha ragione: novecentosessanta metri in auto sono dodici minuti
+        di traffico e zero senso.
+
+        Sotto `METRI_MASSIMI_A_PIEDI` il tragitto si dichiara a piedi e il
+        tempo si ricalcola sull'andatura dichiarata
+        (`METRI_AL_MINUTO_A_PIEDI`). La DISTANZA resta quella di Google:
+        non si inventa il dato, si sceglie il mezzo con cui leggerlo.
+        """
         legs = build_day_legs(_plan(), build_travel_time_lookup(TRAVEL_TIMES))
-        self.assertEqual(legs[0]["minutes"], 4)
+        self.assertEqual(legs[0]["mode"], "walking")
+        self.assertEqual(legs[0]["minutes"],
+                         round(legs[0]["metres"] / METRI_AL_MINUTO_A_PIEDI))
         self.assertEqual(legs[1]["minutes"], 7)
+
+    def test_un_tragitto_lungo_resta_col_suo_mezzo(self):
+        """Il confine dall'altra parte: sopra la soglia non si tocca niente.
+
+        Un tragitto vero in auto non deve diventare una camminata di
+        un'ora perche' una regola pensata per i quattro passi in centro si
+        e' allargata troppo.
+        """
+        from src.directions import METRI_MASSIMI_A_PIEDI, _normalize_mode
+
+        self.assertEqual("driving", _normalize_mode("driving"))
+        self.assertGreater(METRI_MASSIMI_A_PIEDI, 500)
+        self.assertLess(METRI_MASSIMI_A_PIEDI, 3000)
 
     def test_direzione_inversa_usata_come_ripiego(self):
         lookup = build_travel_time_lookup([
@@ -259,9 +293,17 @@ class TestAlternativaColMezzo(unittest.TestCase):
         self.assertIsNone(leg["alt_url"])
 
     def test_lora_di_partenza_finisce_nel_leg(self):
+        """[AGGIORNATA 2026-08-18] L'ora di partenza segue il tragitto: da
+        quando i settecentosettanta metri per gli Uffizi si leggono a piedi
+        e non in auto, il tempo e' dieci minuti invece di quattro e
+        l'orario di uscita arretra di conseguenza. E' proprio il lavoro che
+        questa riga deve fare — se restasse fermo, direbbe al cliente di
+        uscire tardi."""
         legs = build_day_legs(_plan(), build_travel_time_lookup(TRAVEL_TIMES))
         museo = [l for l in legs if l["to_name"] == "Uffizi"][0]
-        self.assertEqual(museo["depart_by"], "09:51")
+        atteso = compute_departure_time(museo["arrival_time"], museo["minutes"])
+        self.assertEqual(museo["depart_by"], atteso)
+        self.assertEqual(museo["depart_by"], "09:45")
 
 
 if __name__ == "__main__":

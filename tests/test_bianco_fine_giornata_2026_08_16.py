@@ -41,9 +41,23 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-def _scatto(nome: str, reale: bool = True) -> dict:
-    return {"png": b"\xff\xd8finto-jpeg-" + nome.encode(),
-            "credito": f"Foto: {nome} / Prova", "reale": reale}
+def _scatto(nome: str, reale: bool = True, scorta: int = 1) -> dict:
+    """Una voce di `photos` come la costruisce `foto.raccogli_foto`.
+
+    [AGGIORNATO 2026-08-18] Due fotografie per luogo, non una. Non e' per
+    comodita' della prova: da quando esiste il registro delle immagini gia'
+    stampate, una fotografia per luogo vuol dire che l'apertura di giornata
+    se le prende tutte e la fila di chiusura non ha piu' niente da stampare
+    — prima la stampava lo stesso, ristampando le immagini gia' viste dieci
+    centimetri piu' su, ed e' il difetto che Lorenzo ha segnalato sul
+    fascicolo di Bologna vero. Con la scorta la fila torna, e con immagini
+    diverse: e' la condizione normale in produzione.
+    """
+    scatti = [{"png": b"\xff\xd8finto-jpeg-" + f"{nome}{i or ''}".encode(),
+               "credito": f"Foto: {nome} / Prova"}
+              for i in range(max(1, scorta))]
+    return {"png": scatti[0]["png"], "credito": scatti[0]["credito"],
+            "reale": reale, "scatti": scatti if reale else []}
 
 
 def _blocchi(*poi_ids) -> list:
@@ -217,7 +231,9 @@ class TestLaFilaIngranditaUsaMenoFotoPiuGrandi(unittest.TestCase):
                      "date_end": "2026-09-14", "duration_days": 1,
                      "budget_eur": 600},
                     hotels=[{"name": "Hotel", "price_night_eur": 100}],
-                    photos={"A": _scatto("a"), "B": _scatto("b"), "C": _scatto("c")},
+                    photos={"A": _scatto("a", scorta=2),
+                            "B": _scatto("b", scorta=2),
+                            "C": _scatto("c", scorta=2)},
                     giornate_da_ingrandire={valore},
                 )
                 fila = html.split("<table class='day-striscia'>", 1)[1].split(
@@ -237,14 +253,21 @@ class TestLaFilaIngranditaUsaMenoFotoPiuGrandi(unittest.TestCase):
             {"destination": "Bologna", "date_start": "2026-09-12",
              "date_end": "2026-09-13", "duration_days": 1, "budget_eur": 300},
             hotels=[{"name": "Hotel", "price_night_eur": 100}],
-            photos={"A": _scatto("a"), "B": _scatto("b"), "C": _scatto("c")},
+            photos={"A": _scatto("a", scorta=2), "B": _scatto("b", scorta=2),
+                    "C": _scatto("c", scorta=2)},
             giornate_da_ingrandire={"non-un-numero", None},
         )
         fila = html.split("<table class='day-striscia'>", 1)[1].split("</table>", 1)[0]
-        self.assertEqual(fila.count("<img"), 2, "nessun valore valido: la "
-                         "giornata resta alla fila normale — con tre foto "
-                         "reali e una gia' usata in apertura, ne restano "
-                         "due per la fila di chiusura")
+        # [AGGIORNATO 2026-08-18] Tre e non due. La fila NORMALE ne stampa
+        # fino a tre, quella ingrandita due: e' proprio la differenza che
+        # questa prova deve vedere, e prima non la vedeva perche' le
+        # fotografie disponibili erano cosi' poche che le due file
+        # finivano per stamparne lo stesso numero. Con la scorta —
+        # condizione normale da quando se ne raccolgono fino a tre per
+        # luogo — la fila normale arriva davvero a tre.
+        self.assertEqual(fila.count("<img"), 3, "nessun valore valido: la "
+                         "giornata resta alla fila NORMALE, che ne stampa "
+                         "fino a tre — quella ingrandita ne stamperebbe due")
 
 
 class TestLaSondaDiChiusuraArrivaDAVVERONELDOCUMENTO(unittest.TestCase):
@@ -358,8 +381,13 @@ class TestSulDocumentoVEROSTAMPATO(unittest.TestCase):
             "destination": "Bologna", "date_start": "2026-09-12",
             "date_end": "2026-09-15", "duration_days": 3, "budget_eur": 500,
         }
+        # [SCORTA 2026-08-18] Due fotografie per luogo: e' la condizione
+        # normale da quando `foto.raccogli_foto` ne raccoglie fino a tre.
+        # Con una sola per luogo, il registro delle immagini gia' stampate
+        # lascia la fila di chiusura senza niente da stampare, e questa
+        # prova misurerebbe l'ingrandimento di una fila che non c'e'.
         photos = {
-            poi: _scatto(poi)
+            poi: _scatto(poi, scorta=2)
             for giorno in giorni for b in giorno["blocks"]
             for poi in [b["poi_id"]]
         }

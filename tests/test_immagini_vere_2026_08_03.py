@@ -427,8 +427,8 @@ class TestLaFonteGratuitaVienePrima(unittest.TestCase):
     """
 
     def test_se_wikimedia_trova_google_non_viene_nemmeno_chiamato(self):
-        with mock.patch.object(wikimedia, "cerca_immagine",
-                               return_value=_FotoFinta()) as gratis, \
+        with mock.patch.object(wikimedia, "cerca_immagini",
+                               return_value=[_FotoFinta()]) as gratis, \
              mock.patch.object(places_client, "fetch_place_photo") as pagata:
             uscita = foto.raccogli_foto(
                 [_guida("A", "Duomo")], [_poi("A", "Duomo")],
@@ -449,8 +449,8 @@ class TestLaFonteGratuitaVienePrima(unittest.TestCase):
         controllo guarda il CONTENUTO della riga, non che esista una riga.
         """
         with mock.patch.object(
-            wikimedia, "cerca_immagine",
-            return_value=_FotoFinta("Foto: Ada Lovelace / Wikimedia Commons / CC BY 4.0"),
+            wikimedia, "cerca_immagini",
+            return_value=[_FotoFinta("Foto: Ada Lovelace / Wikimedia Commons / CC BY 4.0")],
         ):
             uscita = foto.raccogli_foto(
                 [_guida("A", "Duomo")], [_poi("A", "Duomo")], citta="Siena",
@@ -472,8 +472,8 @@ class TestLaFonteGratuitaVienePrima(unittest.TestCase):
         guide = [_guida(f"P{i}", f"Luogo {i}") for i in range(5)]
         pois = [_poi(f"P{i}", f"Luogo {i}") for i in range(5)]
         # Le prime due gratuite, le altre no.
-        risposte = [_FotoFinta(), _FotoFinta(), None, None, None]
-        with mock.patch.object(wikimedia, "cerca_immagine", side_effect=risposte), \
+        risposte = [[_FotoFinta()], [_FotoFinta()], [], [], []]
+        with mock.patch.object(wikimedia, "cerca_immagini", side_effect=risposte), \
              mock.patch.object(places_client, "fetch_place_photo",
                                return_value=_jpeg_minimo()) as pagata:
             uscita = foto.raccogli_foto(guide, pois, api_key="finta",
@@ -493,8 +493,8 @@ class TestLaFonteGratuitaVienePrima(unittest.TestCase):
         VERA di un posto SBAGLIATO — il difetto peggiore possibile qui,
         perche' non sembra un difetto: sembra una bella foto.
         """
-        with mock.patch.object(wikimedia, "cerca_immagine",
-                               return_value=None) as gratis:
+        with mock.patch.object(wikimedia, "cerca_immagini",
+                               return_value=[]) as gratis:
             foto.raccogli_foto([_guida("A", "Duomo")], [_poi("A", "Duomo")],
                                citta="Siena")
         self.assertEqual(gratis.call_args.args[0], "Duomo")
@@ -519,8 +519,8 @@ class TestIlCronometroDelleFotoGratuite(unittest.TestCase):
         istanti = iter([0.0, 1.0, 2.0] + [foto.SECONDI_MASSIMI_LIBERE + 1.0] * 50)
         with mock.patch.object(foto.time, "monotonic",
                                side_effect=lambda: next(istanti)), \
-             mock.patch.object(wikimedia, "cerca_immagine",
-                               return_value=None) as gratis, \
+             mock.patch.object(wikimedia, "cerca_immagini",
+                               return_value=[]) as gratis, \
              mock.patch.object(places_client, "fetch_place_photo",
                                return_value=None):
             uscita = foto.raccogli_foto(guide, pois, citta="Siena")

@@ -32,9 +32,21 @@ import unittest
 from src.pdf_renderer import _CSS, _render_striscia_foto
 
 
-def _scatto(nome: str, reale: bool = True) -> dict:
-    return {"png": b"\xff\xd8finto-jpeg-" + nome.encode(),
-            "credito": f"Foto: {nome} / Prova", "reale": reale}
+def _scatto(nome: str, reale: bool = True, scorta: int = 1) -> dict:
+    """Una voce di `photos` come la costruisce `foto.raccogli_foto`.
+
+    [AGGIORNATO 2026-08-18] `scorta` dice quante fotografie ha questo luogo.
+    Da quando esiste il registro delle immagini gia' stampate, il numero
+    conta: con UNA fotografia a testa e un'apertura a mosaico — che ne usa
+    tre — la fila di chiusura non ha piu' niente da stampare, e prima la
+    stampava lo stesso ristampando le immagini gia' viste dieci centimetri
+    piu' su. Quello era il difetto, non il comportamento da difendere.
+    """
+    scatti = [{"png": b"\xff\xd8finto-jpeg-" + f"{nome}{i or ''}".encode(),
+               "credito": f"Foto: {nome} / Prova"}
+              for i in range(max(1, scorta))]
+    return {"png": scatti[0]["png"], "credito": scatti[0]["credito"],
+            "reale": reale, "scatti": scatti if reale else []}
 
 
 def _blocchi(*poi_ids) -> list:
@@ -187,7 +199,8 @@ class TestLaFilaArrivaDAVVERONELDOCUMENTO(unittest.TestCase):
             {"destination": "Bologna", "date_start": "2026-09-12",
              "date_end": "2026-09-14", "duration_days": 1, "budget_eur": 600},
             hotels=[{"name": "Hotel", "price_night_eur": 100}],
-            photos={"A": _scatto("a"), "B": _scatto("b"), "C": _scatto("c")},
+            photos={"A": _scatto("a", scorta=2), "B": _scatto("b", scorta=2),
+                    "C": _scatto("c", scorta=2)},
         )
 
     def test_la_fila_compare_nella_pagina_costruita(self):
