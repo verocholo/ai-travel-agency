@@ -348,7 +348,7 @@ class TestUNASCHEDAUNAFACCIATA(unittest.TestCase):
         """
         misure = poi_pdf._misura_le_schede(self.dopo, self.ancore)
         self.assertTrue(misure, "nessuna scheda misurabile")
-        sbordano = [a for a, (facciate, _av) in misure.items() if facciate]
+        sbordano = [a for a, (facciate, _av, _coda) in misure.items() if facciate]
         self.assertEqual([], sbordano,
                          f"schede che sbordano sulla facciata dopo: {sbordano}")
 
@@ -403,7 +403,7 @@ class TestSCHEDECORTEQUANDOAVANZAFOGLIO(unittest.TestCase):
     def test_nessuna_scheda_sborda(self):
         misure = poi_pdf._misura_le_schede(self.dopo, self.ancore)
         self.assertTrue(misure)
-        sbordano = [a for a, (facciate, _av) in misure.items() if facciate]
+        sbordano = [a for a, (facciate, _av, _coda) in misure.items() if facciate]
         self.assertEqual([], sbordano,
                          f"la fila di riempimento ha fatto sbordare: {sbordano}")
 

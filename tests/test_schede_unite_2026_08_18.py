@@ -465,7 +465,7 @@ class TestLARIPARAZIONESIRIPETEFINCHEISERVE(unittest.TestCase):
         import inspect
 
         sorgente = inspect.getsource(poi_pdf.costruisci_capitoli)
-        self.assertIn("for _passata in range(4)", sorgente)
+        self.assertIn("for _passata in range(6)", sorgente)
         self.assertIn("if not cambiato:", sorgente,
                       "manca la condizione di uscita: il ciclo non sa "
                       "riconoscere di aver finito")
