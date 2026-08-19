@@ -92,6 +92,12 @@ TIMEOUT_S = 30
 _CSS_MODELLO = """
     /* Le due colonne del corpo della scheda. Tabella e non CSS: il motore di
        stampa le colonne non le conosce. */
+    /* [2026-08-19] L'ultimo rimedio contro la facciata con due righe
+       sopra: la stessa scheda, stessa misura di carattere, interlinea piu'
+       stretta. Vedi LIVELLO_TESTO_STRETTO. */
+    .stretta .corpo, .stretta li, .stretta .riga-luogo,
+    .stretta .pratico td { line-height: 1.42; }
+
     .guida-colonne { width: 100%; border-collapse: separate;
                      border-spacing: 14px 0; margin: 0 -14px; }
     .guida-colonne td { vertical-align: top; width: 50%; }
@@ -454,32 +460,71 @@ def _due_colonne(pezzi) -> str:
     vincolo noto di questo progetto, gia' aggirato cosi' per la lista della
     valigia nel vademecum.
 
-    Il bilanciamento e' sulla LUNGHEZZA del testo, non sul numero di blocchi:
-    i pezzi hanno altezze molto diverse (una riga di orario contro tre
-    paragrafi di storia), e dividerli a meta' per conteggio produrrebbe una
-    colonna piena e una vuota — lo stesso difetto, spostato di dieci
-    centimetri.
+    ## PIU' RIGHE, NON UNA SOLA — e questo e' il punto (2026-08-19)
+
+    [RIFATTA dopo il primo fascicolo VENDUTO. Il cliente: «l'impaginazione e'
+    ancora terribile, troppi spazi bianchi e pagine con solo due righe».
+    Misurato sul suo documento: pagine al 51%, 56%, 59%, 59%, 62%, e una
+    completamente bianca.]
+
+    La versione precedente metteva le due colonne in **una riga sola** con due
+    celle enormi. Una riga di tabella non si spezza mai fra due pagine: o il
+    corpo intero entra nello spazio rimasto sotto la storia, o scende TUTTO
+    sulla pagina dopo. Con schede vere — quattro paragrafi di storia e sei
+    sezioni sotto — non entrava mai, e il fondo della prima pagina restava
+    bianco per quattro decimi di foglio. Non era una regola sbagliata: era una
+    tabella che non poteva fare altro.
+
+    Adesso le sezioni vanno a **coppie, una riga per coppia**. Le colonne si
+    vedono uguali a prima, ma la tabella puo' spezzarsi FRA due righe: il
+    corpo comincia sotto la storia, riempie il foglio e prosegue su quello
+    dopo, come qualunque testo. E' la differenza fra un blocco che casca e un
+    testo che scorre.
+
+    ## COME SI ACCOPPIANO LE SEZIONI, e perche' non basta l'ordine
+
+    L'altezza di una riga e' quella della sua cella piu' alta: accanto a una
+    sezione lunga, una corta lascia carta bianca fino in fondo. Accoppiando
+    le sezioni nell'ordine in cui capitano — «Cosa cercare» (lunga) con «Da
+    sapere» (lunga), e piu' sotto «A due passi» (corta) con la nota (cortissima)
+    — quel bianco si somma riga dopo riga. Misurato: le schede corte del
+    campione passavano da una facciata a una e mezza, cioe' nove pagine in
+    piu' su un fascicolo di nove schede.
+
+    Quindi si accoppia la piu' LUNGA con la piu' CORTA, la seconda piu' lunga
+    con la seconda piu' corta, e cosi' via: ogni riga e' alta quanto la sua
+    sezione lunga, e la corta ci sta dentro invece di aggiungersi. Le righe
+    tornano poi nell'ordine originale, cosi' chi legge trova le sezioni piu'
+    o meno dove se le aspetta.
     """
     pieni = [x for x in (pezzi or []) if isinstance(x, str) and x.strip()]
     if not pieni:
         return ""
     if len(pieni) == 1:
         return pieni[0]
-    meta = sum(len(x) for x in pieni) / 2.0
-    corrente, taglio = 0.0, len(pieni)
-    for indice, pezzo in enumerate(pieni):
-        corrente += len(pezzo)
-        if corrente >= meta:
-            # Si taglia DOPO il pezzo che supera la meta', non prima: cosi' la
-            # colonna di sinistra e' la piu' piena e il bianco eventuale cade
-            # in fondo a destra, dove si legge come margine invece che come
-            # buco.
-            taglio = indice + 1
-            break
-    taglio = max(1, min(taglio, len(pieni) - 1))
-    return ("<table class='guida-colonne'><tr>"
-            f"<td>{''.join(pieni[:taglio])}</td>"
-            f"<td>{''.join(pieni[taglio:])}</td></tr></table>")
+
+    per_lunghezza = sorted(range(len(pieni)), key=lambda i: (-len(pieni[i]), i))
+    coppie: list[tuple] = []
+    testa, coda = 0, len(per_lunghezza) - 1
+    while testa <= coda:
+        if testa == coda:
+            coppie.append((per_lunghezza[testa], None))
+        else:
+            coppie.append((per_lunghezza[testa], per_lunghezza[coda]))
+        testa += 1
+        coda -= 1
+    # Le righe nell'ordine del documento, e dentro ogni riga la sezione che
+    # veniva prima resta a sinistra: l'occhio legge da li'.
+    coppie = [tuple(sorted((a, b), key=lambda x: (x is None, x)))
+              for a, b in coppie]
+    coppie.sort(key=lambda c: c[0])
+
+    righe = []
+    for primo, secondo in coppie:
+        sinistra = pieni[primo]
+        destra = pieni[secondo] if secondo is not None else ""
+        righe.append(f"<tr><td>{sinistra}</td><td>{destra}</td></tr>")
+    return "<table class='guida-colonne'>" + "".join(righe) + "</table>"
 
 
 # Quanto sono larghe, al massimo, le fotografie di contorno della scheda.
@@ -490,7 +535,8 @@ LARGHEZZA_FOTO_DI_CONTORNO = 560
 
 
 def _immagine(scatto, larghezza_max: int | None = None, alt: str = "",
-              rapporto: float | None = None) -> str:
+              rapporto: float | None = None,
+              verticale: float | None = None) -> str:
     """Una fotografia con il suo credito, o "" se non si puo' stampare.
 
     Senza credito non si stampa: pubblicare la fotografia di qualcun altro
@@ -503,7 +549,15 @@ def _immagine(scatto, larghezza_max: int | None = None, alt: str = "",
     credito = str(scatto.get("credito") or "").strip()
     if not grezzi or not credito:
         return ""
-    if rapporto:
+    if verticale:
+        # [2026-08-19] Il taglio dall'altra parte: toglie LARGHEZZA per fare
+        # una figura piu' alta. Serve alla fotografia che riempie una
+        # facciata rimasta magra — le immagini che arrivano da Commons sono
+        # quasi tutte orizzontali, e una figura orizzontale, per quanto larga
+        # sia, non riempie un foglio verticale.
+        grezzi = foto.ritaglia_ritratto(grezzi, verticale) or grezzi
+        grezzi = foto.angoli_arrotondati(grezzi) or grezzi
+    elif rapporto:
         grezzi = foto.ritaglia_panoramica(grezzi, rapporto) or grezzi
         # [ANGOLI MORBIDI 2026-08-18] Sui pixel, non col foglio di stile:
         # qui `border-radius` su un'immagine arrotonda in alto e taglia netto
@@ -548,8 +602,20 @@ def _immagine(scatto, larghezza_max: int | None = None, alt: str = "",
 # principale ha gia'. E' il prossimo pezzo, non ancora fatto.
 RAPPORTO_DELLA_BANDA = 1.2
 
+# Il ritaglio della fotografia che RIEMPIE una facciata rimasta magra.
+#
+# [AGGIUNTO 2026-08-19] Qui il criterio e' l'opposto di quello della fila:
+# non «tutte della stessa forma» ma «la piu' alta che si possa stampare
+# senza sembrare un poster». A tutta larghezza di pagina, un ritaglio 1.15
+# fa quindici centimetri e mezzo di figura: sommati al blocco dei bottoni
+# portano la facciata sopra la soglia del misuratore, dove tre fotografie
+# affiancate — alte un terzo — la lasciavano al 60%.
+RAPPORTO_DEL_RIEMPIMENTO = 1.15
 
-def _banda_di_foto(scatti, alt: str = "") -> str:
+
+def _banda_di_foto(scatti, alt: str = "",
+                   rapporto: float = RAPPORTO_DELLA_BANDA,
+                   verticale: float | None = None) -> str:
     """Fino a tre fotografie in fila, larghe quanto serve. "" se non ce n'è.
 
     [CORRETTA 2026-08-17 — segnalazione di Lorenzo sulle pagine 15, 18, 21 e
@@ -577,7 +643,7 @@ def _banda_di_foto(scatti, alt: str = "") -> str:
         if len(pezzi) >= 3:
             break
         pezzo = _immagine(scatto, LARGHEZZA_FOTO_DI_CONTORNO, alt=alt,
-                          rapporto=RAPPORTO_DELLA_BANDA)
+                          rapporto=rapporto, verticale=verticale)
         if pezzo:
             pezzi.append(pezzo)
     if not pezzi:
@@ -621,6 +687,24 @@ def _banda_di_foto(scatti, alt: str = "") -> str:
 # cosi' e' piu' lunga di una facciata davvero, e prosegue sul foglio dopo:
 # quella non e' una pagina spezzata a meta', e' un capitolo che continua.
 RITAGLI_DI_RIENTRO = (None, 2.2, 3.4, 4.4)
+
+# L'ultimo gradino di tutti, e non e' un ritaglio.
+#
+# [AGGIUNTO 2026-08-19 — pagina 12 del fascicolo di prova: due righe di nota
+# e il resto del foglio bianco, cioe' il 3%.]
+#
+# Quando la facciata precedente e' gia' piena al 92%, stringere la fotografia
+# non serve: si libera spazio, il testo scorre su e la pagina si riempie di
+# nuovo fino all'orlo, e in fondo avanza sempre l'ultimo pezzo. Misurato:
+# tre gradini di ritaglio, e la coda resta a zero.
+#
+# L'unica cosa che toglie una vedova di due righe e' accorciare il TESTO di
+# quella scheda — non tagliarlo: stringerlo. L'interlinea del corpo scende da
+# 1,55 a 1,42, che su una scheda lunga vale un paio di centimetri: quanto
+# basta perche' l'ultimo pezzo risalga sulla facciata di prima. Si vede
+# soltanto mettendo due schede una accanto all'altra, e si applica SOLO alle
+# schede che altrimenti lascerebbero una facciata con due righe sopra.
+LIVELLO_TESTO_STRETTO = len(RITAGLI_DI_RIENTRO)
 
 
 def ritaglio_di_rientro(gradino) -> float | None:
@@ -847,6 +931,17 @@ def build_guide_html(
     # pagina.
     testa = _testa_illustrata(photo, compagne, nome or titolo,
                               rapporto=ritaglio_di_rientro(rientro))
+
+    # L'ultimo gradino del rientro non ritaglia: stringe l'interlinea di
+    # QUESTA scheda. Il guscio va qui e non sul `<body>` perche' quando le
+    # schede vengono cucite in un documento solo il `<body>` di ognuna viene
+    # buttato via (`_frammento`), e con lui se ne andrebbe la classe.
+    try:
+        _stretta = int(rientro or 0) >= LIVELLO_TESTO_STRETTO
+    except (TypeError, ValueError):
+        _stretta = False
+    if _stretta:
+        parti.append("<div class='stretta'>")
     if not foto_in_coda:
         parti.append(testa)
 
@@ -922,17 +1017,24 @@ def build_guide_html(
         # in fondo alla scheda, staccati dal titolo «Da sapere» che li
         # annunciava. Si vede benissimo sul fascicolo vero, ed e' un refuso
         # di una lettera: `parti` invece di `corpo`.
-        corpo.append("<div class='sottotitolo'>Da sapere</div><ul>")
-        corpo.extend(f"<li>{_esc(c)}</li>" for c in curiosita)
-        corpo.append("</ul>")
+        # [UN PEZZO SOLO — 2026-08-19] Prima l'elenco entrava in `corpo` in
+        # tre pezzi (apertura, voci, chiusura). Finche' i pezzi finivano tutti
+        # nella stessa colonna funzionava per fortuna, non per costruzione:
+        # da quando il corpo va a coppie di celle, il taglio puo' cadere in
+        # mezzo e l'elenco esce spezzato a meta' fra due celle. Una sezione
+        # e' UN pezzo: e' l'unita' che l'impaginazione ha il diritto di
+        # spostare, e le sue parti interne non sono spostabili.
+        corpo.append("<div class='sottotitolo'>Da sapere</div><ul>"
+                     + "".join(f"<li>{_esc(c)}</li>" for c in curiosita)
+                     + "</ul>")
 
     consigli = [str(t).strip() for t in (guide.get("practical_tips") or []) if str(t).strip()]
     if consigli:
         # Stesso refuso, stesso effetto: i consigli pratici uscivano dal
         # loro riquadro colorato e finivano a tutta pagina in fondo.
-        corpo.append("<div class='riquadro'><strong>Consigli pratici</strong><ul>")
-        corpo.extend(f"<li>{_esc(t)}</li>" for t in consigli)
-        corpo.append("</ul></div>")
+        corpo.append("<div class='riquadro'><strong>Consigli pratici</strong><ul>"
+                     + "".join(f"<li>{_esc(t)}</li>" for t in consigli)
+                     + "</ul></div>")
 
     errore = str(guide.get("errore_da_evitare") or "").strip()
     if errore:
@@ -984,6 +1086,7 @@ def build_guide_html(
         v for v in (ritorni or [])
         if isinstance(v, dict) and v.get("ancora")
     ]
+
     parti.append(_due_colonne(corpo))
 
     if foto_in_coda and testa:
@@ -996,18 +1099,17 @@ def build_guide_html(
         parti.append(testa)
 
     if voci_ritorno:
-        # [TENUTO INSIEME 2026-08-18 — pagina 18 del fascicolo di Bologna
-        # vero: una riga grigia in cima e poi un foglio bianco intero.]
+        # [TENUTO INSIEME — pagina 18 del fascicolo di Bologna: una riga
+        # grigia in cima e poi un foglio bianco intero.] Titolino, bottoni e
+        # nota sono UNA cosa sola: stampati come pezzi separati, il motore
+        # lascia i bottoni in fondo a una pagina e manda la nota su quella
+        # dopo, dove resta da sola.
         #
-        # Il titolino, i bottoni e la nota che li spiega sono UNA cosa sola.
-        # Stampati come pezzi separati, il motore di stampa e' liberissimo di
-        # lasciare i bottoni in fondo a una pagina e mandare la nota su
-        # quella dopo — dove resta da sola, perche' dopo di lei non c'e'
-        # piu' niente. Il risultato e' la pagina peggiore dell'intero
-        # documento: quella che fa pensare «e' rotto».
-        #
-        # Il guscio e' una tabella con `page-break-inside: avoid`, l'unico
-        # modo che questo motore rispetta davvero.
+        # [PROVATO E MISURATO PEGGIO — 2026-08-19] Spostare questo blocco
+        # DENTRO la griglia del corpo, per non farlo mai atterrare da solo,
+        # e' costato sei pagine su diciotto e tre facciate bianche: una
+        # tabella `keep` dentro una cella rende non spezzabile l'intera riga
+        # che la contiene, e la riga era mezza pagina. Resta qui fuori.
         blocco = ["<div class='sottotitolo'>Torna dove eri</div>"]
         for voce in voci_ritorno:
             etichetta = str(voce.get("etichetta") or "Torna all'itinerario")
@@ -1116,7 +1218,18 @@ def build_guide_html(
         # la scheda in una facciata sola. Nessuna parola persa, nessuna
         # scheda spezzata.
         candidate_finali = []
-    in_fondo = _banda_di_foto(candidate_finali)
+    # [2026-08-19] Quando la fila serve a RIEMPIRE la facciata dove e'
+    # atterrata la coda della scheda, il criterio si rovescia: non piu' tre
+    # fotografie in fila — che affiancate diventano alte un terzo — ma UNA
+    # sola, larga quanto la pagina e ritagliata quasi quadrata. Misurato:
+    # tre fotografie in fila lasciavano la facciata al 60%, una sola alta
+    # la porta oltre la soglia. La regola di sempre resta: e' una fotografia
+    # DI QUESTO luogo, non di un altro.
+    if banda_di_riempimento and candidate_finali:
+        in_fondo = _banda_di_foto(candidate_finali[:1],
+                                  verticale=RAPPORTO_DEL_RIEMPIMENTO)
+    else:
+        in_fondo = _banda_di_foto(candidate_finali)
     if in_fondo:
         coda = parti.pop() if parti else ""
         parti.append("<table class='keep'><tr><td>"
@@ -1130,6 +1243,9 @@ def build_guide_html(
     if sonde_di_scheda and parti:
         parti[-1] = _sonda_in_coda(parti[-1],
                                    nome_sonda_fine(ancora_capitolo))
+
+    if _stretta:
+        parti.append("</div>")
 
     parti.append("</body></html>")
 
@@ -1237,6 +1353,31 @@ def _altre_foto(tutte, escluso: str, giro: int) -> list:
         return []
     if not proprie.get("png") or not proprie.get("credito"):
         return []
+    # [IL GIORNO E' ARRIVATO — 2026-08-19.] Sopra c'e' scritto: «il giorno in
+    # cui si avranno piu' fotografie per luogo, le altre di QUEL luogo
+    # entreranno da qui senza toccare nient'altro». Da quando `foto.py`
+    # raccoglie cinque scatti per luogo da Wikimedia Commons
+    # (`SCATTI_PER_LUOGO`), quel giorno e' oggi.
+    #
+    # Perche' serviva: la facciata dove atterra la coda di una scheda — a
+    # volte soltanto i bottoni «Torna dove eri» — si riempie con la fila di
+    # chiusura, e con UNA fotografia sola si arrivava al 62% del foglio,
+    # sotto la soglia di qualita'. Con due o tre si riempie davvero.
+    #
+    # La regola non cambia di una virgola: sono tutte fotografie DI QUESTO
+    # luogo. Si saltano le prime due perche' sono gia' stampate — la grande
+    # in apertura e quella che chiude — e stamparle di nuovo sarebbe la
+    # ripetizione che Lorenzo aveva segnalato per primo.
+    scatti = proprie.get("scatti")
+    if isinstance(scatti, list):
+        libere = [
+            {"png": s.get("png"), "credito": s.get("credito")}
+            for s in scatti[2:]
+            if isinstance(s, dict) and s.get("png") and s.get("credito")
+        ]
+        if libere:
+            return libere[:3]
+
     # La seconda fotografia dello stesso luogo, se `foto.raccogli_foto` e'
     # riuscita a prenderla: e' quella che chiude la scheda senza ripetere
     # l'immagine gia' vista in apertura.
@@ -1391,7 +1532,20 @@ def unisci_le_schede(pezzi, a_capo=()) -> str:
         # blocco delle schede, e un salto qui vorrebbe dire aprire il
         # blocco con un foglio bianco.
         if indice and ancora in da_mandare_a_capo:
-            dentro = ("<div style='page-break-before: always'></div>" + dentro)
+            # [CORRETTO 2026-08-19 — pagina 16 del fascicolo VENDUTO: bianca,
+            # completamente vuota.]
+            #
+            # Prima il salto era un `<div>` vuoto messo PRIMA della scheda. Un
+            # div vuoto e' comunque un blocco: quando la scheda precedente
+            # finiva a filo di pagina, il div atterrava da solo su un foglio
+            # nuovo, si prendeva quel foglio, e la scheda cominciava su quello
+            # dopo. Risultato: una facciata completamente bianca in mezzo al
+            # documento, la pagina che fa pensare «e' rotto».
+            #
+            # Adesso il salto e' una PROPRIETA' della scheda, non un elemento
+            # in piu': il guscio non occupa spazio suo e non puo' atterrare da
+            # nessuna parte.
+            dentro = (f"<div style='page-break-before: always'>{dentro}</div>")
         corpo.append(dentro)
     return guscio + "".join(corpo) + "</body></html>"
 
@@ -1409,6 +1563,37 @@ def unisci_le_schede(pezzi, a_capo=()) -> str:
 # 70% di riempimento minimo): una facciata a cui avanza meno del 28% e' gia'
 # sopra quella soglia, quindi non ha bisogno di niente.
 QUOTA_DI_RIEMPIMENTO = 0.28
+
+# Quanto deve occupare, come minimo, la CODA di una scheda sulla facciata
+# dove atterra.
+#
+# [AGGIUNTO 2026-08-19 — pagine 13 e 23 del primo fascicolo venduto: un foglio
+# intero con sopra soltanto il titolino «Torna dove eri» e due bottoni.]
+#
+# Una scheda lunga una facciata e mezzo sborda per forza, e va benissimo: la
+# seconda facciata e' piena per meta' o piu' e si legge come la continuazione
+# di un capitolo. Il difetto e' quando avanza pochissimo — due righe, o solo i
+# bottoni di ritorno — perche' allora quella facciata sembra vuota.
+#
+# Settantatre per cento e la soglia del misuratore di pagina
+# (`scripts_qualita_pagina.ARRIVO_MINIMO`, 70% del FOGLIO) tradotta in quota
+# di altezza UTILE, cioe' foglio meno margini: 0.70 di utile fa 68,8% di
+# foglio, un soffio sotto la soglia, e sarebbe l'unico modo per non riparare
+# proprio le facciate che il misuratore segnala. Non e' un numero scelto a
+# occhio: e' l'altro, convertito.
+#
+# [MISURATO, e la prima scelta era sbagliata.] Con la soglia al 30% il
+# fascicolo di prova e' passato da 19 a 28 pagine con otto facciate
+# segnalate: le schede corte che prima rientravano in una facciata sola non
+# venivano piu' strette (la loro coda stava al 32-39%, sopra il 30%) e si
+# prendevano una facciata in piu' a testa. La soglia deve essere la stessa
+# del misuratore, o si ripara meta' dei difetti che il misuratore vede.
+#
+# E il verso opposto e' altrettanto importante: le schede LUNGHE, quelle
+# vere del cliente, hanno la coda all'85-89% e non vengono toccate. E' la
+# differenza fra stringere una fotografia perche' serve e ridurle tutte a
+# strisce per abitudine.
+QUOTA_CODA_MAGRA = 0.73
 
 
 def _misura_le_schede(dati: bytes, ancore) -> dict:
@@ -1445,7 +1630,14 @@ def _misura_le_schede(dati: bytes, ancore) -> dict:
                 continue
             facciate = fine[0] - inizio[0]
             avanzo = 0.0 if facciate else max(0.0, (fine[1] - margine) / utile)
-            misure[ancora] = (facciate, avanzo)
+            # Quanta parte dell'ULTIMA facciata la scheda ha davvero usato.
+            # Serve al difetto di pagina 13 e 23 del fascicolo venduto: una
+            # facciata con sopra soltanto la coda della scheda — il titolino
+            # «Torna dove eri» e due bottoni — cioe' il 15% di foglio e il
+            # resto bianco. Per una scheda che sta in una facciata sola non
+            # ha senso e vale uno.
+            coda = (((alto - margine) - fine[1]) / utile) if facciate else 1.0
+            misure[ancora] = (facciate, avanzo, max(0.0, coda))
         return misure
     except Exception:
         return {}
@@ -1643,30 +1835,95 @@ def costruisci_capitoli(
 
         rientri = {a: 0 for a in ancore}
         con_fila: set = set()
+        # Perche' una scheda ha la fila di chiusura conta quanto il fatto che
+        # ce l'abbia: se gliela abbiamo data per riempire un avanzo e adesso
+        # sborda, la colpa e' della fila e si toglie; se gliela abbiamo data
+        # perche' sbordava gia', toglierla riporterebbe il difetto.
+        fila_per_avanzo: set = set()
         mai_piu_fila: set = set()
 
-        for _passata in range(4):
+        # Sei passate, non quattro: la scala dei rientri ne consuma quattro
+        # da sola (tre ritagli piu' la stretta del testo), e senza le due in
+        # piu' la fila di fotografie di riempimento — che e' l'ultimo
+        # rimedio, quello che riempie una facciata invece di svuotarla — non
+        # veniva mai raggiunta. Misurato: otto facciate al 17-30% nel
+        # fascicolo di prova, con la fila mai stampata.
+        for _passata in range(6):
             misure = _misura_le_schede(blob, ancore)
             cambiato = False
-            for ancora, (facciate, avanzo) in misure.items():
-                if facciate > 0:
-                    # Sborda. Prima si toglie la fila di chiusura (se gliela
-                    # avevamo data noi), poi si stringe la fotografia.
-                    if ancora in con_fila:
-                        con_fila.discard(ancora)
-                        # Mai piu': rimettergliela vorrebbe dire tornare a
-                        # farla sbordare, e il ciclo oscillerebbe fra due
-                        # stampe entrambe sbagliate finche' non finiscono le
+            for ancora, (facciate, avanzo, coda) in misure.items():
+                # [ESTESO 2026-08-19 — pagine 13 e 23 del fascicolo VENDUTO:
+                # una facciata con sopra soltanto «Torna dove eri» e due
+                # bottoni, il 15% del foglio.]
+                #
+                # Non basta piu' chiedersi «la scheda sborda?». Una scheda
+                # lunga una facciata e mezzo sborda per forza, ed e' giusto
+                # cosi'. Il difetto e' un altro: la coda che avanza e' cosi'
+                # magra che la facciata dove atterra sembra vuota.
+                #
+                # Il rimedio e' lo stesso — stringere la fotografia di
+                # apertura — ma serve a tirare SU la coda di qualche
+                # centimetro perche' rientri nella facciata precedente,
+                # invece che a far stare tutta la scheda in una.
+                #
+                # E si stringe SOLO quando serve. La versione di ieri
+                # stringeva ogni scheda che sbordasse, punto: sul fascicolo
+                # vero — dove le schede sono lunghe una facciata e mezzo e
+                # sbordano tutte — ha ritagliato tutte le fotografie fino
+                # all'ultimo gradino senza guadagnare una pagina. Fotografie
+                # ridotte a strisce per niente.
+                #
+                # Due rimedi, in quest'ordine, e il secondo esiste perche' il
+                # primo non funziona sempre: stringere la fotografia serve a
+                # far SPARIRE la coda magra tirandola su, ma se la scheda non
+                # ha una fotografia — o se e' gia' all'ultimo gradino — non
+                # c'e' niente da stringere. Allora si fa il contrario: si
+                # RIEMPIE quella facciata con la fila di fotografie di
+                # chiusura, che e' la risposta di sempre di questo prodotto
+                # allo spazio bianco.
+                if facciate > 0 and coda < QUOTA_CODA_MAGRA:
+                    if ancora in fila_per_avanzo:
+                        # E' stata la fila di chiusura a farla sbordare: gliela
+                        # avevamo data noi per riempire un avanzo, ed e'
+                        # costata una facciata intera. Si toglie, e non si
+                        # rimette mai piu' — altrimenti il ciclo oscilla fra
+                        # due stampe entrambe sbagliate finche' finiscono le
                         # passate.
+                        #
+                        # [MISURATO: senza questo ramo il fascicolo di prova
+                        # passava da 19 a 28 pagine, con otto facciate
+                        # riempite al 58,8% — una fotografia di riempimento
+                        # su ognuna. Le schede corte, che stavano in una
+                        # facciata sola, se la prendevano doppia per colpa
+                        # del riempimento che doveva aiutarle.]
+                        con_fila.discard(ancora)
+                        fila_per_avanzo.discard(ancora)
                         mai_piu_fila.add(ancora)
                         cambiato = True
-                    elif rientri[ancora] < len(RITAGLI_DI_RIENTRO) - 1:
+                    elif rientri[ancora] < LIVELLO_TESTO_STRETTO:
                         rientri[ancora] += 1
                         cambiato = True
-                elif (avanzo >= QUOTA_DI_RIEMPIMENTO
+                    elif (ancora not in con_fila
+                          and ancora not in mai_piu_fila):
+                        # Ultimo rimedio: se la coda non si puo' tirare su,
+                        # si riempie la facciata dove e' atterrata. Questa
+                        # fila NON si toglie mai piu' — la scheda sbordava
+                        # gia' prima di riceverla, quindi non e' lei la
+                        # causa, e' il rimedio. [MISURATO: senza questa
+                        # distinzione il ciclo la dava a tutte le schede e
+                        # gliela ritirava alla passata dopo, lasciando otto
+                        # facciate al 17%.]
+                        con_fila.add(ancora)
+                        cambiato = True
+                elif (facciate == 0 and avanzo >= QUOTA_DI_RIEMPIMENTO
                       and ancora not in con_fila
                       and ancora not in mai_piu_fila):
+                    # Qui la fila e' un riempimento, non un rimedio: la
+                    # scheda sta in una facciata e le avanza foglio. Se poi
+                    # si scopre che e' proprio lei a farla sbordare, si
+                    # toglie — vedi il ramo sopra.
                     con_fila.add(ancora)
+                    fila_per_avanzo.add(ancora)
                     cambiato = True
             if not cambiato:
                 break
