@@ -75,6 +75,79 @@ class PipelineResult:
     api_payload: object | None = None
 
 
+# L'identificativo dell'alloggio che il cliente ha gia' prenotato.
+#
+# Non e' un id di LiteAPI e non deve sembrarlo: e' una struttura che nessun
+# fornitore ci ha dato, e il prompt la riconosce da questo nome per sapere che
+# non e' negoziabile.
+ID_ALLOGGIO_DEL_CLIENTE = "H_CLIENTE"
+
+
+def _alloggio_del_cliente(trip: Trip, settings, geo: dict):
+    """La struttura gia' prenotata dal cliente, come `Hotel` con coordinate.
+
+    [AGGIUNTO 2026-08-19 — primo fascicolo venduto, difetto piu' costoso
+    trovato finora.]
+
+    Si geocodifica «nome, indirizzo, destinazione» perche' e' la forma che
+    Google risolve meglio: il nome da solo su una catena internazionale
+    ("Aloft") puo' cadere in un altro continente, l'indirizzo da solo perde il
+    nome nel documento. Quando il cliente non ha scritto l'indirizzo si prova
+    con nome e citta', che nella maggior parte dei casi basta.
+
+    Se il geocoding non riesce **non si solleva**: si torna `None` e la
+    pipeline cerca la struttura come ha sempre fatto. Un itinerario costruito
+    attorno all'albergo sbagliato e' un difetto grave; un itinerario non
+    consegnato e' un rimborso.
+
+    Il prezzo resta `None` di proposito: il cliente ha gia' prenotato, il suo
+    prezzo lo conosce, e inventarne uno — o peggio, mostrargli quello di
+    listino di stanotte — sarebbe l'unico modo di sbagliare un dato che non
+    avevamo bisogno di dare.
+    """
+    from .schemas import Hotel
+
+    nome = str(trip.alloggio_nome or "").strip()
+    if not nome:
+        return None
+    indirizzo = str(trip.alloggio_indirizzo or "").strip()
+    pezzi = [nome, indirizzo, str(trip.destination or "").strip()]
+    query = ", ".join(p for p in pezzi if p)
+
+    lat = lng = None
+    try:
+        trovato = geocoding.geocode_full(query, settings.google_maps_key)
+        lat, lng = trovato.get("lat"), trovato.get("lng")
+    except Exception as errore:  # noqa: BLE001 — vedi docstring
+        print(f"⚠️  alloggio del cliente non geocodificato ({query!r}): "
+              f"{type(errore).__name__}")
+
+    if lat is None or lng is None:
+        # Ultima spiaggia: le coordinate della destinazione. La struttura
+        # resta quella scelta dal cliente — che e' il punto — anche se il
+        # pallino sulla cartina cade in centro citta' invece che davanti alla
+        # porta. Meglio l'alloggio giusto nel posto approssimativo che
+        # l'alloggio sbagliato nel posto preciso.
+        lat, lng = geo.get("lat"), geo.get("lng")
+    if lat is None or lng is None:
+        return None
+
+    return Hotel(
+        id=ID_ALLOGGIO_DEL_CLIENTE,
+        name=nome,
+        lat=float(lat),
+        lng=float(lng),
+        price_night_eur=None,
+        tags=["gia_prenotato_dal_cliente"],
+        # Nessun collegamento di prenotazione: e' gia' prenotato. Stampare un
+        # bottone «prenota» sotto la struttura che il cliente ha gia' pagato
+        # e' il tipo di dettaglio che fa pensare che il documento non abbia
+        # letto quello che gli e' stato scritto.
+        affiliate_url="",
+        property_type=None,
+    )
+
+
 def run_mock(fixture_trip_path: str, scenario_key: str, api_key: str) -> PipelineResult:
     with open(fixture_trip_path, encoding="utf-8") as f:
         raw = json.load(f)
@@ -152,15 +225,46 @@ def run_live_from_raw(raw: dict, settings) -> PipelineResult:
                 f"non rappresentare bene il luogo reale del cliente."
             )
 
-        # Nodo 3 — LiteAPI anchor hotel [AGGIORNATO 2026-07-10, era Amadeus — vedi CHANGELOG.md]
-        liteapi = liteapi_client.LiteApiClient(settings.liteapi_key)
-        hotels_geo = liteapi.search_hotels_by_geocode(lat, lng)
-        hotel_ids = [h["id"] for h in hotels_geo]
-        offers = liteapi.search_hotel_offers(
-            hotel_ids, trip.date_start, trip.date_end,
-            budget_eur=trip.budget_eur if trip.budget_mode == "LIMITED" else None,
-        )
-        hotels = liteapi_client.select_anchor_hotel(hotels_geo, offers, lat, lng, trip.duration_days)
+        # Nodo 3 — l'alloggio.
+        #
+        # [RIFATTO 2026-08-19 — il difetto piu' costoso del primo fascicolo
+        # venduto.] Prima qui c'era una strada sola: cerca gli alberghi per
+        # coordinate della citta' e prendi il piu' baricentrico. Per un
+        # cliente che ha GIA' prenotato quella strada e' sbagliata due volte:
+        # gli propone una struttura che non usera' mai, e — molto peggio —
+        # costruisce l'intera giornata attorno al quartiere di quella
+        # struttura invece che al suo. Il cliente di Singapore aveva scritto
+        # dove dormiva; il documento gli ha disegnato l'anello attorno a un
+        # albergo dall'altra parte della citta'.
+        #
+        # Adesso le strade sono due, e la prima ha la precedenza assoluta.
+        alloggio_del_cliente = None
+        if trip.alloggio_gia_prenotato():
+            alloggio_del_cliente = _alloggio_del_cliente(trip, settings, geo)
+
+        if alloggio_del_cliente is not None:
+            # Non si cerca niente: la struttura c'e' gia'. Si risparmia anche
+            # la chiamata a pagamento, che e' un effetto collaterale gradito
+            # ma non la ragione — la ragione e' che cercare alternative a una
+            # decisione gia' presa e' esattamente cio' che ha rotto il
+            # documento del cliente.
+            hotels = [alloggio_del_cliente]
+            # E il centro del viaggio diventa il SUO alloggio, non il
+            # centroide della citta': e' da li' che parte e torna ogni
+            # giornata, ed e' il motivo per cui questa correzione cambia
+            # l'itinerario e non solo una riga di testo.
+            lat, lng = alloggio_del_cliente.lat, alloggio_del_cliente.lng
+            trip.dest_lat, trip.dest_lng = lat, lng
+        else:
+            # Nodo 3 — LiteAPI anchor hotel [AGGIORNATO 2026-07-10, era Amadeus — vedi CHANGELOG.md]
+            liteapi = liteapi_client.LiteApiClient(settings.liteapi_key)
+            hotels_geo = liteapi.search_hotels_by_geocode(lat, lng)
+            hotel_ids = [h["id"] for h in hotels_geo]
+            offers = liteapi.search_hotel_offers(
+                hotel_ids, trip.date_start, trip.date_end,
+                budget_eur=trip.budget_eur if trip.budget_mode == "LIMITED" else None,
+            )
+            hotels = liteapi_client.select_anchor_hotel(hotels_geo, offers, lat, lng, trip.duration_days)
 
         # Nodo 5 — Places
         # [CORRETTO 2026-07-11] BUG CRITICO: qui c'era

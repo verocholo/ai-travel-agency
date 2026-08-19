@@ -93,6 +93,21 @@ def deduce_objective_function(scopo: str) -> str:
     return "BALANCED"
 
 
+def _testo(valore) -> str:
+    """Un campo di modulo ridotto a stringa pulita, sempre.
+
+    I moduli mandano quello che vogliono: una stringa, un numero, una lista
+    con una stringa dentro, `None` per un campo saltato. Qui diventa testo o
+    niente, e non solleva mai — un campo facoltativo scritto male non deve
+    impedire a un cliente che ha pagato di ricevere il suo itinerario.
+    """
+    if isinstance(valore, str):
+        return valore.strip()
+    if isinstance(valore, (list, tuple)) and valore:
+        return _testo(valore[0])
+    return ""
+
+
 def _date_difference_days(start: str, end: str) -> int:
     # [AGGIORNATO 2026-07-31 — audit di perfezionamento, bug reale eseguito]
     # `date.fromisoformat(None)` (campo data non compilato nel form → null nel
@@ -150,5 +165,12 @@ def normalize_raw_input(raw: dict) -> Trip:
         budget_mode="UNLIMITED" if float(budget) == 0 else "LIMITED",
         objective_function=objective_function,
         raw_notes=raw.get("note", ""),
+        # [AGGIUNTO 2026-08-19] La struttura che il cliente ha GIA' prenotato,
+        # dai due campi nuovi del modulo. Si accettano stringhe e basta: un
+        # campo di modulo che arriva come numero o come lista e' un errore di
+        # wiring, e qui diventa una stringa vuota invece di far saltare la
+        # generazione — il viaggio esce senza il vincolo, non non esce.
+        alloggio_nome=_testo(raw.get("alloggio")),
+        alloggio_indirizzo=_testo(raw.get("alloggio_indirizzo")),
     )
     return trip

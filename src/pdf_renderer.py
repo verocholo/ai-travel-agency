@@ -1835,6 +1835,26 @@ CAPITOLI_DI_RACCONTO = frozenset(
 )
 
 
+def _alloggio_e_del_cliente(hotels) -> bool:
+    """Vero se la struttura in elenco e' quella che il cliente ha prenotato.
+
+    [AGGIUNTO 2026-08-19 — primo fascicolo venduto.] Il segno e' il tag che
+    `pipeline._alloggio_del_cliente()` mette sulla struttura, non il suo id:
+    l'id serve al modello, il tag serve a chi stampa, e legarli qui vorrebbe
+    dire che cambiando uno si rompe l'altro in silenzio.
+
+    Non solleva mai: davanti a dati di forma imprevista torna falso, cioe' il
+    documento di sempre.
+    """
+    for hotel in (hotels or []):
+        if not isinstance(hotel, dict):
+            continue
+        etichette = hotel.get("tags")
+        if isinstance(etichette, (list, tuple)) and "gia_prenotato_dal_cliente" in etichette:
+            return True
+    return False
+
+
 def _titolo_capitolo(nome: str, testo: str, con_ancora: bool = True) -> str:
     """Il titolo di un capitolo, marcato perche' la passata finale lo trovi.
 
@@ -6197,6 +6217,18 @@ def render_html(
                 f"<div class='hotel-row'><strong>{_esc(name)}</strong> "
                 f"({_esc(ptype)}{_esc(price_str)}){role_html}</div>"
             )
+        # [AGGIUNTO 2026-08-19 — primo fascicolo venduto.] Quando la struttura
+        # e' quella che il cliente ha gia' prenotato, il capitolo cambia
+        # mestiere: non propone piu' niente, conferma. E' anche il posto in
+        # cui il documento dimostra di aver LETTO quello che il cliente ha
+        # scritto — che, nel fascicolo di Singapore, e' esattamente cio' che
+        # non era successo.
+        if _alloggio_e_del_cliente(hotels):
+            parts.append(
+                "<div class='section-intro'>Questa &egrave; la struttura che hai "
+                "gi&agrave; prenotato e che ci hai indicato: l'itinerario parte e "
+                "torna da qui, e non ti proponiamo alternative.</div>"
+            )
         # [ESTESO 2026-08-01 — punto 6 del feedback "da investitore"] La frase
         # sui link di ricerca c'era già; quello che mancava era la conseguenza
         # legale, ed è proprio qui che serve. Un elenco di link a piattaforme di
@@ -6206,11 +6238,16 @@ def render_html(
         # servizio non ha e non vuole avere. Il testo sta in src/legal_notices.py
         # perché la stessa frase deve comparire identica nei Termini, nel modulo
         # d'ordine e nell'email: tre copie a mano divergono, una sola no.
-        parts.append(
-            "<div class='disclaimer'>Confronta anche su altre piattaforme — link di ricerca "
-            "pubblica (non dati live/prezzi verificati di queste piattaforme). "
-            f"{_esc(legal_notices.BOOKING_LINKS_NOTICE)}</div>"
-        )
+        # I collegamenti di ricerca si stampano SOLO se c'e' ancora una
+        # scelta da fare. Sotto una struttura gia' prenotata sarebbero, nel
+        # migliore dei casi, rumore; nel peggiore fanno pensare che il
+        # documento stia proponendo di disdire.
+        if not _alloggio_e_del_cliente(hotels):
+            parts.append(
+                "<div class='disclaimer'>Confronta anche su altre piattaforme — link di ricerca "
+                "pubblica (non dati live/prezzi verificati di queste piattaforme). "
+                f"{_esc(legal_notices.BOOKING_LINKS_NOTICE)}</div>"
+            )
         # [CORRETTO 2026-08-02 — task #168, difetto visto sul campione] Con due
         # strutture si stampavano due righe di pulsanti IDENTICHE nell'aspetto,
         # una sotto l'altra, senza nulla che dicesse a quale hotel appartenesse
@@ -6218,8 +6255,9 @@ def render_html(
         # volte di fila e non poteva sapere quale riga cercasse quale albergo.
         # Il nome davanti ai pulsanti costa una parola e toglie l'ambiguità; con
         # una struttura sola non serve e non si stampa.
-        parts.append("<div class='platforms-box'>")
-        for h in hotels:
+        parts.append("<div class='platforms-box'>"
+                     if not _alloggio_e_del_cliente(hotels) else "")
+        for h in (hotels if not _alloggio_e_del_cliente(hotels) else []):
             name = h.get("name") or "[Da Verificare]"
             links = build_search_links(destination_raw, date_start, date_end, hotel_name=name)
             which = (
@@ -6232,7 +6270,7 @@ def render_html(
                 f"<a href='{links['airbnb']}'>Airbnb</a>"
                 f"<a href='{links['vrbo']}'>Vrbo</a></div>"
             )
-        parts.append("</div>")
+        parts.append("</div>" if not _alloggio_e_del_cliente(hotels) else "")
 
     if curated_html:
         # [CORRETTO 2026-08-15 — task #216] Qui c'era la sola ancora: il

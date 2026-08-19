@@ -29,8 +29,38 @@ class Trip:
     budget_mode: str  # "LIMITED" | "UNLIMITED"
     objective_function: str  # vedi VALID_OBJECTIVE_FUNCTIONS
     raw_notes: str = ""
+    # [AGGIUNTO 2026-08-19 — il difetto più costoso trovato finora, sul primo
+    # fascicolo VENDUTO.]
+    #
+    # Il cliente aveva già prenotato, e lo aveva scritto. Il documento ha
+    # costruito l'intera giornata attorno a un'altra struttura, dall'altra
+    # parte della città, e lo ha pure dichiarato in chiaro a pagina 4:
+    # «diversa dal nome MI Rochor indicato nelle note: abbiamo utilizzato
+    # l'unica struttura realmente presente nei dati forniti».
+    #
+    # Non era un'allucinazione del modello: era l'impianto. L'alloggio veniva
+    # SEMPRE scelto cercando per coordinate della città, e il nome scritto dal
+    # cliente arrivava solo come testo libero dentro `raw_notes` — nessuna
+    # riga di codice lo leggeva. Da qui in poi ha un campo suo, perché un dato
+    # che decide la forma dell'intero itinerario non può viaggiare dentro le
+    # note.
+    #
+    # Vuoti = il cliente non ha prenotato, e la struttura la si cerca come
+    # sempre. È il caso normale, e resta identico a prima.
+    alloggio_nome: str = ""
+    alloggio_indirizzo: str = ""
     dest_lat: Optional[float] = None  # aggiunto dal Nodo 2b (geocoding), HTTP_MODULES_REALI.md
     dest_lng: Optional[float] = None
+
+    def alloggio_gia_prenotato(self) -> bool:
+        """Vero se il cliente ha già una struttura, e quindi non se ne cerca.
+
+        Basta il NOME: un cliente che scrive «Hotel Rochor» senza indirizzo ha
+        comunque deciso dove dorme, e costruirgli il viaggio attorno a un
+        altro albergo sarebbe lo stesso errore, solo con una scusa migliore.
+        L'indirizzo, quando c'è, serve a trovarlo sulla mappa con precisione.
+        """
+        return bool(str(self.alloggio_nome or "").strip())
 
     def validate(self) -> list[str]:
         """[Filter] di validazione — BLUEPRINT_MAKE.md NODO 2.
